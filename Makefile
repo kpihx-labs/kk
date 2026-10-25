@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 GITHUB_SSH_COMMAND ?= ssh
 GITLAB_SSH_COMMAND ?= ssh
 
-.PHONY: help check build fmt run push
+.PHONY: help check build fmt run push lab-check lab-test lab-stop
 
 help: ## Show available tasks
 	@printf '%s\n' 'make check  Format check, lint, tests and library documentation' 'make build  Build the release CLI' 'make fmt    Format Rust source' 'make run    Show CLI help' 'make push   Push this branch to github and gitlab over SSH'
@@ -22,6 +22,15 @@ fmt: ## Format Rust source
 
 run: ## Show CLI help
 	cargo run --offline --locked -- --help
+
+lab-check: ## Static lab validation; no VM changes
+	$(MAKE) -C lab check
+
+lab-test: ## Explicitly boot and exercise the dedicated disposable guests
+	$(MAKE) -C lab kk-test
+
+lab-stop: ## Gracefully stop only the dedicated lab
+	$(MAKE) -C lab kk-stop
 
 push: ## Push the current branch to both authorized SSH remotes
 	@set -e; branch="$$(git branch --show-current)"; test -n "$$branch"; \

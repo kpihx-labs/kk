@@ -57,34 +57,8 @@ impl Listener {
         tokio::time::timeout(deadline, async {
             let connection = transport::accept(&self.endpoint, &self.peer).await?;
             authorize()?;
-            let (mut response, mut request) =
-                connection.accept_bi().await.map_err(connection_error)?;
-            let mut flags = [0; 1];
-            request.read_exact(&mut flags).await?;
-            if flags[0] > 1 {
-                return Err(Error::Protocol);
-            }
-            let mut header = [0; 4];
-            request.read_exact(&mut header).await?;
-            let size = u32::from_be_bytes(header) as usize;
-            if size > config::MAX_MESSAGE_BYTES {
-                return Err(Error::MessageTooLarge);
-            }
-            let mut bytes = Zeroizing::new(vec![0; size]);
-            request.read_exact(&mut bytes).await?;
-            if request.read(&mut [0]).await?.is_some() {
-                return Err(Error::Protocol);
-            }
-            let text = std::str::from_utf8(&bytes).map_err(|_| Error::Protocol)?;
-            let message = ReceivedText {
-                text: Zeroizing::new(text.to_owned()),
-                sensitive: flags[0] == 1,
-            };
-            authorize()?;
-            response
-                .write_all(&Sha256::digest(message.text().as_bytes()))
-                .await?;
-            response.finish().map_err(|_| Error::Network)?;
+            let (response, request) = connection.accept_bi().await.map_err(connection_error)?;
+            let message = receive_stream(request, response, &authorize).await?;
             transport::wait_closed(&connection).await?;
             Ok(message)
         })
@@ -147,22 +121,73 @@ pub async fn send_authorized(
             .map_err(connection_error)?;
         transport::verify_peer(&connection, peer)?;
         authorize()?;
-        let (mut request, mut response) = connection.open_bi().await.map_err(connection_error)?;
-        request.write_all(&[u8::from(sensitive)]).await?;
-        request
-            .write_all(&(text.len() as u32).to_be_bytes())
-            .await?;
-        request.write_all(text.as_bytes()).await?;
-        authorize()?;
-        request.finish().map_err(|_| Error::Network)?;
-        if response.read_to_end(32).await? != Sha256::digest(text.as_bytes()).as_slice() {
-            return Err(Error::Protocol);
-        }
+        let (request, response) = connection.open_bi().await.map_err(connection_error)?;
+        send_stream(text, sensitive, request, response, &authorize).await?;
         transport::finish_send(&endpoint, &connection).await;
         Ok(())
     })
     .await
     .map_err(|_| Error::Timeout)?
+}
+
+/// Shared frame handler; connection ownership belongs to its caller.
+pub(crate) async fn receive_stream(
+    mut request: quinn::RecvStream,
+    mut response: quinn::SendStream,
+    authorize: impl Fn() -> Result<()>,
+) -> Result<ReceivedText> {
+    authorize()?;
+    let mut flags = [0; 1];
+    request.read_exact(&mut flags).await?;
+    if flags[0] > 1 {
+        return Err(Error::Protocol);
+    }
+    let mut header = [0; 4];
+    request.read_exact(&mut header).await?;
+    let size = u32::from_be_bytes(header) as usize;
+    if size > config::MAX_MESSAGE_BYTES {
+        return Err(Error::MessageTooLarge);
+    }
+    let mut bytes = Zeroizing::new(vec![0; size]);
+    request.read_exact(&mut bytes).await?;
+    if request.read(&mut [0]).await?.is_some() {
+        return Err(Error::Protocol);
+    }
+    let text = std::str::from_utf8(&bytes).map_err(|_| Error::Protocol)?;
+    let message = ReceivedText {
+        text: Zeroizing::new(text.to_owned()),
+        sensitive: flags[0] == 1,
+    };
+    authorize()?;
+    response
+        .write_all(&Sha256::digest(message.text().as_bytes()))
+        .await?;
+    response.finish().map_err(|_| Error::Network)?;
+    Ok(message)
+}
+
+pub(crate) async fn send_stream(
+    text: &str,
+    sensitive: bool,
+    mut request: quinn::SendStream,
+    mut response: quinn::RecvStream,
+    authorize: impl Fn() -> Result<()>,
+) -> Result<()> {
+    authorize()?;
+    if text.len() > config::MAX_MESSAGE_BYTES {
+        return Err(Error::MessageTooLarge);
+    }
+    request.write_all(&[u8::from(sensitive)]).await?;
+    request
+        .write_all(&(text.len() as u32).to_be_bytes())
+        .await?;
+    request.write_all(text.as_bytes()).await?;
+    authorize()?;
+    request.finish().map_err(|_| Error::Network)?;
+    if response.read_to_end(32).await? != Sha256::digest(text.as_bytes()).as_slice() {
+        return Err(Error::Protocol);
+    }
+    Ok(())
 }
 
 #[cfg(all(test, unix))]

@@ -2,6 +2,27 @@
 
 **Communication between your devices, without an obligatory cloud.**
 
+## Persistent Nodes: 0.7 Checkpoint
+
+Already paired PCs can keep one foreground receiver open for successive exchanges:
+
+```sh
+kk serve --bind LOCAL_IP:45454
+# Another terminal, same profile:
+kk send alice "hello"
+kk status
+```
+
+For file reception, explicitly add `--accept-files --inbox PRIVATE_DIRECTORY`.
+The [node contract](docs/node.md) defines trust, delivery and resource semantics.
+Three independent guests exercise link reuse, bulk/control isolation, live
+revocation, partitions and process crashes. Exact versioned results are recorded
+in [progress](docs/progress.md); older checkpoint descriptions are retained below.
+
+The reproducible harness is now in [lab/](lab/README.md): `make lab-check`,
+`make lab-test`, `make lab-stop`. It is not a product runtime dependency.
+Dynamic room admission, replicated state, media and the UI are still separate gates.
+
 ```text
        YOUR PC                                      ANOTHER PC
   +----------------+      direct local network     +----------------+

@@ -39,6 +39,8 @@ pub enum Error {
     Denied,
     #[error("peer identity is revoked")]
     Revoked,
+    #[error("session operation refused: {0}")]
+    Node(&'static str),
 }
 
 impl Error {
@@ -63,6 +65,7 @@ impl Error {
             Self::Pairing => "PAIRING",
             Self::Denied => "DENIED",
             Self::Revoked => "REVOKED",
+            Self::Node(_) => "NODE",
         }
     }
 }

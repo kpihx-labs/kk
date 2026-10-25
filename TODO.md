@@ -17,6 +17,14 @@ gate notes below are historical; only the backend-before-UI gate remains active.
 Current verified scope must be distinguished from this full target. No placeholder,
 generated video pattern or two-peer test closes a native capture or mesh gate.
 
+### 0.7 Node Foundation Update
+
+Item 3's pre-paired persistent-node foundation is implemented and exercised with
+three independent VMs. The versioned harness is now `lab/`; `docs/node.md` defines
+its guarantees. Dynamic membership, automatic membership reconnect/backoff,
+replicated history and media remain open under items 4-8, not implied by this gate.
+The physical hardware follow-ups below also remain separate from VM evidence.
+
 ## Next Operator Gate
 
 - Review the discovery and file evidence in docs/lab.md and docs/files.md.

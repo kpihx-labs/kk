@@ -6,3 +6,7 @@ private-key.der
 .env
 .env.*
 !.env.example
+/lab/tmp/
+/lab/**/__pycache__/
+/lab/xml/*.xml
+!/lab/xml/kk-isolated.xml

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.0 - 2026-10-25
+
+Add foreground persistent nodes, same-user private Unix IPC and typed bounded
+events. Reuse message/file stream handlers and exact-peer mutual TLS across
+successive operations. Separate local text, bulk-file and control admission;
+reject excess work instead of building an unbounded queue. Preserve cancellation
+when output is blocked. Retire uncertain links without silently replaying data.
+
+Verify three independent guests with separate keys: all directed text edges,
+file integrity, permission changes, active-transfer revocation/resume, capacity
+exhaustion, partition/heal, first-node crash, restart and socket ownership. The
+development binary passed 61 Rust tests and 66 cold-start VM scenarios. Final
+version and harness-migration rerun evidence is recorded separately in progress.md.
+
+Move the K&K-specific lab into the repository as its single versioned source.
+Preserve external installer assets and historical results; the older vm-lab
+Makefile forwards to the canonical lab. This is not dynamic room admission,
+replicated state, media, an optional UI or a signed portable distribution.
 ## 0.6.0 - 2026-10-25
 
 Implement bounded network OPAQUE pairing with local-only registration, six-word

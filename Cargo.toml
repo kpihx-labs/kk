@@ -1,6 +1,6 @@
 [package]
 name = "kk"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 description = "Local-first communication primitives between trusted devices"
 license = "BUSL-1.1"
@@ -8,7 +8,7 @@ publish = false
 include = ["/src/**/*.rs", "/tests/**/*.rs", "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/README.md", "/CONTRACT.md", "/CHANGELOG.md", "/docs/*.md"]
 
 [package.metadata.kk]
-contract-version = "0.6.0"
+contract-version = "0.7.0"
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -35,7 +35,7 @@ sha2 = "0.11.1"
 sha2_10 = { version = "0.10", package = "sha2" }
 tempfile = "3.27.0"
 thiserror = "2.0.21"
-tokio = { version = "1.54.1", features = ["rt", "macros", "signal", "time", "fs", "io-util", "net"] }
+tokio = { version = "1.54.1", features = ["rt", "macros", "signal", "time", "fs", "io-util", "net", "sync"] }
 tokio-util = { version = "0.7.20", features = ["compat"] }
 zeroize = { version = "1.9.1", features = ["derive"] }
 

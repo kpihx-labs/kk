@@ -14,6 +14,8 @@ use std::{
 };
 use zeroize::Zeroizing;
 mod pair;
+#[cfg(unix)]
+mod serve;
 
 #[derive(Parser)]
 #[command(
@@ -79,6 +81,28 @@ fn profile_directory(selected: Option<&std::path::Path>) -> Result<PathBuf> {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Foreground persistent inbox; no service is installed or auto-started
+    #[cfg(unix)]
+    Serve {
+        #[arg(long)]
+        bind: SocketAddr,
+        #[arg(long, requires = "inbox")]
+        accept_files: bool,
+        #[arg(long)]
+        inbox: Option<PathBuf>,
+        #[arg(long, default_value_t = kk::config::DEFAULT_FILE_LIMIT)]
+        max_bytes: u64,
+        #[arg(long, default_value_t = kk::config::NODE_FILE_BUDGET)]
+        file_budget: u64,
+        #[arg(long)]
+        advertise: Option<String>,
+        #[arg(short = 's', long)]
+        sensitive: bool,
+        #[arg(long)]
+        reveal: bool,
+    },
+    #[cfg(unix)]
+    Status,
     /// Initialize a private default identity; never replaces an existing key
     Init,
     /// Single-use PAKE pairing, confirmation, strict TLS proof and contact storage
@@ -204,6 +228,57 @@ pub(crate) async fn run() -> Result<()> {
     let Cli { profile, command } = Cli::parse();
     match command {
         None => Cli::command().print_help()?,
+        #[cfg(unix)]
+        Some(Command::Status) => {
+            let directory = profile_directory(profile.as_deref())?;
+            let reply = kk::node::ipc::request(
+                &directory,
+                &kk::node::ipc::Request::Status,
+                kk::config::DEFAULT_TIMEOUT,
+            )
+            .await?
+            .ok_or(Error::Node("no active node"))?;
+            reply.result()?;
+            writeln!(
+                io::stdout(),
+                "{}",
+                serde_json::to_string(&reply.status.ok_or(Error::Protocol)?)
+                    .map_err(|_| Error::Protocol)?
+            )?;
+        }
+        #[cfg(unix)]
+        Some(Command::Serve {
+            bind,
+            accept_files,
+            inbox,
+            max_bytes,
+            file_budget,
+            advertise,
+            sensitive,
+            reveal,
+        }) => {
+            if inbox.is_some() && !accept_files {
+                return Err(Error::Configuration(
+                    "an inbox requires explicit --accept-files",
+                ));
+            }
+            let directory = profile_directory(profile.as_deref())?;
+            let identity = kk::profile::identity(&directory, false)?;
+            serve::run(
+                identity,
+                kk::node::Options {
+                    profile: directory,
+                    bind,
+                    inbox,
+                    max_file_bytes: max_bytes,
+                    file_budget,
+                },
+                advertise,
+                sensitive,
+                reveal,
+            )
+            .await?;
+        }
         Some(Command::Init) => {
             let directory = profile_directory(profile.as_deref())?;
             let identity = kk::profile::identity(&directory, true)?;
@@ -336,6 +411,29 @@ pub(crate) async fn run() -> Result<()> {
                 None
             };
             if let Some(path) = file_path {
+                #[cfg(unix)]
+                if let Some(alias) = alias
+                    && trust.identity.is_none()
+                    && trust.peer.is_none()
+                {
+                    let source = if path.is_absolute() {
+                        path.clone()
+                    } else {
+                        std::env::current_dir()?.join(&path)
+                    };
+                    let request = kk::node::ipc::Request::File {
+                        target: alias.to_owned(),
+                        source,
+                        sensitive: sensitive || sealing,
+                        seconds: timeout,
+                    };
+                    if let Some(reply) =
+                        kk::node::ipc::request(registry.directory(), &request, deadline).await?
+                    {
+                        file_receipt("FILE_ACK", &reply.receipt(), sensitive || sealing)?;
+                        return Ok(());
+                    }
+                }
                 let receipt = kk::files::send_file_authorized(
                     destination,
                     &identity,
@@ -349,6 +447,24 @@ pub(crate) async fn run() -> Result<()> {
                 file_receipt("FILE_ACK", &receipt, sensitive || sealing)?;
             } else {
                 let text = text.expect("text input");
+                #[cfg(unix)]
+                if let Some(alias) = alias
+                    && trust.identity.is_none()
+                    && trust.peer.is_none()
+                {
+                    let request = kk::node::ipc::Request::Text {
+                        target: alias.to_owned(),
+                        text: text.to_string(),
+                        sensitive,
+                        seconds: timeout,
+                    };
+                    if let Some(reply) =
+                        kk::node::ipc::request(registry.directory(), &request, deadline).await?
+                    {
+                        writeln!(io::stdout(), "ACK {} bytes", reply.bytes)?;
+                        return Ok(());
+                    }
+                }
                 kk::send_authorized(
                     destination,
                     &identity,

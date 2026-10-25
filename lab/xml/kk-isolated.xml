@@ -1,0 +1,14 @@
+<network>
+  <name>kk-isolated</name>
+  <uuid>23f1d1a3-c51c-4754-8912-9ba727e351cf</uuid>
+  <bridge name="virbr-kk" stp="on" delay="0"/>
+  <dns enable="no"/>
+  <ip address="192.168.124.1" prefix="24">
+    <dhcp>
+      <range start="192.168.124.10" end="192.168.124.20"/>
+      <host mac="52:54:00:32:05:4a" ip="192.168.124.10" name="fedora-44"/>
+      <host mac="52:54:00:0f:f1:e9" ip="192.168.124.20" name="mint-22.3"/>
+      <host mac="52:54:00:4b:4b:03" ip="192.168.124.30" name="kk-peer-3"/>
+    </dhcp>
+  </ip>
+</network>

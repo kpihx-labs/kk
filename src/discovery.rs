@@ -8,7 +8,7 @@ use std::{
 
 use mdns_sd::{DaemonEvent, IfKind, ResolvedService, ServiceDaemon, ServiceEvent, ServiceInfo};
 
-use crate::{Error, Identity, Result, config};
+use crate::{Error, Identity, Peer, Result, config};
 
 const SERVICE: &str = "_kk._udp.local.";
 const PAIR_SERVICE: &str = "_kk-pair._tcp.local.";
@@ -18,6 +18,7 @@ pub enum ServiceKind {
     Messages,
     Files,
     Pairing,
+    Session,
 }
 impl ServiceKind {
     pub fn as_str(self) -> &'static str {
@@ -25,6 +26,7 @@ impl ServiceKind {
             Self::Messages => "message",
             Self::Files => "file",
             Self::Pairing => "pair",
+            Self::Session => "session",
         }
     }
     fn service(self) -> &'static str {
@@ -90,6 +92,15 @@ impl Announcement {
         identity: &Identity,
         kind: ServiceKind,
     ) -> Result<Self> {
+        Self::from_peer(name, address, &identity.peer(), kind)
+    }
+
+    pub fn from_peer(
+        name: &str,
+        address: SocketAddrV4,
+        peer: &Peer,
+        kind: ServiceKind,
+    ) -> Result<Self> {
         if name.is_empty()
             || name.len() > 63
             || name.chars().any(char::is_control)
@@ -98,7 +109,7 @@ impl Announcement {
             return Err(Error::Configuration("invalid discovery label or port"));
         }
         let mut worker = Self::on_interface(*address.ip())?;
-        let fingerprint = identity.peer().fingerprint();
+        let fingerprint = peer.fingerprint();
         let hostname = format!("kk-{}.local.", &fingerprint[..16]);
         let properties = [
             ("v", "1"),
@@ -197,6 +208,7 @@ fn candidate(service: &ResolvedService) -> Option<Candidate> {
         "message" => ServiceKind::Messages,
         "file" => ServiceKind::Files,
         "pair" => ServiceKind::Pairing,
+        "session" => ServiceKind::Session,
         _ => return None,
     };
     let name = service

@@ -9,16 +9,46 @@ use quinn::{
 
 use crate::{Error, Identity, Peer, Result, config, error::connection_error};
 
+#[derive(Clone, Copy)]
+pub(crate) enum Policy {
+    OneShot,
+    Interactive,
+}
+
 pub(crate) fn server(
     address: SocketAddr,
     identity: &Identity,
     peer: &Peer,
     alpn: &[u8],
 ) -> Result<Endpoint> {
+    Ok(Endpoint::server(
+        server_config(
+            identity,
+            std::slice::from_ref(peer),
+            &[alpn],
+            Policy::OneShot,
+        )?,
+        address,
+    )?)
+}
+
+pub(crate) fn server_config(
+    identity: &Identity,
+    peers: &[Peer],
+    protocols: &[&[u8]],
+    policy: Policy,
+) -> Result<quinn::ServerConfig> {
+    if peers.is_empty() || peers.len() > 64 {
+        return Err(Error::Configuration(
+            "TLS needs a bounded nonempty set of admitted peers",
+        ));
+    }
     let mut roots = rustls::RootCertStore::empty();
-    roots
-        .add(peer.certificate.clone())
-        .map_err(|_| Error::Authentication)?;
+    for peer in peers {
+        roots
+            .add(peer.certificate.clone())
+            .map_err(|_| Error::Authentication)?;
+    }
     let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
         roots.into(),
         rustls::crypto::ring::default_provider().into(),
@@ -36,17 +66,21 @@ pub(crate) fn server(
         identity.key.clone_key(),
     )
     .map_err(|_| Error::Identity("invalid local TLS identity"))?;
-    crypto.alpn_protocols = vec![alpn.to_vec()];
+    crypto.alpn_protocols = protocols.iter().map(|value| value.to_vec()).collect();
     crypto.max_early_data_size = 0;
     let crypto = QuicServerConfig::try_from(crypto)
         .map_err(|_| Error::Configuration("QUIC TLS unavailable"))?;
     let mut server = quinn::ServerConfig::with_crypto(Arc::new(crypto));
-    server.transport_config(settings());
+    server.transport_config(settings(policy));
     server
-        .max_incoming(1)
+        .max_incoming(if matches!(policy, Policy::OneShot) {
+            1
+        } else {
+            config::NODE_MAX_CONNECTIONS
+        })
         .incoming_buffer_size(config::WINDOW_BYTES as u64)
         .incoming_buffer_size_total(config::WINDOW_BYTES as u64);
-    Ok(Endpoint::server(server, address)?)
+    Ok(server)
 }
 
 pub(crate) fn client(
@@ -55,6 +89,23 @@ pub(crate) fn client(
     peer: &Peer,
     alpn: &[u8],
 ) -> Result<Endpoint> {
+    let client = client_config(identity, peer, alpn, Policy::OneShot)?;
+    let bind = if destination.is_ipv4() {
+        "0.0.0.0:0"
+    } else {
+        "[::]:0"
+    };
+    let mut endpoint = Endpoint::client(bind.parse().expect("constant IP address"))?;
+    endpoint.set_default_client_config(client);
+    Ok(endpoint)
+}
+
+pub(crate) fn client_config(
+    identity: &Identity,
+    peer: &Peer,
+    alpn: &[u8],
+    policy: Policy,
+) -> Result<quinn::ClientConfig> {
     let mut roots = rustls::RootCertStore::empty();
     roots
         .add(peer.certificate.clone())
@@ -76,15 +127,8 @@ pub(crate) fn client(
         QuicClientConfig::try_from(crypto)
             .map_err(|_| Error::Configuration("QUIC TLS unavailable"))?,
     ));
-    client.transport_config(settings());
-    let bind = if destination.is_ipv4() {
-        "0.0.0.0:0"
-    } else {
-        "[::]:0"
-    };
-    let mut endpoint = Endpoint::client(bind.parse().expect("constant IP address"))?;
-    endpoint.set_default_client_config(client);
-    Ok(endpoint)
+    client.transport_config(settings(policy));
+    Ok(client)
 }
 
 pub(crate) async fn accept(endpoint: &Endpoint, peer: &Peer) -> Result<quinn::Connection> {
@@ -96,15 +140,27 @@ pub(crate) async fn accept(endpoint: &Endpoint, peer: &Peer) -> Result<quinn::Co
 }
 
 pub(crate) fn verify_peer(connection: &quinn::Connection, expected: &Peer) -> Result<()> {
-    let identity = connection.peer_identity().ok_or(Error::Authentication)?;
-    let certificates = identity
-        .downcast_ref::<Vec<rustls::pki_types::CertificateDer<'static>>>()
-        .ok_or(Error::Authentication)?;
-    if certificates.first() != Some(&expected.certificate) {
+    if peer_identity(connection)?.certificate != expected.certificate {
         connection.close(1u32.into(), b"");
         return Err(Error::Authentication);
     }
     Ok(())
+}
+
+pub(crate) fn peer_identity(connection: &quinn::Connection) -> Result<Peer> {
+    let identity = connection.peer_identity().ok_or(Error::Authentication)?;
+    let certificates = identity
+        .downcast_ref::<Vec<rustls::pki_types::CertificateDer<'static>>>()
+        .ok_or(Error::Authentication)?;
+    Peer::from_der(certificates.first().ok_or(Error::Authentication)?.to_vec())
+}
+
+pub(crate) fn protocol(connection: &quinn::Connection) -> Result<Vec<u8>> {
+    let data = connection.handshake_data().ok_or(Error::Protocol)?;
+    let data = data
+        .downcast_ref::<quinn::crypto::rustls::HandshakeData>()
+        .ok_or(Error::Protocol)?;
+    data.protocol.clone().ok_or(Error::Protocol)
 }
 
 pub(crate) async fn wait_closed(connection: &quinn::Connection) -> Result<()> {
@@ -136,15 +192,25 @@ pub(crate) fn validate_duration(duration: Duration, maximum: Duration) -> Result
     Ok(())
 }
 
-fn settings() -> Arc<quinn::TransportConfig> {
+fn settings(policy: Policy) -> Arc<quinn::TransportConfig> {
+    let streams = if matches!(policy, Policy::OneShot) {
+        1
+    } else {
+        config::NODE_MAX_STREAMS as u32
+    };
+    let window = if matches!(policy, Policy::OneShot) {
+        config::WINDOW_BYTES
+    } else {
+        config::WINDOW_BYTES * 4
+    };
     let mut transport = quinn::TransportConfig::default();
     transport
-        .max_concurrent_bidi_streams(1u8.into())
+        .max_concurrent_bidi_streams(streams.into())
         .max_concurrent_uni_streams(0u8.into())
         .datagram_receive_buffer_size(None)
         .stream_receive_window(config::WINDOW_BYTES.into())
-        .receive_window(config::WINDOW_BYTES.into())
-        .send_window(config::WINDOW_BYTES as u64)
+        .receive_window(window.into())
+        .send_window(window as u64)
         .crypto_buffer_size(config::MAX_IDENTITY_BYTES * 2)
         .max_idle_timeout(Some(
             config::MAX_TIMEOUT.try_into().expect("bounded duration"),

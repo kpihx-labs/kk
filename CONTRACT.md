@@ -13,6 +13,11 @@ Pairing/profile authorization and its failure semantics are defined by the
 normative addendum [docs/pairing.md](docs/pairing.md). Local tests are not a
 replacement for the required cross-device and adversarial VM acceptance gate.
 
+Persistent pre-paired nodes and their delivery/resource semantics are defined by
+the normative addendum [docs/node.md](docs/node.md). It supersedes the historical
+one-shot-only lifetime below without changing the text/file wire formats. Dynamic
+rooms and replicated state remain separate gates in [docs/sessions.md](docs/sessions.md).
+
 Unified CLI target: `send TARGET PAYLOAD`, `send TARGET PATH -f`, stdin `-`, and
 local sensitive handling `-s`. The `--message` option is removed, not aliased.
 Literal sensitive text in argv is refused. All transport remains pinned mutual

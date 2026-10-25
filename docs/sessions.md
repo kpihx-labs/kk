@@ -3,6 +3,27 @@
 > Planned next layer, not a claim of implemented functionality.
 > No frontend or media gate is closed by this document.
 
+## Implementation Note: 0.7 Development
+
+The original acceptance plan below is retained. Persistent pre-paired nodes now
+exist; the three-guest development evidence is recorded in `progress.md`.
+This does not implement dynamic room membership, state replication or media.
+
+```sh
+kk serve --bind LOCAL_IP:45454
+kk send alice "several messages without restarting the receiver"
+kk status
+```
+
+File reception additionally requires `--accept-files --inbox PRIVATE_DIRECTORY`.
+All participating nodes must already have mutually paired profiles. An uncertain
+send fails without automatic replay; a later explicit send reauthenticates if its
+old link failed. There is no automatic membership reconnection/backoff yet.
+
+Text ACK means acceptance into the core's bounded application-event queue, not
+human reading or durable storage. File ACK follows verified publication. These
+are different guarantees and must remain distinct in future adapters.
+
 ## Boundaries
 
 ```text

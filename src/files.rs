@@ -20,7 +20,8 @@ mod storage;
 #[cfg(target_os = "linux")]
 use storage::Store;
 
-const ALPN: &[u8] = b"kk-file/2";
+pub(crate) const ALPN: &[u8] = b"kk-file/2";
+pub(crate) mod stream;
 
 #[derive(Clone)]
 pub struct FileInfo {
@@ -54,6 +55,7 @@ pub struct Receipt {
     pub sensitive: bool,
 }
 
+#[derive(Clone)]
 pub struct ReceivePolicy {
     destination: PathBuf,
     max_bytes: u64,
@@ -112,81 +114,12 @@ impl FileReceiver {
             let connection = transport::accept(&self.endpoint, &self.peer).await?;
             let outcome: Result<Receipt> = async {
                 authorize()?;
-                let (mut response, mut request) =
-                    connection.accept_bi().await.map_err(connection_error)?;
-                let mut offer = [0; 41];
-                request.read_exact(&mut offer).await?;
-                if offer[0] > 1 {
-                    return Err(Error::Protocol);
-                }
-                let sensitive = offer[0] == 1;
-                let bytes = u64::from_be_bytes(offer[1..9].try_into().expect("fixed header"));
-                if bytes > self.policy.max_bytes || bytes > config::MAX_FILE_BYTES {
-                    return Err(Error::FileTooLarge);
-                }
-                let expected: [u8; 32] = offer[9..].try_into().expect("fixed digest");
-                let mut binding = [0; 73];
-                binding[..41].copy_from_slice(&offer);
-                binding[41..].copy_from_slice(&Sha256::digest(self.peer.certificate.as_ref()));
-                authorize()?;
-                let mut store = Store::open(&self.policy.destination, &binding).await?;
-                let offset = store.file.metadata().await?.len();
-                if offset > bytes {
-                    return Err(Error::Integrity);
-                }
-                let prefix = digest(&mut store.file, offset).await?;
-                if store.complete && (offset != bytes || prefix != expected) {
-                    return Err(Error::Destination(
-                        "existing destination differs from offered content",
-                    ));
-                }
-                response.write_all(&offset.to_be_bytes()).await?;
-                response.write_all(&prefix).await?;
-                let mut remaining = bytes - offset;
-                let mut since_authorization = 0usize;
-                let mut buffer = Zeroizing::new(vec![0; config::FILE_CHUNK_BYTES]);
-                while remaining > 0 {
-                    let count = remaining.min(buffer.len() as u64) as usize;
-                    let read = request
-                        .read(&mut buffer[..count])
-                        .await?
-                        .ok_or(Error::Protocol)?;
-                    if read == 0 || store.complete {
-                        return Err(Error::Protocol);
-                    }
-                    store.file.write_all(&buffer[..read]).await?;
-                    since_authorization += read;
-                    if since_authorization >= config::FILE_CHUNK_BYTES {
-                        authorize()?;
-                        since_authorization = 0;
-                    }
-                    remaining -= read as u64;
-                }
-                if request.read(&mut [0]).await?.is_some() {
-                    return Err(Error::Protocol);
-                }
-                if !store.complete {
-                    store.file.flush().await?;
-                }
-                store.file.sync_all().await?;
-                if digest(&mut store.file, bytes).await? != expected
-                    || store.file.metadata().await?.len() != bytes
-                {
-                    return Err(Error::Integrity);
-                }
-                authorize()?;
-                store.commit().await?;
-                response.write_all(&expected).await?;
-                response.finish().map_err(|_| Error::Network)?;
+                let (response, request) = connection.accept_bi().await.map_err(connection_error)?;
+                let receipt =
+                    stream::receive(&self.peer, &self.policy, request, response, &authorize)
+                        .await?;
                 transport::wait_closed(&connection).await?;
-                Ok(Receipt {
-                    info: FileInfo {
-                        bytes,
-                        sha256: expected,
-                    },
-                    resumed_from: offset,
-                    sensitive,
-                })
+                Ok(receipt)
             }
             .await;
             if outcome.is_err() {
@@ -294,43 +227,11 @@ pub async fn send_file_authorized(
         let outcome: Result<Receipt> = async {
             transport::verify_peer(&connection, peer)?;
             authorize()?;
-            let (mut request, mut response) =
-                connection.open_bi().await.map_err(connection_error)?;
-            request.write_all(&[u8::from(sensitive)]).await?;
-            request.write_all(&info.bytes.to_be_bytes()).await?;
-            request.write_all(&info.sha256).await?;
-            let mut proposal = [0; 40];
-            response.read_exact(&mut proposal).await?;
-            let offset = u64::from_be_bytes(proposal[..8].try_into().expect("fixed header"));
-            if offset > info.bytes || digest(&mut file, offset).await?.as_slice() != &proposal[8..]
-            {
-                return Err(Error::Integrity);
-            }
-            let mut remaining = info.bytes - offset;
-            let mut buffer = Zeroizing::new(vec![0; config::FILE_CHUNK_BYTES]);
-            while remaining > 0 {
-                authorize()?;
-                let count = remaining.min(buffer.len() as u64) as usize;
-                file.read_exact(&mut buffer[..count])
-                    .await
-                    .map_err(|_| Error::Integrity)?;
-                request.write_all(&buffer[..count]).await?;
-                remaining -= count as u64;
-            }
-            if file.read(&mut [0]).await? != 0 {
-                return Err(Error::Integrity);
-            }
-            authorize()?;
-            request.finish().map_err(|_| Error::Network)?;
-            if response.read_to_end(32).await? != info.sha256 {
-                return Err(Error::Integrity);
-            }
+            let (request, response) = connection.open_bi().await.map_err(connection_error)?;
+            let receipt =
+                stream::send(&mut file, info, sensitive, request, response, &authorize).await?;
             transport::finish_send(&endpoint, &connection).await;
-            Ok(Receipt {
-                info,
-                resumed_from: offset,
-                sensitive,
-            })
+            Ok(receipt)
         }
         .await;
         if outcome.is_err() {
@@ -342,7 +243,7 @@ pub async fn send_file_authorized(
     .map_err(|_| Error::Timeout)?
 }
 
-async fn info(file: &mut File) -> Result<FileInfo> {
+pub(crate) async fn info(file: &mut File) -> Result<FileInfo> {
     let bytes = file.metadata().await?.len();
     if bytes > config::MAX_FILE_BYTES {
         return Err(Error::FileTooLarge);

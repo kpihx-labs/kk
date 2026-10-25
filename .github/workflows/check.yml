@@ -8,6 +8,20 @@ permissions:
   contents: read
 
 jobs:
+  lab-static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: "0.10.3"
+      - name: Lab lint, without provisioning guests
+        run: uvx --from ruff==0.16.9 ruff check lab/scripts lab/tests
+      - name: Guest helper shell checks
+        run: shellcheck lab/scripts/kk-fedora-firstboot.sh lab/scripts/kk-lab-control.sh
+      - name: Mocked lab-control tests, not a VM claim
+        run: uv run --python 3.12 --no-project --directory lab/scripts python -m unittest discover -s ../tests -p 'test_kk_*.py'
   linux:
     runs-on: ubuntu-latest
     timeout-minutes: 15

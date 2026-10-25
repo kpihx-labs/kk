@@ -21,6 +21,13 @@ pub const DEFAULT_FILE_LIMIT: u64 = 64 * 1024 * 1024;
 pub const MAX_FILE_BYTES: u64 = 1024 * 1024 * 1024 * 1024;
 pub const DEFAULT_FILE_TIMEOUT: Duration = Duration::from_secs(300);
 pub const MAX_FILE_TIMEOUT: Duration = Duration::from_secs(86_400);
+pub const NODE_MAX_PEERS: usize = 8;
+pub const NODE_MAX_CONNECTIONS: usize = NODE_MAX_PEERS * 3;
+pub const NODE_MAX_STREAMS: usize = 16;
+pub const NODE_EVENT_QUEUE: usize = 64;
+pub const NODE_MAX_FILES: usize = 2;
+pub const NODE_FILE_BUDGET: u64 = 256 * 1024 * 1024;
+pub const NODE_FILE_COUNT_BUDGET: u64 = 128;
 
 pub(crate) const ALPN: &[u8] = b"kk-text/2";
 pub(crate) const TLS_NAME: &str = "kk.local";

@@ -8,6 +8,9 @@ mod error;
 pub mod files;
 mod identity;
 pub mod input;
+#[cfg(unix)]
+pub mod node;
+pub mod output;
 pub mod pairing;
 pub mod profile;
 mod session;

@@ -1,0 +1,30 @@
+{
+  "version": "0.7.0",
+  "date": "2026-10-25",
+  "scope": "Persistent pre-paired Linux nodes; not dynamic rooms, media or a signed distribution",
+  "run_id": "571c21e64207",
+  "raw_record": "lab/tmp/kk-results-571c21e64207-1792941968896578628.json",
+  "binary_sha256": "aaf3fddf3564582b52582d508e35e2513d64ea1fd1f12271c0750bfd69ac16eb",
+  "build_command": "cargo build --offline --locked --release",
+  "rust_tests_passed": 61,
+  "mocked_lab_control_tests_passed": 6,
+  "real_vm_scenarios_passed": 66,
+  "cold_start": true,
+  "guests": [
+    {"name": "fedora-44", "kernel": "Linux 6.19.10-300.fc44.x86_64", "libc": "glibc 2.43", "selinux": "Enforcing"},
+    {"name": "mint-22.3", "kernel": "Linux 6.14.0-37-generic", "libc": "glibc 2.39"},
+    {"name": "kk-peer-3", "kernel": "Linux 6.19.10-300.fc44.x86_64", "libc": "glibc 2.43", "selinux": "Enforcing"}
+  ],
+  "resources_per_guest": {"vcpu": 2, "memory_mib": 1536},
+  "identity_provenance": "Separately generated inside each guest; private keys never exported",
+  "internet_default_routes": false,
+  "first_guest_application_port_packets_outside_declared_guest_addresses": false,
+  "control_fixture": {
+    "simultaneous_bulk_commands": 2,
+    "shaping": {"rate": "4mbit", "delay": "50ms"},
+    "status_roundtrip_seconds_including_virtio_control": 0.06707483303034678,
+    "meaning": "Single recorded fixture measurement, not a general latency or throughput guarantee"
+  },
+  "active_revocation_fixture": {"partial_bytes_observed_before_revocation": 11777, "published_while_revoked": false, "explicit_resume_after_restore_verified": true},
+  "remaining_gates": ["dynamic room admission", "delegated membership", "replicated state", "audio/camera/screen", "native platform validation", "optional frontend", "signed portable artifacts"]
+}

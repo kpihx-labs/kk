@@ -83,6 +83,9 @@ pub struct Registry {
     directory: PathBuf,
 }
 impl Registry {
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
     pub fn open(directory: PathBuf) -> Result<Self> {
         profile::private_directory(&directory, true)?;
         Ok(Self { directory })
@@ -127,6 +130,42 @@ impl Registry {
                 Ok((alias.clone(), fingerprint, revoked))
             })
             .collect()
+    }
+    pub fn active(&self, local: &Identity) -> Result<Vec<(String, Contact)>> {
+        let state = self.read()?;
+        let fingerprint = local.peer().fingerprint();
+        state
+            .contacts
+            .into_iter()
+            .filter_map(|(alias, contact)| {
+                if contact.local_identity != fingerprint {
+                    return None;
+                }
+                match contact.peer() {
+                    Ok(peer) if !state.revoked.contains(&peer.fingerprint()) => {
+                        Some(Ok((alias, contact)))
+                    }
+                    Ok(_) => None,
+                    Err(error) => Some(Err(error)),
+                }
+            })
+            .collect()
+    }
+    pub fn find_peer(&self, peer: &Peer, local: &Identity) -> Result<(String, Contact)> {
+        let state = self.read()?;
+        let fingerprint = peer.fingerprint();
+        if state.revoked.contains(&fingerprint) {
+            return Err(Error::Revoked);
+        }
+        for (alias, contact) in state.contacts {
+            if contact.peer()?.fingerprint() == fingerprint {
+                if contact.local_identity != local.peer().fingerprint() {
+                    return Err(Error::Identity("contact belongs to another local identity"));
+                }
+                return Ok((alias, contact));
+            }
+        }
+        Err(Error::Authentication)
     }
     pub fn get(&self, alias: &str) -> Result<Option<Contact>> {
         valid_alias(alias)?;
