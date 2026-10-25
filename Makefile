@@ -1,0 +1,30 @@
+SHELL := /bin/zsh
+.DEFAULT_GOAL := help
+
+.PHONY: help check build fmt run push
+
+help: ## Show available tasks
+	@printf '%s\n' 'make check  Format check, lint, tests and library documentation' 'make build  Build the release CLI' 'make fmt    Format Rust source' 'make run    Show CLI help' 'make push   Push this branch to github and gitlab over SSH'
+
+check: ## Validate offline with local loopback network tests
+	cargo fmt --all -- --check
+	cargo clippy --offline --locked --all-targets -- -D warnings
+	cargo test --offline --locked --all-targets
+	RUSTDOCFLAGS="-D warnings" cargo doc --offline --locked --no-deps
+
+build: ## Build the release CLI
+	cargo build --offline --locked --release
+
+fmt: ## Format Rust source
+	cargo fmt --all
+
+run: ## Show CLI help
+	cargo run --offline --locked -- --help
+
+push: ## Push the current branch to both authorized SSH remotes
+	@set -e; branch="$$(git branch --show-current)"; test -n "$$branch"; \
+	for remote in github gitlab; do \
+		url="$$(git remote get-url "$$remote")"; \
+		case "$$url" in git@*:*) ;; *) printf '%s\n' "Refusing non-SSH remote $$remote" >&2; exit 1 ;; esac; \
+	done; \
+	for remote in github gitlab; do git push "$$remote" "$$branch"; done

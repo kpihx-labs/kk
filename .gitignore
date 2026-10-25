@@ -1,0 +1,8 @@
+/target/
+/tmp/
+/refs/repos/*/
+/AGENTS.md
+private-key.der
+.env
+.env.*
+!.env.example

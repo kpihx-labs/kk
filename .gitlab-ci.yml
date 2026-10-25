@@ -1,0 +1,16 @@
+stages:
+  - check
+
+rust-foundation:
+  stage: check
+  image: rust:1.99.1
+  timeout: 15m
+  script:
+    - rustup component add rustfmt clippy
+    - cargo fetch --locked
+    - cargo fmt --all -- --check
+    - cargo clippy --locked --all-targets -- -D warnings
+    - cargo test --locked --all-targets
+    - cargo doc --locked --no-deps
+  variables:
+    RUSTDOCFLAGS: -D warnings
