@@ -57,7 +57,7 @@ class GuestControlTests(unittest.TestCase):
         original = str(Path(sys.executable).parent.resolve())
         safe_bin = str(Path.home() / ".local/bin")
         with (
-            tempfile.TemporaryDirectory(dir="/tmp/opencode") as temporary,
+            tempfile.TemporaryDirectory() as temporary,
             patch.object(kk_native, "ROOT", Path(temporary)),
             patch.dict(os.environ, {"PATH": os.pathsep.join([original, safe_bin, "/usr/bin"])}),
         ):

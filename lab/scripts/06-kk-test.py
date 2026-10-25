@@ -323,7 +323,7 @@ def stop():
         if time.monotonic() >= deadline:
             raise TimeoutError("Guests did not shut down cleanly; refusing forced destruction")
         time.sleep(0.2)
-    saved = Path(tempfile.mkdtemp(prefix="kk-headless-backup-", dir="/tmp/opencode"))
+    saved = Path(tempfile.mkdtemp(prefix="kk-headless-backup-"))
     for peer in PEERS:
         original = virsh("dumpxml", peer["name"], "--inactive")
         (saved / f"{peer['name']}.xml.bak").write_text(original)

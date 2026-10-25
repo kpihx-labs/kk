@@ -34,7 +34,7 @@ def backup(name):
     if virsh("domstate", name, capture=True).strip() != "shut off":
         raise SystemExit(f"Refusing to modify running domain {name}")
     xml = virsh("dumpxml", name, "--inactive", capture=True)
-    destination = Path(tempfile.mkdtemp(prefix="kk-vm-backup-", dir="/tmp/opencode"))
+    destination = Path(tempfile.mkdtemp(prefix="kk-vm-backup-"))
     (destination / f"{name}.xml.bak").write_text(xml)
     print(f"Original domain definition preserved: {destination}", flush=True)
     return ET.fromstring(xml)
@@ -71,7 +71,7 @@ def fedora_settings(hostname="kk-fedora"):
 def verified_fedora():
     base = ASSET_ROOT / "isos" / FEDORA_IMAGE
     checksum_path = ASSET_ROOT / "isos/Fedora-Cloud-44-1.7-x86_64-CHECKSUM"
-    keyring_dir = Path(tempfile.mkdtemp(prefix="kk-fedora-keyring-", dir="/tmp/opencode"))
+    keyring_dir = Path(tempfile.mkdtemp(prefix="kk-fedora-keyring-"))
     keyring = keyring_dir / "trustedkeys.gpg"
     command("gpg", "--homedir", keyring_dir, "--no-default-keyring", "--keyring", keyring,
             "--import", ASSET_ROOT / "isos/fedora.gpg")

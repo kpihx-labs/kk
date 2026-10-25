@@ -48,6 +48,10 @@ definitions are preserved under `/tmp/opencode/` before changes; original disks
 are retained. Existing image guards and explicit `--resume` prevent blind reuse.
 Ordinary test reruns use `make lab-test`, not provisioning.
 
+Portability update: new backup/keyring directories use the operating system's
+private temporary-directory API rather than requiring `/tmp/opencode` to exist.
+Previously preserved backups remain at their original locations.
+
 ## Evidence And Limits
 
 New results, guest definitions and state belong to ignored `lab/tmp/` and generated

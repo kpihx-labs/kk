@@ -12,23 +12,28 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2, Node 24
         with:
           version: "0.10.3"
+          enable-cache: false
       - name: Lab lint, without provisioning guests
         run: uvx --from ruff==0.16.9 ruff check lab/scripts lab/tests
       - name: Guest helper shell checks
         run: shellcheck lab/scripts/kk-fedora-firstboot.sh lab/scripts/kk-lab-control.sh
       - name: Mocked lab-control tests, not a VM claim
-        run: uv run --python 3.12 --no-project --directory lab/scripts python -m unittest discover -s ../tests -p 'test_kk_*.py'
+        run: uv run --managed-python --python 3.12 --no-project --directory lab/scripts python -m unittest discover -s ../tests -p 'test_kk_*.py'
   linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       RUSTUP_TOOLCHAIN: 1.99.1
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
+        with:
+          persist-credentials: false
       - name: Rust tools
         run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
       - name: Locked dependencies
