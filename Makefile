@@ -1,5 +1,7 @@
 SHELL := /bin/zsh
 .DEFAULT_GOAL := help
+GITHUB_SSH_COMMAND ?= ssh
+GITLAB_SSH_COMMAND ?= ssh
 
 .PHONY: help check build fmt run push
 
@@ -27,4 +29,5 @@ push: ## Push the current branch to both authorized SSH remotes
 		url="$$(git remote get-url "$$remote")"; \
 		case "$$url" in git@*:*) ;; *) printf '%s\n' "Refusing non-SSH remote $$remote" >&2; exit 1 ;; esac; \
 	done; \
-	for remote in github gitlab; do git push "$$remote" "$$branch"; done
+	GIT_SSH_COMMAND='$(GITHUB_SSH_COMMAND)' git push github "$$branch"; \
+	GIT_SSH_COMMAND='$(GITLAB_SSH_COMMAND)' git push gitlab "$$branch"

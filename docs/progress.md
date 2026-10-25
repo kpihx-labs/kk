@@ -15,6 +15,12 @@
   and measured media. Read docs/sessions.md. No frontend or complete-product release yet.
 - Historical snapshots below are retained, not current claims of missing 0.6 features.
 
+Publication note: commit `e09bc779fb9b274c52328e2ecde9cc30f4e81ec1` reached both
+remotes. The publication-time network timeout on SSH port 22 was resolved with the hosts'
+official SSH port-443 endpoints, preserving strict known-host verification and
+the existing host-key aliases. The Makefile exposes scoped per-remote SSH command
+overrides; no global SSH or agent policy was edited.
+
 ## Verified Checkpoint: 0.5.0
 
 - Principal agent only since the operator's no-subagent instruction.
