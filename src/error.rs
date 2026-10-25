@@ -19,6 +19,8 @@ pub enum Error {
     Protocol,
     #[error("message exceeds the {}-byte limit", crate::config::MAX_MESSAGE_BYTES)]
     MessageTooLarge,
+    #[error("{resource} exceeds the {max}-byte limit")]
+    Limit { resource: &'static str, max: usize },
     #[error("operation cancelled; delivery may be uncertain")]
     Cancelled,
     #[error("invalid configuration: {0}")]
@@ -41,6 +43,8 @@ pub enum Error {
     Revoked,
     #[error("session operation refused: {0}")]
     Node(&'static str),
+    #[error("private storage failed: {0}")]
+    Storage(&'static str),
 }
 
 impl Error {
@@ -55,6 +59,7 @@ impl Error {
             Self::Timeout => "TIMEOUT",
             Self::Protocol => "PROTOCOL",
             Self::MessageTooLarge => "MESSAGE_TOO_LARGE",
+            Self::Limit { .. } => "LIMIT",
             Self::Cancelled => "CANCELLED",
             Self::Configuration(_) => "CONFIGURATION",
             Self::Discovery(_) => "DISCOVERY",
@@ -66,6 +71,7 @@ impl Error {
             Self::Denied => "DENIED",
             Self::Revoked => "REVOKED",
             Self::Node(_) => "NODE",
+            Self::Storage(_) => "STORAGE",
         }
     }
 }

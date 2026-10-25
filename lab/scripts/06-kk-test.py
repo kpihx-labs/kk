@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from kk_file_cases import file_cases
-from kk_guest import URI, Guest
+from kk_guest import URI, Guest, declared_peers
 from kk_node_cases import node_cases
 from kk_pair_cases import pair_cases
 from kk_sensitive_cases import sensitive_cases
@@ -20,7 +20,7 @@ from kk_tty_cases import tty_cases
 
 ROOT = Path(__file__).resolve().parents[1]
 NETWORK_XML = ROOT / "xml/kk-isolated.xml"
-PEERS = [dict(host.attrib) for host in ET.parse(NETWORK_XML).findall("./ip/dhcp/host")]
+PEERS = declared_peers()
 STATE = ROOT / "tmp/kk-state.json"
 PORT = 45454
 PROFILES = {

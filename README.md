@@ -2,6 +2,14 @@
 
 **Communication between your devices, without an obligatory cloud.**
 
+## Development Checkpoint: 0.8
+
+The library now contains tested MLS group crypto and protected private persistence.
+**There is no complete `kk room` network command yet.** Ordered control and actual
+room transport/replication are the next boundary; media and UI remain gated.
+See [room primitives](docs/rooms.md), [runtime boundary](docs/room-runtime.md) and
+[exact evidence](docs/progress.md). Existing send/receive/node commands remain usable.
+
 ## Persistent Nodes: 0.7 Checkpoint
 
 Already paired PCs can keep one foreground receiver open for successive exchanges:

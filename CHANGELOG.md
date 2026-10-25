@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.8.0-dev.1 - 2026-10-25 (Development Checkpoint)
+
+Add bounded room-scoped authority, device-signed MLS identity bindings and
+OpenMLS group crypto using the official Libcrux provider. Validate credentials,
+permissions, proposals, epoch changes, replay and removed-member key separation.
+
+Add the official SQLite storage provider with private ownership/permissions,
+exclusive leases, bounded databases and explicit transactions. Persist init keys,
+signers, ratchets, package budgets and pending/replay metadata before exposing
+effects. Restore verified state without regeneration; quarantine failed commits
+and retain the last durable public view. Test real process kill and SQLite failure.
+
+Verification: 80 Rust tests and 15 native room/crypto/storage tests on each of
+three guest OSes. These are not an authoritative distributed room runtime:
+ordered public control, actual cross-guest room admission/replication, media,
+frontend and signed portable distribution remain open.
+
 ## 0.7.0 - 2026-10-25
 
 Add foreground persistent nodes, same-user private Unix IPC and typed bounded

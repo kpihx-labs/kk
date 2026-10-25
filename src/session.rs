@@ -18,6 +18,16 @@ pub struct ReceivedText {
     pub sensitive: bool,
 }
 impl ReceivedText {
+    pub(crate) fn from_bytes(bytes: &[u8], sensitive: bool) -> Result<Self> {
+        if bytes.len() > config::MAX_MESSAGE_BYTES {
+            return Err(Error::MessageTooLarge);
+        }
+        let text = std::str::from_utf8(bytes).map_err(|_| Error::Protocol)?;
+        Ok(Self {
+            text: Zeroizing::new(text.to_owned()),
+            sensitive,
+        })
+    }
     pub fn text(&self) -> &str {
         &self.text
     }
@@ -153,11 +163,7 @@ pub(crate) async fn receive_stream(
     if request.read(&mut [0]).await?.is_some() {
         return Err(Error::Protocol);
     }
-    let text = std::str::from_utf8(&bytes).map_err(|_| Error::Protocol)?;
-    let message = ReceivedText {
-        text: Zeroizing::new(text.to_owned()),
-        sensitive: flags[0] == 1,
-    };
+    let message = ReceivedText::from_bytes(&bytes, flags[0] == 1)?;
     authorize()?;
     response
         .write_all(&Sha256::digest(message.text().as_bytes()))

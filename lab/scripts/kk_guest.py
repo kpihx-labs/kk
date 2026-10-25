@@ -4,9 +4,15 @@ import base64
 import json
 import subprocess
 import time
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
+import xml.etree.ElementTree as ET
 
 URI = "qemu:///system"
+
+
+def declared_peers():
+    definition = Path(__file__).resolve().parents[1] / "xml/kk-isolated.xml"
+    return [dict(host.attrib) for host in ET.parse(definition).findall("./ip/dhcp/host")]
 
 
 class Guest:

@@ -28,6 +28,14 @@ pub const NODE_EVENT_QUEUE: usize = 64;
 pub const NODE_MAX_FILES: usize = 2;
 pub const NODE_FILE_BUDGET: u64 = 256 * 1024 * 1024;
 pub const NODE_FILE_COUNT_BUDGET: u64 = 128;
+pub const ROOM_MAX_WIRE_BYTES: usize = 1_048_576;
+pub const ROOM_MAX_MEMBERS: usize = 8;
+pub const ROOM_KEY_PACKAGE_BUDGET: usize = 4;
+pub const ROOM_KEY_PACKAGE_LIFETIME: u64 = 3600;
+pub const ROOM_CLOCK_MARGIN: u64 = 60;
+pub const ROOM_PACKAGE_REPLAY_LIMIT: usize = 256;
+pub const ROOM_STORE_MAX_BYTES: usize = 16 * 1024 * 1024;
+pub const ROOM_STORE_VALUE_BYTES: usize = 4 * 1024 * 1024;
 
 pub(crate) const ALPN: &[u8] = b"kk-text/2";
 pub(crate) const TLS_NAME: &str = "kk.local";

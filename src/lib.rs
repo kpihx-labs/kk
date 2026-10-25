@@ -13,7 +13,9 @@ pub mod node;
 pub mod output;
 pub mod pairing;
 pub mod profile;
+pub mod rooms;
 mod session;
+mod signed;
 mod transport;
 
 pub use error::{Error, Result};

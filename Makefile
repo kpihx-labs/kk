@@ -3,10 +3,19 @@ SHELL := /bin/zsh
 GITHUB_SSH_COMMAND ?= ssh
 GITLAB_SSH_COMMAND ?= ssh
 
-.PHONY: help check build fmt run push lab-check lab-test lab-stop
+.PHONY: help check build fmt run push lab-check lab-test lab-crypto-test lab-stop
 
 help: ## Show available tasks
-	@printf '%s\n' 'make check  Format check, lint, tests and library documentation' 'make build  Build the release CLI' 'make fmt    Format Rust source' 'make run    Show CLI help' 'make push   Push this branch to github and gitlab over SSH'
+	@printf '%s\n' \
+	  'make check           Format, lint, tests and documentation' \
+	  'make build           Build the release CLI' \
+	  'make fmt             Format Rust source' \
+	  'make run             Show CLI help' \
+	  'make lab-check       Static lab validation; no VM changes' \
+	  'make lab-test        Full cross-guest regression' \
+	  'make lab-crypto-test Native per-OS crypto; not a room-network gate' \
+	  'make lab-stop        Stop the dedicated guests and network' \
+	  'make push            Push this branch to both SSH remotes'
 
 check: ## Validate offline with local loopback network tests
 	cargo fmt --all -- --check
@@ -28,6 +37,9 @@ lab-check: ## Static lab validation; no VM changes
 
 lab-test: ## Explicitly boot and exercise the dedicated disposable guests
 	$(MAKE) -C lab kk-test
+
+lab-crypto-test: ## Execute native room crypto tests on each declared OS
+	$(MAKE) -C lab crypto-test
 
 lab-stop: ## Gracefully stop only the dedicated lab
 	$(MAKE) -C lab kk-stop

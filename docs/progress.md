@@ -1,5 +1,73 @@
 # Completion Progress
 
+## Private MLS Persistence Checkpoint (2026-10-25)
+
+- `rooms/store.rs` now implements the official OpenMLS SQLite provider through
+  Libcrux with bundled SQLite. Private owned directories/files, exclusive leases,
+  bounded storage, FULL synchronization, DELETE journals and secure deletion are
+  enforced. Unknown/corrupt/unsafe existing state is refused, not repaired.
+- `CryptoMember::create_private/open_private` persist and validate the private
+  signer, public credential and package budget. `Group::restore` checks matching
+  room, owner, crypto epoch, pending state and local replay checkpoint.
+- `group/durable.rs` owns atomic SDK writes plus local checkpoints before return
+  of ciphertext, received text or Welcome. Failed commits quarantine the handle;
+  public epoch/membership retain the last durable immutable view. Rejected changes
+  roll back and reload instead of retaining dirty in-memory ratchets.
+- Root `make check` passes 80 tests, Clippy and rustdoc. Fifteen native room tests
+  pass on each of Fedora 44, Mint 22.3 and kk-peer-3, including actual SIGKILL during
+  an outstanding SQL transaction and real failed SQLite COMMIT constraints.
+- Evidence: `lab/tmp/native-crypto-1792952844042400963.json`; native executable
+  SHA-256 `a75cdf2c720792092bb660d00deb04b16828444e5f8b12f30ae6e8c89bec715c`.
+  This is per-OS crypto/storage evidence, not cross-guest room networking.
+- All guests/network have been stopped. Ordered public control, a durable applied
+  consensus/log cursor, actual room admission/replication and the later gates are
+  still open. Private databases must never become public replication snapshots.
+
+## MLS Crypto Primitive Update (2026-10-25)
+
+- Unpublished 0.8 now contains an actual OpenMLS group state machine in
+  `src/rooms/group.rs`: create/join, prepared add/remove, withheld Welcome,
+  exact-byte/epoch confirmation, explicit verified rejection, credential/proposal
+  authorization, replay-protected text and epoch-key removal behavior.
+- The complete local `make check` passes 71 Rust tests, Clippy and rustdoc.
+- Six real crypto tests pass natively on each of Fedora 44, Mint 22.3 and the
+  fresh Fedora peer. Raw evidence: `lab/tmp/native-crypto-1792948757956428627.json`;
+  executable SHA-256 `53fdad26934cfe9c510e7e5c5ade6e6af7bff5105dc27be51dd0e8de2c26262c`.
+  Each guest independently executes the crypto tests; this is NOT a cross-guest
+  room transport, ordering or persistence gate.
+- Tests include a valid MLS signature claiming the wrong certificate, secret
+  masking, message replay/reordering, stale epoch refusal, a removed creator's old
+  keys failing to decrypt, delegated admission, inactive-issuer refusal and valid
+  but unauthorized MLS commits. Conflicting preparation refuses silent override.
+- Crypto provider is official Libcrux 0.4.0 with distinct Ed25519 MLS keys and a
+  device-signed room/subject/grant/key binding. Ring authenticates device records.
+  The RustCrypto-provider trial conflicted with age's pinned prerelease KEM;
+  selecting the official compatible provider restored age's tested dependencies
+  without modifying cryptographic implementations or weakening verification.
+- All guests/network are stopped at rest. Network room admission, authoritative
+  ordered delivery, private durable state and replication are still open.
+  Read `docs/rooms.md` and `docs/room-runtime.md` before wiring a runtime.
+
+## Publication And Room-Authority Start (2026-10-25)
+
+- Node checkpoint `5b5a2f630b96907b23c4190569342cf5631e383e` is pushed to both
+  remotes. CI portability fix `e0493c75ac27ce54b1bbc1ba8e1b7a2008d612f5` is also pushed.
+- GitHub run `40208256307` passes both Rust and lab-static jobs. GitLab pipeline
+  `2986728389` succeeds. The first GitHub lab run exposed a hardcoded temporary
+  directory; it is fixed, not ignored. Deprecated action runtimes, empty cache
+  matching and moving runner labels were also replaced with explicit pinned choices.
+- All three guests and the isolated network are stopped at rest.
+- Unpublished `0.8.0-dev.1` starts room-scoped signed authority: `src/rooms.rs`,
+  `src/signed.rs`, four passing local tests in `tests/rooms.rs`. Proofs bind exact
+  creator/subject certificate keys, room, parent, rights and domain. Chains are
+  bounded; wrong issuers, escalation, substitution, cross-room replay and cycles fail.
+- These are offline authorization proofs only. No global contact is imported and
+  no network room-admission or room-revocation gate is claimed by those tests.
+- Group cryptography should reuse OpenMLS/RFC 9420, not a home-grown group cipher.
+  Primary docs were checked for credential/key binding, epochs, concurrent commits,
+  application proposal validation and storage. Ordered delivery and K&K policy are
+  still application responsibilities; OpenMLS alone does not close those gates.
+
 ## Verified Node Checkpoint: 0.7.0 (2026-10-25)
 
 - Final 0.7.0 binary and migrated canonical `lab/` pass all 66 scenarios after a

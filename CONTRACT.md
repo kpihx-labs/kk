@@ -1,5 +1,14 @@
 # K&K Contract
 
+## 0.8 Development Boundary
+
+The room crypto and private-storage primitives are specified in
+[docs/rooms.md](docs/rooms.md). They are implemented and tested, but their
+ordered-delivery precondition is not a network consensus proof. The remaining
+runtime boundary is [docs/room-runtime.md](docs/room-runtime.md). No room-network,
+replication, media, frontend or portable-release gate is closed by this checkpoint.
+The older scope snapshots below are retained for provenance.
+
 > One core. Two verified devices. No mandatory intermediary.
 >
 > Authority: this contract wins over implementation and other documentation.

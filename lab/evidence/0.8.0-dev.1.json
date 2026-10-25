@@ -1,0 +1,34 @@
+{
+  "version": "0.8.0-dev.1",
+  "date": "2026-10-25",
+  "scope": "MLS crypto and local private persistence; NOT a cross-guest room runtime",
+  "rust_tests_passed": 80,
+  "lab_static_tests_passed": 6,
+  "native_distinct_room_tests_per_guest": 15,
+  "native_guest_count": 3,
+  "native_guests": ["fedora-44", "mint-22.3", "kk-peer-3"],
+  "native_raw_record": "lab/tmp/native-crypto-1792952844042400963.json",
+  "native_executable_sha256": "a75cdf2c720792092bb660d00deb04b16828444e5f8b12f30ae6e8c89bec715c",
+  "storage": {
+    "provider": "openmls_sqlite_storage 0.3.0 with bundled SQLite",
+    "privacy": "Owned Unix 0700 directory and 0600 regular single-link file; not encryption at rest",
+    "exclusive_lease": true,
+    "sync": "FULL",
+    "journal": "DELETE",
+    "secure_delete": true,
+    "process_kill_recovery_test": true,
+    "failed_commit_real_sqlite_constraint_test": true,
+    "ciphertext_withheld_on_failed_commit": true,
+    "last_durable_public_view_retained": true
+  },
+  "not_proven_by_this_record": [
+    "room transport between guests",
+    "authoritative distributed order",
+    "Byzantine consensus",
+    "hardware power-loss recovery",
+    "global revocation on an uninformed partition",
+    "native camera/audio/screen",
+    "Windows/macOS native operation",
+    "signed portable distribution"
+  ]
+}
