@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.6.0 - 2026-10-25
+
+Implement bounded network OPAQUE pairing with local-only registration, six-word
+invitations, monotonic expiry and one global attempt. Encrypt certificate/grant
+exchange, confirm both documents, prove both private keys with strict pinned TLS
+and bind the proof to its exporter before contact persistence. Add private QR
+image export/import, aliases/default profiles, incoming/outgoing permissions,
+fingerprint revocation, explicit restore and archived atomic trust updates.
+
+Enforce permissions in the library before effects and at file checkpoints; old
+explicit-certificate commands cannot bypass known restrictions. Reject changed
+keys, missing identity over existing trust, and stale pairing permission commits.
+Resolve account data directories without relying on HOME in service environments.
+
+56 local tests and all 53 cold-start guest scenarios pass. Tests cover malformed,
+wrong, expired, replayed and racing attempts, false certificate ownership, missing
+confirmation, denied operations, active-stream revocation and concurrent policy
+changes. This composition is not independently security-audited. Persistent mesh,
+media, optional UI and signed binary distribution remain later gates.
+
 ## 0.5.0 - 2026-10-25
 
 Replace the message-specific CLI with positional send/receive and -f for files.

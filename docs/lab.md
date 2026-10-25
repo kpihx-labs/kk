@@ -4,10 +4,22 @@
 >
 > Not a physical Wi-Fi test or a production security audit.
 
-Current core: K&K 0.5.0, unified payloads + protected input + age envelopes.
+Current core: K&K 0.6.0, authenticated pairing, profiles, permissions and revocation.
 The stage 1 evidence below is retained as history; later gates are recorded next.
 
 ## Discovery And File Gates
+
+0.6 cold gate: all 53 scenarios pass in run `2a684d63f667`. The extension exercises
+real guest-to-guest PAKE and temporary mutual-TLS proof, private invitation/QR
+handoff through trusted virtio control, peer aliases, file rights, wrong code/pin,
+replay, missing consent, malformed frame bounds, expiry, racing attempts, changed
+keys, revocation during transfer and stale-confirmation rejection after a policy
+change. No invitation code is included in result logs. Local checks pass 56 tests.
+
+```text
+kk-results-cfb785cc0758-1792932918565030127.json       first 52-scenario pass
+kk-results-2a684d63f667-1792933990374310154.json       full 53-scenario cold gate
+```
 
 0.5 extension: run `4bd7dfba2ee2` passed all 34 scenarios. The seven new cases use
 synthetic content only: redacted stdin delivery, private output, inline-secret

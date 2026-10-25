@@ -5,8 +5,8 @@
 The operator authorized completion and publication, without subagents. The older
 gate notes below are historical; only the backend-before-UI gate remains active.
 
-1. Verify the 0.5 unified CLI, local sensitive handling and age envelopes in real VMs.
-2. Implement PAKE/QR invitation, transcript/key binding, contacts, grants and revocation.
+1. [DONE] Verify the 0.5 unified CLI, local sensitive handling and age envelopes in real VMs.
+2. [DONE 0.6] Implement PAKE/QR invitation, transcript/key binding, contacts, grants and revocation.
 3. Replace one-shot-only orchestration with bounded multi-peer sessions and typed events.
 4. Implement authenticated membership, creator-independent lifecycle and replicated state.
 5. Implement audio, camera/screen tracks, native sources/sinks, pacing and congestion behavior.

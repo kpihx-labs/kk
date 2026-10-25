@@ -9,6 +9,9 @@ backend primitives, secure pairing/contacts, multi-peer sessions and media, then
 the optional UI, verified deployment and publication. Work is performed by the
 principal agent alone. The detailed inventory and acceptance conditions are in
 [docs/backend-map.md](docs/backend-map.md); unimplemented targets are labelled.
+Pairing/profile authorization and its failure semantics are defined by the
+normative addendum [docs/pairing.md](docs/pairing.md). Local tests are not a
+replacement for the required cross-device and adversarial VM acceptance gate.
 
 Unified CLI target: `send TARGET PAYLOAD`, `send TARGET PATH -f`, stdin `-`, and
 local sensitive handling `-s`. The `--message` option is removed, not aliased.

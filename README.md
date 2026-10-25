@@ -16,13 +16,15 @@
 
 | Available | Verified | Later, separately approved |
 | --- | --- | --- |
-| Unified send/receive, protected input, age envelopes, discovery and resumable files | 45 Rust tests + 34 VM scenarios | Pairing/contacts, mesh, media, UI, portable publication |
+| Unified transfer, PAKE/QR pairing, contacts, grants and revocation | 56 Rust tests + 53 VM scenarios | Persistent mesh, media, UI, portable publication |
 
 The contract is approved. Local tests include IPv4, IPv6 and two CLI processes.
 Fedora 44 and Mint 22.3 pass real guest-to-guest messaging, discovery and file scenarios.
 The earlier 27-scenario suite passed after a cold restart. The 0.5 CLI and envelope
 extension passed 34 VM scenarios. Full product completion is still in progress;
 see [the backend map](docs/backend-map.md) and TODO.md for unimplemented targets.
+The 0.6 cold replay passes 53 scenarios, including active-transfer revocation and
+refusal to overwrite a concurrent local permission change during pairing.
 This is a development tool, not an audited production security product.
 
 ## Build
@@ -68,6 +70,25 @@ Create two identities on this PC using fresh directory names:
 This example is loopback, not a two-device LAN test.
 
 ## Pair Two Devices
+
+The current code-based path needs no manual certificate files:
+
+```sh
+# A: choose the local peer name and rights granted to it.
+./target/release/kk pair --listen 192.168.1.10:45453 --as bob --allow text,files
+
+# B: enter the code through hidden input, then compare CONFIRM on both screens.
+./target/release/kk pair 192.168.1.10:45453 --as alice --allow text,files
+
+# Later operations use the saved identity and certificate.
+./target/release/kk receive --bind 192.168.1.10:45454 --from bob
+./target/release/kk send alice "hello"
+./target/release/kk trust revoke alice
+```
+
+QR export/import, private profiles and the security/failure model are documented
+in [pairing.md](docs/pairing.md). The manual certificate path below remains an
+explicit low-level option and cannot bypass revocation in its selected profile.
 
 ```text
   PC A creates its identity          PC B creates its identity

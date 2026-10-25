@@ -99,10 +99,19 @@ impl FileReceiver {
     }
 
     pub async fn receive(self, deadline: Duration) -> Result<Receipt> {
+        self.receive_authorized(deadline, || Ok(())).await
+    }
+
+    pub async fn receive_authorized(
+        self,
+        deadline: Duration,
+        authorize: impl Fn() -> Result<()>,
+    ) -> Result<Receipt> {
         transport::validate_duration(deadline, config::MAX_FILE_TIMEOUT)?;
         tokio::time::timeout(deadline, async {
             let connection = transport::accept(&self.endpoint, &self.peer).await?;
             let outcome: Result<Receipt> = async {
+                authorize()?;
                 let (mut response, mut request) =
                     connection.accept_bi().await.map_err(connection_error)?;
                 let mut offer = [0; 41];
@@ -119,6 +128,7 @@ impl FileReceiver {
                 let mut binding = [0; 73];
                 binding[..41].copy_from_slice(&offer);
                 binding[41..].copy_from_slice(&Sha256::digest(self.peer.certificate.as_ref()));
+                authorize()?;
                 let mut store = Store::open(&self.policy.destination, &binding).await?;
                 let offset = store.file.metadata().await?.len();
                 if offset > bytes {
@@ -133,6 +143,7 @@ impl FileReceiver {
                 response.write_all(&offset.to_be_bytes()).await?;
                 response.write_all(&prefix).await?;
                 let mut remaining = bytes - offset;
+                let mut since_authorization = 0usize;
                 let mut buffer = Zeroizing::new(vec![0; config::FILE_CHUNK_BYTES]);
                 while remaining > 0 {
                     let count = remaining.min(buffer.len() as u64) as usize;
@@ -144,6 +155,11 @@ impl FileReceiver {
                         return Err(Error::Protocol);
                     }
                     store.file.write_all(&buffer[..read]).await?;
+                    since_authorization += read;
+                    if since_authorization >= config::FILE_CHUNK_BYTES {
+                        authorize()?;
+                        since_authorization = 0;
+                    }
                     remaining -= read as u64;
                 }
                 if request.read(&mut [0]).await?.is_some() {
@@ -158,6 +174,7 @@ impl FileReceiver {
                 {
                     return Err(Error::Integrity);
                 }
+                authorize()?;
                 store.commit().await?;
                 response.write_all(&expected).await?;
                 response.finish().map_err(|_| Error::Network)?;
@@ -242,7 +259,29 @@ pub async fn send_file_with_policy(
     sensitive: bool,
     deadline: Duration,
 ) -> Result<Receipt> {
+    send_file_authorized(
+        destination,
+        identity,
+        peer,
+        source,
+        sensitive,
+        deadline,
+        || Ok(()),
+    )
+    .await
+}
+
+pub async fn send_file_authorized(
+    destination: SocketAddr,
+    identity: &Identity,
+    peer: &Peer,
+    source: &Path,
+    sensitive: bool,
+    deadline: Duration,
+    authorize: impl Fn() -> Result<()>,
+) -> Result<Receipt> {
     transport::validate_duration(deadline, config::MAX_FILE_TIMEOUT)?;
+    authorize()?;
     tokio::time::timeout(deadline, async {
         let mut file = source_file(source)?;
         let info = info(&mut file).await?;
@@ -254,6 +293,7 @@ pub async fn send_file_with_policy(
             .map_err(connection_error)?;
         let outcome: Result<Receipt> = async {
             transport::verify_peer(&connection, peer)?;
+            authorize()?;
             let (mut request, mut response) =
                 connection.open_bi().await.map_err(connection_error)?;
             request.write_all(&[u8::from(sensitive)]).await?;
@@ -269,6 +309,7 @@ pub async fn send_file_with_policy(
             let mut remaining = info.bytes - offset;
             let mut buffer = Zeroizing::new(vec![0; config::FILE_CHUNK_BYTES]);
             while remaining > 0 {
+                authorize()?;
                 let count = remaining.min(buffer.len() as u64) as usize;
                 file.read_exact(&mut buffer[..count])
                     .await
@@ -279,6 +320,7 @@ pub async fn send_file_with_policy(
             if file.read(&mut [0]).await? != 0 {
                 return Err(Error::Integrity);
             }
+            authorize()?;
             request.finish().map_err(|_| Error::Network)?;
             if response.read_to_end(32).await? != info.sha256 {
                 return Err(Error::Integrity);

@@ -1,6 +1,6 @@
 [package]
 name = "kk"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 description = "Local-first communication primitives between trusted devices"
 license = "BUSL-1.1"
@@ -8,20 +8,31 @@ publish = false
 include = ["/src/**/*.rs", "/tests/**/*.rs", "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/README.md", "/CONTRACT.md", "/CHANGELOG.md", "/docs/*.md"]
 
 [package.metadata.kk]
-contract-version = "0.5.0"
+contract-version = "0.6.0"
 
 [lints.rust]
 unsafe_code = "forbid"
 
 [dependencies]
 age = { version = "0.12.1", default-features = false, features = ["armor", "async"] }
+bip39 = { version = "3.0.0", default-features = false, features = ["std"] }
+chacha20poly1305 = "0.10"
 clap = { version = "4.6.7", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+dirs = "7.0.0"
 futures-util = { version = "0.3.34", features = ["io"] }
+hkdf = "0.12"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
 mdns-sd = "0.21.6"
+opaque-ke = { version = "4.0.1", default-features = false, features = ["ristretto255", "argon2", "std"] }
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+quircs = "0.10.3"
 rcgen = { version = "0.14.10", default-features = false, features = ["ring"] }
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
 sha2 = "0.11.1"
+sha2_10 = { version = "0.10", package = "sha2" }
 tempfile = "3.27.0"
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["rt", "macros", "signal", "time", "fs", "io-util", "net"] }

@@ -1,4 +1,5 @@
 use clap::{Args, CommandFactory, Parser, Subcommand};
+use kk::contacts::{Action, Registry};
 use kk::{
     Error, Identity, Listener, Peer, Result,
     discovery::{Announcement, ServiceKind},
@@ -12,6 +13,7 @@ use std::{
     time::Duration,
 };
 use zeroize::Zeroizing;
+mod pair;
 
 #[derive(Parser)]
 #[command(
@@ -20,6 +22,8 @@ use zeroize::Zeroizing;
     about = "Direct encrypted communication; ordinary traffic is never plaintext"
 )]
 struct Cli {
+    #[arg(long, global = true)]
+    profile: Option<PathBuf>,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -27,25 +31,69 @@ struct Cli {
 #[derive(Args)]
 struct TrustArgs {
     #[arg(long)]
-    identity: PathBuf,
+    identity: Option<PathBuf>,
     #[arg(long)]
-    peer: PathBuf,
+    peer: Option<PathBuf>,
 }
 impl TrustArgs {
-    fn load(&self) -> Result<(Identity, Peer)> {
-        Ok((Identity::load(&self.identity)?, Peer::load(&self.peer)?))
+    fn load(
+        &self,
+        selected: Option<&std::path::Path>,
+        alias: Option<&str>,
+        action: Action,
+        inbound: bool,
+    ) -> Result<(Identity, Peer, Option<SocketAddr>, Registry)> {
+        let directory = profile_directory(selected)?;
+        let registry = Registry::open(directory.clone())?;
+        let identity = match &self.identity {
+            Some(path) => Identity::load(path)?,
+            None => kk::profile::identity(&directory, false)?,
+        };
+        let (peer, endpoint) = if let Some(alias) = alias {
+            if self.peer.is_some() {
+                return Err(Error::Configuration(
+                    "named contacts cannot override their certificate",
+                ));
+            }
+            let contact = registry.resolve(alias, &identity, action, inbound)?;
+            (contact.peer()?, contact.endpoints.first().copied())
+        } else {
+            let path = self.peer.as_ref().ok_or(Error::Configuration(
+                "select a paired contact or an explicit --peer certificate",
+            ))?;
+            (Peer::load(path)?, None)
+        };
+        registry.authorize_peer(&peer, &identity, action, inbound)?;
+        Ok((identity, peer, endpoint, registry))
     }
+}
+
+fn profile_directory(selected: Option<&std::path::Path>) -> Result<PathBuf> {
+    let path = match selected {
+        Some(path) => path.to_owned(),
+        None => kk::profile::base_directory()?,
+    };
+    kk::profile::private_directory(&path, true)?;
+    Ok(path)
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Initialize a private default identity; never replaces an existing key
+    Init,
+    /// Single-use PAKE pairing, confirmation, strict TLS proof and contact storage
+    Pair(pair::PairArgs),
+    Trust {
+        #[command(subcommand)]
+        command: pair::TrustCommand,
+    },
     Identity {
         #[command(subcommand)]
         command: IdentityCommand,
     },
     /// Send literal text by default; -f selects a path, '-' selects stdin
     Send {
-        destination: SocketAddr,
+        destination: String,
         payload: Option<String>,
         #[arg(short = 'f', long, requires = "payload")]
         file: bool,
@@ -68,6 +116,8 @@ enum Command {
     },
     /// Receive once; -f enables an explicitly consented file destination
     Receive {
+        #[arg(long)]
+        from: Option<String>,
         #[arg(long)]
         bind: SocketAddr,
         #[arg(short = 'f', long, requires_all = ["output", "accept"])]
@@ -151,8 +201,20 @@ fn cipher_path(selected: Option<PathBuf>) -> Result<PathBuf> {
 }
 
 pub(crate) async fn run() -> Result<()> {
-    match Cli::parse().command {
+    let Cli { profile, command } = Cli::parse();
+    match command {
         None => Cli::command().print_help()?,
+        Some(Command::Init) => {
+            let directory = profile_directory(profile.as_deref())?;
+            let identity = kk::profile::identity(&directory, true)?;
+            writeln!(
+                io::stdout(),
+                "IDENTITY sha256:{}",
+                identity.peer().fingerprint()
+            )?;
+        }
+        Some(Command::Pair(arguments)) => pair::run(arguments, profile.as_deref()).await?,
+        Some(Command::Trust { command }) => pair::trust(command, profile.as_deref())?,
         Some(Command::Identity { command }) => {
             let peer = match command {
                 IdentityCommand::Create { directory } => Identity::create(&directory)?.peer(),
@@ -218,9 +280,24 @@ pub(crate) async fn run() -> Result<()> {
             } else {
                 Some(kk::input::text(payload.as_deref(), sensitive).await?)
             };
-            let (identity, peer) = trust.load()?;
-            let deadline = Duration::from_secs(timeout);
             let sealing = seal || seal_to.is_some();
+            let action = if file || sealing {
+                Action::Files
+            } else {
+                Action::Text
+            };
+            let explicit = destination.parse::<SocketAddr>().ok();
+            let alias = if explicit.is_some() {
+                None
+            } else {
+                Some(destination.as_str())
+            };
+            let (identity, peer, hint, registry) =
+                trust.load(profile.as_deref(), alias, action, false)?;
+            let destination = explicit
+                .or(hint)
+                .ok_or(Error::Configuration("contact has no endpoint hint"))?;
+            let deadline = Duration::from_secs(timeout);
             if envelope.is_some() && !sealing {
                 return Err(Error::Configuration("an envelope path requires encryption"));
             }
@@ -259,24 +336,34 @@ pub(crate) async fn run() -> Result<()> {
                 None
             };
             if let Some(path) = file_path {
-                let receipt = kk::files::send_file_with_policy(
+                let receipt = kk::files::send_file_authorized(
                     destination,
                     &identity,
                     &peer,
                     &path,
                     sensitive || sealing,
                     deadline,
+                    || registry.authorize_peer(&peer, &identity, Action::Files, false),
                 )
                 .await?;
                 file_receipt("FILE_ACK", &receipt, sensitive || sealing)?;
             } else {
                 let text = text.expect("text input");
-                kk::send_with_policy(destination, &identity, &peer, &text, sensitive, deadline)
-                    .await?;
+                kk::send_authorized(
+                    destination,
+                    &identity,
+                    &peer,
+                    &text,
+                    sensitive,
+                    deadline,
+                    || registry.authorize_peer(&peer, &identity, Action::Text, false),
+                )
+                .await?;
                 writeln!(io::stdout(), "ACK {} bytes", text.len())?;
             }
         }
         Some(Command::Receive {
+            from,
             bind,
             file,
             sensitive,
@@ -288,7 +375,9 @@ pub(crate) async fn run() -> Result<()> {
             trust,
             timeout,
         }) => {
-            let (identity, peer) = trust.load()?;
+            let action = if file { Action::Files } else { Action::Text };
+            let (identity, peer, _, registry) =
+                trust.load(profile.as_deref(), from.as_deref(), action, true)?;
             if file {
                 let policy =
                     ReceivePolicy::accept(output.expect("required file destination"), max_bytes)?;
@@ -300,7 +389,9 @@ pub(crate) async fn run() -> Result<()> {
                     ServiceKind::Files,
                 )?;
                 writeln!(io::stderr(), "LISTENING {}", receiver.local_addr()?)?;
-                let receive = receiver.receive(Duration::from_secs(timeout));
+                let receive = receiver.receive_authorized(Duration::from_secs(timeout), || {
+                    registry.authorize_peer(&peer, &identity, Action::Files, true)
+                });
                 let receipt = if let Some(advertisement) = &advertisement {
                     tokio::select! { result = receive => result?, error = advertisement.failure() => return Err(error) }
                 } else {
@@ -316,7 +407,9 @@ pub(crate) async fn run() -> Result<()> {
                     ServiceKind::Messages,
                 )?;
                 writeln!(io::stderr(), "LISTENING {}", listener.local_addr()?)?;
-                let receive = listener.receive(Duration::from_secs(timeout));
+                let receive = listener.receive_authorized(Duration::from_secs(timeout), || {
+                    registry.authorize_peer(&peer, &identity, Action::Text, true)
+                });
                 let received = if let Some(advertisement) = &advertisement {
                     tokio::select! { result = receive => result?, error = advertisement.failure() => return Err(error) }
                 } else {

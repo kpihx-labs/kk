@@ -7,13 +7,13 @@
 
 | Primitive | Existing foundation | Remaining work / proof |
 | --- | --- | --- |
-| Identity and encrypted transport | Pinned mutual TLS over QUIC | Device lifecycle, ergonomic trust and multi-peer admission |
-| Message and URL bytes | Positional text/stdin, wire sensitive marker and protected output | Continuous inbox and peer aliases |
-| File transfer | Consent, hashes, prefix resume, no clobber | Unified interface, permission integration, progress/cancellation events |
+| Identity and encrypted transport | Pinned mutual TLS, default profiles and key proof | Multi-peer admission and further platform evidence |
+| Message and URL bytes | Positional text/stdin, sensitive policy, named contacts | Continuous inbox and typed session events |
+| File transfer | Consent, resume, no clobber, incoming/outgoing grants and revocation | Persistent-session integration and typed progress events |
 | Persistent encryption | Standard age envelopes, recipient/passphrase paths, no sender plaintext staging | Session/contact integration and additional platform evidence |
-| Discovery | Unverified IPv4 mDNS | Pair/session capabilities, address changes and clear diagnostics |
-| Pairing | Manual certificate comparison | Single-use invitation, PAKE, transcript/key binding, two-sided confirmation |
-| Contacts and permissions | One selected certificate per operation | Private trust registry, grants, revocation and changed-key refusal |
+| Discovery | Unverified IPv4 message/file/pair mDNS | Session capabilities and authenticated address refresh |
+| Pairing | OPAQUE, expiring one-attempt code, private QR import/export and strict TLS key proof | Native camera QR capture and further review |
+| Contacts and permissions | Private registry, named peers, grants, revocation, changed-key/CAS refusal | Live remote grant synchronization and session integration |
 | Sessions | One connection/operation | Multiple concurrent authenticated links and bounded events |
 | Membership | Not implemented | Join/leave, leases, reconnect, authorized admission, partition behavior |
 | Shared state | Not implemented | Replicated snapshots/events, bounded convergence and signed authority |
@@ -23,14 +23,15 @@
 | Deployment | Local Linux binary | Verified portable artifacts, installation, provenance and offline bundle |
 | Web adapter | Not implemented | Only after backend gates; no business or trust logic in UI |
 
-The 0.5 foundation passes 45 local tests and 34 real two-guest scenarios. Pairing,
-contacts, multi-peer sessions, mesh/state, media and the frontend are not complete.
+The 0.5 foundation passed 45 local tests and 34 real two-guest scenarios. The 0.6
+checkpoint passes 56 local tests and a 53-scenario cold replay. Multi-peer sessions,
+mesh/state, media and the frontend are not complete.
 Public remotes now exist at github.com/kpihx-labs/kk and gitlab.com/kpihx-labs/kk;
 this is not yet a signed release or a claim of a finished product.
 
-### Next Pairing Implementation Decision
+### Pairing Implementation Decision
 
-Evaluate opaque-ke 4.0.1 (RFC 9807, Ristretto255/TripleDH) with Argon2id, not the
+The 0.6 implementation uses opaque-ke 4.0.1 (RFC 9807, Ristretto255/TripleDH) with Argon2id, not the
 Identity KSF used by its quick examples. NCC audited an earlier implementation
 in 2021; neither 4.0.1 nor our ceremony is thereby independently audited.
 
@@ -63,8 +64,9 @@ copied or relicensed.
  send TARGET PATH -f --seal-to AGEKEY encrypted envelope, even after reception
 ```
 
-The unified syntax and envelope paths are implemented in 0.5 with explicit IP and
-certificate arguments. Named targets and trust defaults are not implemented yet.
+The unified syntax and envelope paths are implemented in 0.5. The 0.6 checkpoint
+adds named targets and default private trust profiles; explicit certificates
+remain an expert path, subject to the selected profile's restrictions.
 There is no `--message`. Quoting does not make argv secret: sensitive inline text
 must be rejected. Normal traffic is already encrypted; sensitive mode does not
 pretend ordinary mode uses weaker transport cryptography.

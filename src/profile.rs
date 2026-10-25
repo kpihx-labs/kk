@@ -45,12 +45,65 @@ pub fn parent(destination: &Path) -> Result<&Path> {
 }
 
 pub fn data_directory() -> Result<PathBuf> {
-    let root = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
-        .ok_or(Error::Configuration("no user data directory is available"))?;
-    let path = root.join("kk");
+    let path = base_directory()?;
     private_directory(&path, true)?;
     Ok(path)
+}
+
+pub fn base_directory() -> Result<PathBuf> {
+    // Resolve the OS account home too: service/guest-agent environments may
+    // intentionally omit HOME. No machine-specific fallback path is invented.
+    let root = dirs::data_local_dir()
+        .ok_or(Error::Configuration("no user data directory is available"))?;
+    Ok(root.join("kk"))
+}
+
+pub fn identity(directory: &Path, create: bool) -> Result<crate::Identity> {
+    private_directory(directory, create)?;
+    let path = directory.join("identity");
+    if create && !path.exists() {
+        if directory.join("contacts.json").exists() || directory.join("contact-history").exists() {
+            return Err(Error::Identity(
+                "profile identity is missing but trust data exists; no regeneration",
+            ));
+        }
+        crate::Identity::create(&path)
+    } else if !path.exists() {
+        Err(Error::Identity(
+            "profile is not initialized; run kk init or pair",
+        ))
+    } else {
+        crate::Identity::load(&path)
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    #[test]
+    fn missing_identity_is_not_regenerated_over_existing_trust() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("profile");
+        identity(&directory, true).unwrap();
+        std::fs::write(
+            directory.join("contacts.json"),
+            b"synthetic existing trust marker",
+        )
+        .unwrap();
+        std::fs::rename(
+            directory.join("identity"),
+            root.path().join("retained-identity"),
+        )
+        .unwrap();
+        assert!(matches!(
+            identity(&directory, true),
+            Err(Error::Identity(_))
+        ));
+        assert!(!directory.join("identity").exists());
+        assert!(
+            root.path()
+                .join("retained-identity/private-key.der")
+                .exists()
+        );
+    }
 }

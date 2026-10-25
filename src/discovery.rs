@@ -11,17 +11,27 @@ use mdns_sd::{DaemonEvent, IfKind, ResolvedService, ServiceDaemon, ServiceEvent,
 use crate::{Error, Identity, Result, config};
 
 const SERVICE: &str = "_kk._udp.local.";
+const PAIR_SERVICE: &str = "_kk-pair._tcp.local.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServiceKind {
     Messages,
     Files,
+    Pairing,
 }
 impl ServiceKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Messages => "message",
             Self::Files => "file",
+            Self::Pairing => "pair",
+        }
+    }
+    fn service(self) -> &'static str {
+        if self == Self::Pairing {
+            PAIR_SERVICE
+        } else {
+            SERVICE
         }
     }
 }
@@ -96,7 +106,7 @@ impl Announcement {
             ("fp", fingerprint.as_str()),
         ];
         let service = ServiceInfo::new(
-            SERVICE,
+            kind.service(),
             name,
             &hostname,
             std::net::IpAddr::V4(*address.ip()),
@@ -147,26 +157,36 @@ pub async fn discover(interface: Ipv4Addr, duration: Duration) -> Result<Vec<Can
         .daemon
         .browse(SERVICE)
         .map_err(|_| Error::Discovery("browse failed"))?;
+    let pairing = worker
+        .daemon
+        .browse(PAIR_SERVICE)
+        .map_err(|_| Error::Discovery("pair browse failed"))?;
     let deadline = tokio::time::sleep(duration);
     tokio::pin!(deadline);
     let mut found = BTreeMap::new();
     loop {
-        tokio::select! {
+        let event = tokio::select! {
             _ = &mut deadline => break,
             error = worker.failure() => return Err(error),
-            event = receiver.recv_async() => match event {
-                Ok(ServiceEvent::ServiceResolved(service)) => {
-                    if let Some(candidate) = candidate(&service) {
-                        if !found.contains_key(&service.fullname) && found.len() == config::MAX_DISCOVERED_PEERS {
-                            return Err(Error::Discovery("result limit reached"));
-                        }
-                        found.insert(service.fullname.clone(), candidate);
+            event = receiver.recv_async() => event,
+            event = pairing.recv_async() => event,
+        };
+        match event {
+            Ok(ServiceEvent::ServiceResolved(service)) => {
+                if let Some(candidate) = candidate(&service) {
+                    if !found.contains_key(&service.fullname)
+                        && found.len() == config::MAX_DISCOVERED_PEERS
+                    {
+                        return Err(Error::Discovery("result limit reached"));
                     }
-                },
-                Ok(ServiceEvent::ServiceRemoved(_, fullname)) => { found.remove(&fullname); },
-                Err(_) => return Err(Error::Discovery("browse subscription closed")),
-                _ => {},
+                    found.insert(service.fullname.clone(), candidate);
+                }
             }
+            Ok(ServiceEvent::ServiceRemoved(_, fullname)) => {
+                found.remove(&fullname);
+            }
+            Err(_) => return Err(Error::Discovery("browse subscription closed")),
+            _ => {}
         }
     }
     Ok(found.into_values().collect())
@@ -176,9 +196,13 @@ fn candidate(service: &ResolvedService) -> Option<Candidate> {
     let kind = match service.get_property_val_str("kind")? {
         "message" => ServiceKind::Messages,
         "file" => ServiceKind::Files,
+        "pair" => ServiceKind::Pairing,
         _ => return None,
     };
-    let name = service.fullname.strip_suffix(SERVICE)?.strip_suffix('.')?;
+    let name = service
+        .fullname
+        .strip_suffix(kind.service())?
+        .strip_suffix('.')?;
     let fingerprint = service.get_property_val_str("fp")?;
     let addresses = service.get_addresses_v4();
     if name.is_empty()

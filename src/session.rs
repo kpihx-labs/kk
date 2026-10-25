@@ -45,9 +45,18 @@ impl Listener {
 
     /// Receive one validated message. The deadline includes waiting for a peer.
     pub async fn receive(self, deadline: Duration) -> Result<ReceivedText> {
+        self.receive_authorized(deadline, || Ok(())).await
+    }
+
+    pub async fn receive_authorized(
+        self,
+        deadline: Duration,
+        authorize: impl Fn() -> Result<()>,
+    ) -> Result<ReceivedText> {
         transport::validate_duration(deadline, config::MAX_FILE_TIMEOUT)?;
         tokio::time::timeout(deadline, async {
             let connection = transport::accept(&self.endpoint, &self.peer).await?;
+            authorize()?;
             let (mut response, mut request) =
                 connection.accept_bi().await.map_err(connection_error)?;
             let mut flags = [0; 1];
@@ -71,6 +80,7 @@ impl Listener {
                 text: Zeroizing::new(text.to_owned()),
                 sensitive: flags[0] == 1,
             };
+            authorize()?;
             response
                 .write_all(&Sha256::digest(message.text().as_bytes()))
                 .await?;
@@ -102,7 +112,29 @@ pub async fn send_with_policy(
     sensitive: bool,
     deadline: Duration,
 ) -> Result<()> {
+    send_authorized(
+        destination,
+        identity,
+        peer,
+        text,
+        sensitive,
+        deadline,
+        || Ok(()),
+    )
+    .await
+}
+
+pub async fn send_authorized(
+    destination: SocketAddr,
+    identity: &Identity,
+    peer: &Peer,
+    text: &str,
+    sensitive: bool,
+    deadline: Duration,
+    authorize: impl Fn() -> Result<()>,
+) -> Result<()> {
     transport::validate_duration(deadline, config::MAX_FILE_TIMEOUT)?;
+    authorize()?;
     if text.len() > config::MAX_MESSAGE_BYTES {
         return Err(Error::MessageTooLarge);
     }
@@ -114,12 +146,14 @@ pub async fn send_with_policy(
             .await
             .map_err(connection_error)?;
         transport::verify_peer(&connection, peer)?;
+        authorize()?;
         let (mut request, mut response) = connection.open_bi().await.map_err(connection_error)?;
         request.write_all(&[u8::from(sensitive)]).await?;
         request
             .write_all(&(text.len() as u32).to_be_bytes())
             .await?;
         request.write_all(text.as_bytes()).await?;
+        authorize()?;
         request.finish().map_err(|_| Error::Network)?;
         if response.read_to_end(32).await? != Sha256::digest(text.as_bytes()).as_slice() {
             return Err(Error::Protocol);

@@ -33,6 +33,12 @@ pub enum Error {
     FileTooLarge,
     #[error("encryption or decryption failed")]
     Encryption,
+    #[error("pairing failed or invitation is no longer available")]
+    Pairing,
+    #[error("operation is not authorized by the contact policy")]
+    Denied,
+    #[error("peer identity is revoked")]
+    Revoked,
 }
 
 impl Error {
@@ -54,6 +60,9 @@ impl Error {
             Self::Destination(_) => "DESTINATION",
             Self::FileTooLarge => "FILE_TOO_LARGE",
             Self::Encryption => "ENCRYPTION",
+            Self::Pairing => "PAIRING",
+            Self::Denied => "DENIED",
+            Self::Revoked => "REVOKED",
         }
     }
 }
