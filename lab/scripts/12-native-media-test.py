@@ -17,7 +17,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from kk_guest import Guest, declared_peers, virsh
+from kk_guest import Guest, declared_peers, selected_binary, virsh
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = "/usr/local/bin/kk"
@@ -46,7 +46,7 @@ def main():
     third = Guest(controller["name"])
     definition = ET.fromstring(virsh("net-dumpxml", "kk-isolated"))
     host_ip = definition.find("./ip").get("address")
-    binary = ROOT.parent / "target/release/kk"
+    binary = selected_binary()
     run = uuid.uuid4().hex[:12]
     directory = Path(tempfile.mkdtemp(prefix="native-media-", dir=ROOT / "tmp"))
     profile = directory / "host"

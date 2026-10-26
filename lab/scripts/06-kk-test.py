@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from kk_file_cases import file_cases
-from kk_guest import Guest, declared_peers, virsh, shutdown_guests
+from kk_guest import Guest, declared_peers, selected_binary, virsh, shutdown_guests
 from kk_node_cases import node_cases
 from kk_pair_cases import pair_cases
 from kk_sensitive_cases import sensitive_cases
@@ -47,7 +47,7 @@ def isolate(peer):
 
 
 def setup():
-    binary = ROOT.parent / "target/release/kk"
+    binary = selected_binary()
     data = binary.read_bytes()
     run_id = uuid.uuid4().hex[:12]
     work = "/var/tmp/kk-lab-" + run_id

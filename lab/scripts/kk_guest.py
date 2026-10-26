@@ -2,12 +2,19 @@
 
 import base64
 import json
+import os
 import subprocess
 import time
 from pathlib import Path, PurePosixPath
 import xml.etree.ElementTree as ET
 
 URI = "qemu:///system"
+
+
+def selected_binary():
+    """Replay an explicitly selected archive binary without replacing a build."""
+    default = Path(__file__).resolve().parents[2] / "target/release/kk"
+    return Path(os.environ.get("KK_TEST_BINARY", default)).resolve()
 
 
 def virsh(*args, input=None):

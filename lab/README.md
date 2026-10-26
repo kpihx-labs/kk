@@ -1,5 +1,14 @@
 # K&K Verification Lab
 
+## Exact Archive Replay
+
+Set `KK_TEST_BINARY` to the absolute path of an authenticated, extracted release
+executable to replay that exact binary through deployment, public room scenarios
+and the native media contention gate. Both deployment and host-side native media
+use the same selection; the existing build is never overwritten. Guest SHA-256
+verification and each result's binary digest still apply. Without this explicit
+selection the lab continues to use `target/release/kk`.
+
 > Test machinery, never a user runtime dependency.
 > Provisioning is authorized only for explicitly disposable guests.
 

@@ -12,6 +12,14 @@ from kk_guest import Guest
 
 
 class GuestControlTests(unittest.TestCase):
+    def test_explicit_archive_binary_selection_does_not_replace_the_default_build(self):
+        with patch.dict(os.environ, {}, clear=True):
+            default = kk_guest.selected_binary()
+            self.assertEqual(default, Path(kk_guest.__file__).resolve().parents[2] / "target/release/kk")
+            with patch.dict(os.environ, {"KK_TEST_BINARY": "/tmp/kk-archive-fixture/kk"}):
+                self.assertEqual(kk_guest.selected_binary(), Path("/tmp/kk-archive-fixture/kk"))
+            self.assertEqual(kk_guest.selected_binary(), default)
+
     def test_room_invitation_export_rejects_arbitrary_or_key_paths_before_guest_calls(self):
         guest = Guest("fixture")
         guest.run = Mock()
