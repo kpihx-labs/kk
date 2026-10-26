@@ -9,6 +9,24 @@ permissions:
   contents: read
 
 jobs:
+  dependency-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: RustSec/advisory-db
+          path: target/security-advisories
+          persist-credentials: false
+      - name: Pinned audit tool
+        run: cargo install --locked --version 0.22.2 cargo-audit
+      - name: Current advisory database revision
+        run: git --no-pager -C target/security-advisories show -s --format='%H %cI'
+      - name: Refuse vulnerabilities and maintenance warnings without suppression
+        run: cargo audit --db target/security-advisories --no-fetch --deny warnings
   lab-static:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -70,7 +88,7 @@ jobs:
           retention-days: 14
   release:
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    needs: [linux, lab-static]
+    needs: [linux, lab-static, dependency-audit]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

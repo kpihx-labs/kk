@@ -1,5 +1,15 @@
 # K&K
 
+## Release Gate Blocked (2026-10-27)
+
+This is a tested software candidate, not a security-qualified production release.
+The final RustSec pass reports four crypto advisories and two maintenance warnings
+in the current locked graph. No release tag has been created. Upstream remediation
+snapshots are being evaluated outside the product dependency graph; experimental
+snapshots are not silently promoted or substituted for the tested build.
+See [the blocking findings](docs/security-review.md). The release workflow now
+requires the unsuppressed dependency audit before signing or publishing a release.
+
 **Communication between your devices, without an obligatory cloud.**
 
 ## Current Linux Delivery: 0.8

@@ -1,5 +1,36 @@
 # Post-Integration Boundary Review
 
+## SR-004: Dependency Audit Blocks Publication (2026-10-27)
+
+`cargo-audit 0.22.2`, with advisory database revision
+`3279c99911354c400e1d41e47c7d60e39258b147`, reports the following current product
+lockfile findings. No audit ignore or warning suppression is added.
+
+| Advisory | Locked Package | Required Action |
+| --- | --- | --- |
+| RUSTSEC-2026-0387 | crypto-bigint 0.5.5 | Patched release is >=0.7.6; current age, credential and OPAQUE/VOPRF routes need coordinated upstream updates |
+| RUSTSEC-2026-0329 | libcrux-hmac-drbg 0.0.1 | Upgrade to >=0.0.2; affected nonzero output lengths are multiples of 65,536 |
+| RUSTSEC-2026-0331 | libcrux-kem 0.0.9 | Upgrade to >=0.0.10; reject short hybrid-key encodings without panic |
+| RUSTSEC-2026-0330 | libcrux-kem 0.0.9 | Upgrade to >=0.0.10; reject short hybrid encapsulation seeds without panic |
+| RUSTSEC-2026-0374 | basic-toml 0.1.10 | Maintenance warning through i18n-config; evaluate upstream TOML replacement |
+| RUSTSEC-2026-0173 | proc-macro-error2 2.0.1 | Maintenance warning through conditional hax tooling; remains visible in the full locked graph |
+
+These are package-level findings, not a claim that all affected functions are
+remotely reachable in the configured application. Conversely, the fixed
+Ristretto/MLS configuration is not taken as an unproved exemption. Signing and
+release publication now depend on a dedicated audit job with `--deny warnings`.
+There is no release tag; all earlier functional/CI/provenance results remain
+candidate evidence, not a waiver of these findings.
+
+An isolated `target/dependency-probe` uses Cargo-packaged upstream snapshots:
+OpenMLS `be248d4b1306d87a641ce24ed0ffcab2b27967f6`, rage
+`b5b68c4f4f7ea5c368bc060f6fe0237549c3a13f` and cargo-i18n
+`10e345470d97c9cffb3bc611182f595ad93251bf`. Its resolved graph removes the three
+Libcrux findings and basic-toml warning, but still reports crypto-bigint 0.5.5
+through OPAQUE/VOPRF and proc-macro-error2. Its first compile also exposes a
+credential/traits snapshot mismatch in the synchronous/asynchronous storage
+adapter. This probe is ignored experiment state, not a product dependency change.
+
 ## Release Archive Boundary (2026-10-27)
 
 ### SR-003: Extended TAR Metadata Preceded Member Resource Checks
