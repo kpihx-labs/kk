@@ -42,10 +42,19 @@ def archive(path, root, files, epoch):
 
 
 def verify(path, expected=None):
-    if expected is not None and digest(path.read_bytes()) != expected:
-        raise ValueError("Archive does not match the expected trusted digest")
+    if not path.is_file() or path.stat().st_size > MAX_UNPACKED_BYTES:
+        raise ValueError("Compressed release archive is non-ordinary or oversized")
+    if expected is not None:
+        with path.open("rb") as compressed:
+            if hashlib.file_digest(compressed, "sha256").hexdigest() != expected:
+                raise ValueError("Archive does not match the expected trusted digest")
+    # TAR parses extended headers before yielding members, so bound that input too.
+    with gzip.open(path, "rb") as compressed:
+        unpacked = compressed.read(MAX_UNPACKED_BYTES + 1)
+    if len(unpacked) > MAX_UNPACKED_BYTES:
+        raise ValueError("Unpacked release archive exceeds its resource budget")
     entries, prefix, total = {}, None, 0
-    with tarfile.open(path, "r:gz") as stream:
+    with tarfile.open(fileobj=io.BytesIO(unpacked), mode="r:") as stream:
         for member in stream:
             parts = PurePosixPath(member.name)
             if not member.isfile() or parts.is_absolute() or ".." in parts.parts or len(parts.parts) < 2 or parts.as_posix() != member.name:

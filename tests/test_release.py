@@ -95,6 +95,33 @@ class ReleaseTests(unittest.TestCase):
             with mock.patch.object(release, "MAX_UNPACKED_BYTES", 1), self.assertRaises(ValueError):
                 release.verify(path)
 
+    def test_pax_metadata_cannot_request_unbounded_gzip_allocation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "oversized-pax.tar.gz"
+            header = tarfile.TarInfo("root/metadata")
+            header.type, header.size = tarfile.XHDTYPE, 16 * 1024 * 1024
+            path.write_bytes(release.gzip.compress(header.tobuf() + b"x"))
+            original = release.gzip.GzipFile.read
+
+            def bounded_read(stream, size=-1):
+                self.assertGreaterEqual(size, 0)
+                self.assertLessEqual(size, 1025)
+                return original(stream, size)
+
+            with (
+                mock.patch.object(release, "MAX_UNPACKED_BYTES", 1024),
+                mock.patch.object(release.gzip.GzipFile, "read", bounded_read),
+                self.assertRaises((ValueError, tarfile.ReadError)),
+            ):
+                release.verify(path)
+
+    def test_gzip_expansion_is_bounded_before_tar_metadata_parse(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "expansion.tar.gz"
+            path.write_bytes(release.gzip.compress(b"x" * 2048))
+            with mock.patch.object(release, "MAX_UNPACKED_BYTES", 1024), self.assertRaisesRegex(ValueError, "Unpacked"):
+                release.verify(path)
+
     def test_dirty_sources_and_unqualified_targets_cannot_create_release_archives(self):
         with mock.patch.object(release, "command", return_value=" M src/owned.rs"), self.assertRaisesRegex(ValueError, "clean committed"):
             release.bundle("x86_64-unknown-linux-gnu", Path("unused"))

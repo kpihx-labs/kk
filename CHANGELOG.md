@@ -2,6 +2,10 @@
 
 ## 0.8.0 - Linux Delivery
 
+Bound compressed input and complete gzip expansion before TAR extended-header
+parsing; retain member/hash checks and add the failing-before PAX regression.
+Replay exact archive executables without replacing local builds.
+
 Integrate the public room CLI and bundled neutral-grey browser workspace over the
 same typed SDK. Confirm scoped PAKE admission, independent roles/votes, signed
 address movement, actual process-kill recovery and creator-independent operation.

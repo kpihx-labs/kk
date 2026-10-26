@@ -1,5 +1,30 @@
 # Post-Integration Boundary Review
 
+## Release Archive Boundary (2026-10-27)
+
+### SR-003: Extended TAR Metadata Preceded Member Resource Checks
+
+The added release-tool review reproduces an earlier limit boundary than the
+ordinary file checks: Python's TAR parser reads PAX metadata before yielding a
+member. A 513-byte decoded fixture advertising a 16-MiB extended header made the
+old verifier request a 16-MiB gzip read despite a test budget of 1 KiB. The
+instrumented regression failed before the fix without allocating that large read.
+
+Verification now refuses non-ordinary or oversized compressed inputs, streams an
+optional trusted digest, and caps the complete decompressed input before TAR
+metadata parsing. The existing ordinary-file, member-count, path, manifest and
+hash checks remain in force. The PAX regression and a separate small gzip
+expansion fixture pass. This is resource/integrity validation, not a substitute
+for authenticating the CI attestation.
+
+The exact downloaded CI executable
+`116a7e4dd40e21aba7c063761be2e7a8fe102f6b2f6c2a0cb28a05022ecc135f`
+passes the 25-case public CLI gate and native contention replay recorded in
+`lab/tmp/native-media-11dd74d8aa97.json`: 1,300 native packets, fresh decoded pixels,
+nine concurrent acknowledged texts with 1.5281-second maximum latency and the
+same verified 1,094,160-byte bulk fixture. All cleanup reports are empty. Archive
+selection and deployment guards now use the same explicit `KK_TEST_BINARY`.
+
 ## Current Closure Snapshot (2026-10-26)
 
 The dedicated second pass is complete for the implemented software boundaries.
