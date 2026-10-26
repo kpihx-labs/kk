@@ -1,5 +1,18 @@
 # Completion Progress
 
+## Clean Runner Corrections (2026-10-26)
+
+The first source publication is `7a6f302` on both remotes. Its local binary and
+offline-source archives pass integrity generation, but required remote CI is not
+green yet: GitHub run `40414409068` finds no `/bin/zsh` on either stock Ubuntu
+architecture, and GitLab pipeline `2991963883` finds no published
+`0.10.3-python3.12-bookworm` UV image. The existing recipes are POSIX, so the root
+Makefile now uses `/bin/sh`; the GitLab integrity job selects the explicitly
+manifest-verified `0.10.3-python3.12-trixie-slim` image. These are build-environment
+corrections, not waived test gates or changes to the frozen network/crypto code.
+Earlier archive bytes remain retained, not overwritten or presented as the final
+release. Qualification and tag publication still require the corrected CI result.
+
 ## Frozen 0.8.0 Linux Regression (2026-10-26)
 
 The release-version software freeze passes the complete final VM batch on binary

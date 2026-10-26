@@ -1,4 +1,4 @@
-SHELL := /bin/zsh
+SHELL := /bin/sh
 .DEFAULT_GOAL := help
 GITHUB_SSH_COMMAND ?= ssh
 GITLAB_SSH_COMMAND ?= ssh
