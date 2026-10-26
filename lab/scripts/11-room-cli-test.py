@@ -7,7 +7,7 @@ import time
 import uuid
 from pathlib import Path
 
-from kk_guest import Guest, shutdown_guests, virsh
+from kk_guest import Guest, selected_binary, shutdown_guests, virsh
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = "/usr/local/bin/kk"
@@ -19,9 +19,9 @@ def main():
     roster = state["peers"]
     if len(roster) != 3:
         raise RuntimeError("Room CLI gate requires exactly three independent guests")
-    binary_hash = hashlib.sha256((ROOT.parent / "target/release/kk").read_bytes()).hexdigest()
+    binary_hash = hashlib.sha256(selected_binary().read_bytes()).hexdigest()
     if binary_hash != state["binary_sha256"]:
-        raise RuntimeError("Guest deployment does not match the current release CLI")
+        raise RuntimeError("Guest deployment does not match the selected release CLI")
     run = uuid.uuid4().hex[:12]
     work = "/var/tmp/kk-room-" + run
     profile = work + "/profile"
