@@ -74,6 +74,7 @@ fn blocking_line(
         fs::{Mode, OFlags},
         termios::{LocalModes, OptionalActions, Termios},
     };
+    use std::os::unix::fs::FileTypeExt;
     struct Restore {
         file: std::fs::File,
         original: Termios,
@@ -85,7 +86,9 @@ fn blocking_line(
     }
     let terminal = io::stdin().is_terminal();
     let mut bytes = Zeroizing::new(Vec::new());
-    let file = if !terminal && std::fs::metadata("/dev/stdin")?.is_file() {
+    let metadata = std::fs::metadata("/dev/stdin")?;
+    let socket = metadata.file_type().is_socket();
+    let file = if !terminal && (metadata.is_file() || socket) {
         std::fs::File::from(rustix::io::dup(io::stdin())?)
     } else {
         std::fs::File::from(rustix::fs::open(
@@ -127,9 +130,23 @@ fn blocking_line(
             return Err(Error::Cancelled);
         }
         let mut chunk = Zeroizing::new([0; 1024]);
-        let count = match (&file).read(chunk.as_mut()) {
+        let read = if socket {
+            rustix::net::recv(&file, &mut chunk[..], rustix::net::RecvFlags::DONTWAIT)
+                .map(|(_, count)| count)
+                .map_err(io::Error::from)
+        } else {
+            (&file).read(chunk.as_mut())
+        };
+        let count = match read {
             Ok(count) => count,
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => continue,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) =>
+            {
+                continue;
+            }
             Err(error) => return Err(error.into()),
         };
         if count == 0 {

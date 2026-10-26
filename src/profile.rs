@@ -62,7 +62,10 @@ pub fn identity(directory: &Path, create: bool) -> Result<crate::Identity> {
     private_directory(directory, create)?;
     let path = directory.join("identity");
     if create && !path.exists() {
-        if directory.join("contacts.json").exists() || directory.join("contact-history").exists() {
+        if directory.join("contacts.json").exists()
+            || directory.join("contact-history").exists()
+            || directory.join("rooms").exists()
+        {
             return Err(Error::Identity(
                 "profile identity is missing but trust data exists; no regeneration",
             ));

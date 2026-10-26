@@ -1,5 +1,24 @@
 # K&K Contract
 
+## Current 0.8 Linux Delivery Addenda
+
+The current public scope includes the confirmed room CLI, targeted file copies,
+foreground browser workspace and native/browser media described by
+[UI](docs/ui.md), [replicas](docs/replicas.md), [media](docs/media.md) and
+[distribution](docs/distribution.md). [Platform qualification](docs/platforms.md)
+and [the post-integration review](docs/security-review.md) bound the claims.
+These current addenda supersede earlier implementation-in-progress descriptions
+below, which are retained dated history. Private keys are not exported, data rights
+are not votes, announcements are not availability promises, and queued datagrams
+are not human playback/read receipts. Unsupported protections fail closed.
+
+Current scope reaffirmation (2026-10-26): complete all backend layers, real
+multi-user rooms, media and the final GUI, then final verification and dual-remote
+publication. The GUI is included in the operator's required end-to-end scope;
+backend-before-UI and technical evidence gates still apply. Source checkpoint and
+historical scope descriptions below do not waive any of that work. The principal
+agent works alone; no global agent-policy change is authorized.
+
 ## 0.8 Development Boundary
 
 The room crypto and private-storage primitives are specified in

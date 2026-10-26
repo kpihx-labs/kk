@@ -8,6 +8,7 @@ mod error;
 pub mod files;
 mod identity;
 pub mod input;
+pub mod media;
 #[cfg(unix)]
 pub mod node;
 pub mod output;
@@ -17,6 +18,8 @@ pub mod rooms;
 mod session;
 mod signed;
 mod transport;
+#[cfg(unix)]
+pub mod ui;
 
 pub use error::{Error, Result};
 pub use identity::{Identity, Peer};

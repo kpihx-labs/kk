@@ -1,0 +1,2 @@
+# Preserve pinned upstream legal notices byte-for-byte, including whitespace.
+third_party/licenses/** -whitespace

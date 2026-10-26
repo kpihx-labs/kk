@@ -2,13 +2,13 @@
 //! Transactions are a storage primitive; durable Group mutation/reload is a separate
 //! owner that must commit before exposing bytes and discard dirty memory on failure.
 
-use crate::{Error, Result, config, profile};
+use crate::{Error, Result, config};
 use openmls_libcrux_crypto::CryptoProvider;
 use openmls_sqlite_storage::{Codec, SqliteStorageProvider};
 use openmls_traits::OpenMlsProvider;
-use rusqlite::{Connection, OpenFlags, OptionalExtension, limits::Limit};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::{Serialize, de::DeserializeOwned};
-use std::{borrow::Borrow, cell::Cell, fs::File, path::Path, rc::Rc, time::Duration};
+use std::{borrow::Borrow, cell::Cell, fs::File, path::Path, rc::Rc};
 
 const SCHEMA_VERSION: i64 = 1;
 
@@ -90,49 +90,21 @@ impl Provider {
 
     #[cfg(unix)]
     fn file(directory: &Path, create: bool) -> Result<Self> {
-        use std::{
-            fs,
-            os::unix::fs::{MetadataExt, OpenOptionsExt},
-        };
-        profile::private_directory(directory, create)?;
-        let path = directory.join("private.sqlite3");
-        let file = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(create)
-            .mode(0o600)
-            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-            .open(&path)?;
-        let metadata = file.metadata()?;
-        if !metadata.is_file()
-            || metadata.uid() != rustix::process::geteuid().as_raw()
-            || metadata.mode() & 0o777 != 0o600
-            || metadata.nlink() != 1
-            || metadata.len() > config::ROOM_STORE_MAX_BYTES as u64
-        {
-            return Err(Error::Storage(
-                "database must be owned, private, regular, single-link and bounded",
-            ));
-        }
-        rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive)
-            .map_err(|_| Error::Storage("database is already owned by another actor"))?;
+        let lease = super::lease::Lease::open(
+            directory,
+            "private.sqlite3",
+            create,
+            config::ROOM_STORE_MAX_BYTES,
+        )?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_NOFOLLOW
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
-        let connection = Connection::open_with_flags(&path, flags)
+        let connection = Connection::open_with_flags(lease.path(), flags)
             .map_err(|_| Error::Storage("cannot open database"))?;
-        let after = fs::symlink_metadata(&path)?;
-        if after.ino() != metadata.ino() || after.dev() != metadata.dev() {
-            return Err(Error::Storage("database changed during open"));
-        }
-        let provider = Self::initialize(connection, Some(file), create)?;
+        lease.verify_path()?;
+        let provider = Self::initialize(connection, Some(lease.into_file()), create)?;
         if create {
-            File::open(directory)?.sync_all()?;
-            let parent = directory
-                .parent()
-                .filter(|path| !path.as_os_str().is_empty())
-                .unwrap_or_else(|| Path::new("."));
-            File::open(parent)?.sync_all()?;
+            super::lease::sync_creation(directory)?;
         }
         Ok(provider)
     }
@@ -156,34 +128,11 @@ impl Provider {
                 .prepare("SELECT name, value FROM kk_private_metadata LIMIT 0")
                 .map_err(|_| Error::Storage("private metadata is missing"))?;
         }
-        connection
-            .busy_timeout(Duration::from_millis(250))
-            .map_err(|_| Error::Storage("cannot set lock deadline"))?;
-        connection
-            .set_limit(
-                Limit::SQLITE_LIMIT_LENGTH,
-                config::ROOM_STORE_VALUE_BYTES as i32,
-            )
-            .map_err(|_| Error::Storage("cannot bound private value size"))?;
-        connection
-            .execute_batch(
-                "PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE; PRAGMA secure_delete=ON;
-            PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF; PRAGMA temp_store=MEMORY;",
-            )
-            .map_err(|_| Error::Storage("cannot enforce storage policy"))?;
-        let page_size: usize = connection
-            .pragma_query_value(None, "page_size", |row| row.get(0))
-            .map_err(|_| Error::Storage("cannot determine database page size"))?;
-        if !(512..=65_536).contains(&page_size) || !page_size.is_power_of_two() {
-            return Err(Error::Storage("invalid database page size"));
-        }
-        connection
-            .pragma_update(
-                None,
-                "max_page_count",
-                config::ROOM_STORE_MAX_BYTES / page_size,
-            )
-            .map_err(|_| Error::Storage("cannot bound database pages"))?;
+        super::database::configure(
+            &connection,
+            config::ROOM_STORE_MAX_BYTES,
+            config::ROOM_STORE_VALUE_BYTES,
+        )?;
         if create {
             let mut storage = SqliteStorageProvider::<JsonCodec, _>::new(&mut connection);
             storage
@@ -230,6 +179,14 @@ impl Provider {
         })
     }
     pub fn metadata<T: DeserializeOwned>(&self, name: &str) -> Result<Option<T>> {
+        self.read_blob(name)?
+            .map(|value| {
+                JsonCodec::from_slice(&value)
+                    .map_err(|_| Error::Storage("invalid private metadata"))
+            })
+            .transpose()
+    }
+    pub(super) fn read_blob(&self, name: &str) -> Result<Option<Vec<u8>>> {
         self.healthy()?;
         let bytes: Option<Vec<u8>> = self
             .session
@@ -242,22 +199,33 @@ impl Provider {
             )
             .optional()
             .map_err(|_| Error::Storage("cannot read private metadata"))?;
-        bytes
-            .map(|value| {
-                JsonCodec::from_slice(&value)
-                    .map_err(|_| Error::Storage("invalid private metadata"))
-            })
-            .transpose()
+        if bytes
+            .as_ref()
+            .is_some_and(|value| value.len() > config::ROOM_STORE_VALUE_BYTES)
+        {
+            return Err(Error::Storage("private metadata exceeds resource limit"));
+        }
+        Ok(bytes)
     }
     pub fn set_metadata(&self, name: &str, value: &impl Serialize) -> Result<()> {
+        let bytes = JsonCodec::to_vec(value)
+            .map_err(|_| Error::Storage("cannot encode private metadata"))?;
+        self.write_blob(name, &bytes)
+    }
+    fn writable(&self) -> Result<()> {
         self.healthy()?;
         if self.session.0.connection.is_autocommit() {
             return Err(Error::Storage(
                 "private metadata requires an explicit transaction",
             ));
         }
-        let bytes = JsonCodec::to_vec(value)
-            .map_err(|_| Error::Storage("cannot encode private metadata"))?;
+        Ok(())
+    }
+    pub(super) fn write_blob(&self, name: &str, bytes: &[u8]) -> Result<()> {
+        self.writable()?;
+        if bytes.len() > config::ROOM_STORE_VALUE_BYTES {
+            return Err(Error::Storage("private artifact exceeds resource limit"));
+        }
         self.session
             .0
             .connection
@@ -269,6 +237,15 @@ impl Provider {
             .map_err(|_| Error::Storage("cannot save private metadata"))?;
         Ok(())
     }
+    pub(super) fn delete_blob(&self, name: &str) -> Result<()> {
+        self.writable()?;
+        self.session
+            .0
+            .connection
+            .execute("DELETE FROM kk_private_metadata WHERE name=?1", [name])
+            .map_err(|_| Error::Storage("cannot acknowledge private artifact"))?;
+        Ok(())
+    }
 
     #[cfg(all(test, unix))]
     pub(crate) fn inject_checkpoint_commit_failure(&self) {
@@ -278,6 +255,11 @@ impl Provider {
             CREATE TEMP TABLE kk_fault_child(parent INTEGER REFERENCES kk_fault_parent(id) DEFERRABLE INITIALLY DEFERRED);
             CREATE TEMP TRIGGER kk_fault_checkpoint AFTER UPDATE ON main.kk_private_metadata
             WHEN NEW.name='group' BEGIN INSERT INTO kk_fault_child(parent) VALUES(99); END;").unwrap();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_recovery_quarantine(&self) {
+        self.session.0.poisoned.set(true);
     }
 }
 

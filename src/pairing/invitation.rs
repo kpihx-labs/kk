@@ -1,6 +1,6 @@
 //! Explicit private invitation export/import and bounded QR image roundtrip.
 
-use super::PairServer;
+use super::{PairServer, Scope};
 use crate::{Error, Identity, Result, profile};
 use age::secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
@@ -22,6 +22,8 @@ struct Wire {
     id: [u8; 16],
     fingerprint: String,
     code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    room: Option<[u8; 32]>,
 }
 impl Drop for Wire {
     fn drop(&mut self) {
@@ -30,6 +32,7 @@ impl Drop for Wire {
 }
 
 pub struct Invite {
+    pub scope: Scope,
     pub address: SocketAddr,
     pub id: [u8; 16],
     pub fingerprint: String,
@@ -44,6 +47,7 @@ impl Invite {
             ));
         }
         Ok(Self {
+            scope: server.scope(),
             address,
             id: server.id(),
             fingerprint: identity.peer().fingerprint(),
@@ -55,11 +59,15 @@ impl Invite {
     }
     fn bytes(&self) -> Result<zeroize::Zeroizing<Vec<u8>>> {
         let wire = Wire {
-            version: 1,
+            version: if self.scope == Scope::Contact { 1 } else { 2 },
             address: self.address,
             id: self.id,
             fingerprint: self.fingerprint.clone(),
             code: self.code.expose_secret().to_owned(),
+            room: match self.scope {
+                Scope::Contact => None,
+                Scope::Room(room) => Some(room),
+            },
         };
         let bytes = serde_json::to_vec(&wire).map_err(|_| Error::Pairing)?;
         if bytes.len() > MAX_BUNDLE {
@@ -72,7 +80,7 @@ impl Invite {
             return Err(Error::Pairing);
         }
         let mut wire: Wire = serde_json::from_slice(bytes).map_err(|_| Error::Pairing)?;
-        if wire.version != 1
+        if !matches!((wire.version, wire.room), (1, None) | (2, Some(_)))
             || wire.address.port() == 0
             || wire.address.ip().is_unspecified()
             || wire.address.ip().is_multicast()
@@ -87,6 +95,10 @@ impl Invite {
             return Err(Error::Pairing);
         }
         Ok(Self {
+            scope: match wire.room {
+                Some(room) => Scope::Room(room),
+                None => Scope::Contact,
+            },
             address: wire.address,
             id: wire.id,
             fingerprint: wire.fingerprint.clone(),
@@ -212,6 +224,9 @@ mod tests {
         .await
         .unwrap();
         let invite = Invite::from_server(&server, &identity).unwrap();
+        let wire: serde_json::Value = serde_json::from_slice(&invite.bytes().unwrap()).unwrap();
+        assert_eq!(wire["version"], 1);
+        assert!(wire.get("room").is_none()); // Preserve the contact-v1 envelope.
         let bundle = folder.join("invite.json");
         let qr = folder.join("invite.png");
         invite.export(&bundle).unwrap();
@@ -221,10 +236,42 @@ mod tests {
             Invite::load_qr(&qr).await.unwrap(),
         ] {
             assert_eq!(loaded.id, invite.id);
+            assert_eq!(loaded.scope, Scope::Contact);
             assert_eq!(loaded.address, invite.address);
             assert_eq!(loaded.fingerprint, identity.peer().fingerprint());
             assert_eq!(loaded.code().expose_secret(), invite.code().expose_secret());
         }
         assert!(invite.export(&bundle).is_err());
+    }
+    #[tokio::test]
+    async fn room_bundle_and_qr_keep_the_exact_room_scope_without_key_export() {
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("private");
+        profile::private_directory(&folder, true).unwrap();
+        let identity = Identity::create(&root.path().join("identity")).unwrap();
+        let room = [17; 32];
+        let server = PairServer::bind_room(
+            "127.0.0.1:0".parse().unwrap(),
+            std::time::Duration::from_secs(10),
+            room,
+        )
+        .await
+        .unwrap();
+        let invite = Invite::from_server(&server, &identity).unwrap();
+        let bundle = folder.join("invite.json");
+        let qr = folder.join("invite.png");
+        invite.export(&bundle).unwrap();
+        invite.qr(&qr).unwrap();
+        for loaded in [
+            Invite::load(&bundle).await.unwrap(),
+            Invite::load_qr(&qr).await.unwrap(),
+        ] {
+            assert_eq!(loaded.scope, Scope::Room(room));
+            assert_eq!(loaded.id, invite.id);
+            assert_eq!(loaded.fingerprint, identity.peer().fingerprint());
+        }
+        let mut wire: serde_json::Value = serde_json::from_slice(&invite.bytes().unwrap()).unwrap();
+        wire["version"] = 1.into();
+        assert!(Invite::parse(&serde_json::to_vec(&wire).unwrap()).is_err());
     }
 }

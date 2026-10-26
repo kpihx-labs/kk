@@ -21,12 +21,30 @@ mod storage;
 use storage::Store;
 
 pub(crate) const ALPN: &[u8] = b"kk-file/2";
+mod inbox;
 pub(crate) mod stream;
+pub(crate) use inbox::Inbox;
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FileInfo {
     pub bytes: u64,
     pub sha256: [u8; 32],
+}
+
+/// Parse a complete SHA-256 content identifier before slicing UTF-8 input.
+pub fn parse_hash(value: &str) -> Result<[u8; 32]> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(Error::Configuration(
+            "select a complete SHA-256 content digest",
+        ));
+    }
+    let mut output = [0; 32];
+    for (index, byte) in output.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
+            .map_err(|_| Error::Configuration("invalid content digest"))?;
+    }
+    Ok(output)
 }
 
 impl std::fmt::Debug for FileInfo {

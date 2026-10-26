@@ -13,7 +13,12 @@ use std::{
     time::Duration,
 };
 use zeroize::Zeroizing;
+mod media;
 mod pair;
+#[cfg(unix)]
+mod replica;
+#[cfg(unix)]
+mod room;
 #[cfg(unix)]
 mod serve;
 
@@ -81,6 +86,30 @@ fn profile_directory(selected: Option<&std::path::Path>) -> Result<PathBuf> {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Private local light/dark workspace; foreground SDK rooms, no installed service
+    #[cfg(unix)]
+    Ui {
+        #[arg(long, default_value = "127.0.0.1:0")]
+        bind: SocketAddr,
+        #[arg(long)]
+        no_open: bool,
+        /// Optional executable receiving a protected launch path and public base URL
+        #[arg(long)]
+        opener: Option<PathBuf>,
+        #[arg(long = "opener-arg", requires = "opener", allow_hyphen_values = true)]
+        opener_args: Vec<String>,
+    },
+    /// Native media capability checks and explicit local capture preview
+    Media {
+        #[command(subcommand)]
+        command: media::Command,
+    },
+    /// Persistent encrypted multi-user rooms; no implicit background service
+    #[cfg(unix)]
+    Room {
+        #[command(subcommand)]
+        command: room::Command,
+    },
     /// Foreground persistent inbox; no service is installed or auto-started
     #[cfg(unix)]
     Serve {
@@ -226,7 +255,53 @@ fn cipher_path(selected: Option<PathBuf>) -> Result<PathBuf> {
 
 pub(crate) async fn run() -> Result<()> {
     let Cli { profile, command } = Cli::parse();
+    let command = match command {
+        #[cfg(unix)]
+        Some(Command::Ui {
+            bind,
+            no_open,
+            opener,
+            opener_args,
+        }) => {
+            let directory = profile_directory(profile.as_deref())?;
+            return tokio::task::LocalSet::new()
+                .run_until(kk::ui::run(
+                    directory,
+                    kk::ui::Options {
+                        bind,
+                        open_browser: !no_open,
+                        opener,
+                        opener_args,
+                    },
+                ))
+                .await;
+        }
+        Some(Command::Media { command }) => return media::run(command).await,
+        command => command,
+    };
+    #[cfg(unix)]
+    let command = match command {
+        Some(Command::Room { command }) => {
+            return tokio::task::LocalSet::new()
+                .run_until(room::run(command, profile.as_deref()))
+                .await;
+        }
+        command => command,
+    };
+    tokio::select! {
+        biased;
+        signal = tokio::signal::ctrl_c() => { signal?; Err(Error::Cancelled) },
+        result = execute(profile, command) => result,
+    }
+}
+
+async fn execute(profile: Option<PathBuf>, command: Option<Command>) -> Result<()> {
     match command {
+        #[cfg(unix)]
+        Some(Command::Ui { .. }) => unreachable!("the UI owns its foreground SDK lifecycle"),
+        Some(Command::Media { .. }) => unreachable!("native media owns its subprocess shutdown"),
+        #[cfg(unix)]
+        Some(Command::Room { .. }) => unreachable!("room commands own their shutdown boundary"),
         None => Cli::command().print_help()?,
         #[cfg(unix)]
         Some(Command::Status) => {

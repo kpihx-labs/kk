@@ -1,0 +1,484 @@
+{
+  "format": 1,
+  "packages": {
+    "age-core@0.12.0": [
+      "licenses/str4d-rage-f6383f367e9a/LICENSE-APACHE",
+      "licenses/str4d-rage-f6383f367e9a/LICENSE-MIT"
+    ],
+    "age@0.12.1": [
+      "licenses/str4d-rage-7a854c9c8c02/LICENSE-APACHE",
+      "licenses/str4d-rage-7a854c9c8c02/LICENSE-MIT"
+    ],
+    "asn1-rs-impl@0.2.0": [
+      "licenses/rusticata-asn1-rs-a20e5f7319c8/LICENSE-APACHE",
+      "licenses/rusticata-asn1-rs-a20e5f7319c8/LICENSE-MIT"
+    ],
+    "bitcoin_hashes@0.14.101": [
+      "licenses/spdx-license-list-data-31ba1a50e539/CC0-1.0.txt"
+    ],
+    "cookie-factory@0.3.3": [
+      "licenses/rust-bakery-cookie-factory-d36b805dbd7d/.reuse/dep5",
+      "licenses/rust-bakery-cookie-factory-d36b805dbd7d/LICENSES/MIT.txt"
+    ],
+    "core-models@0.0.7": [
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "crabgrind@0.2.6": [
+      "licenses/2dav-crabgrind-30cf77b1ca50/LICENSE/MIT.LICENSE",
+      "licenses/2dav-crabgrind-30cf77b1ca50/LICENSE/cachegrind.h.LICENSE",
+      "licenses/2dav-crabgrind-30cf77b1ca50/LICENSE/callgrind.h.LICENSE",
+      "licenses/2dav-crabgrind-30cf77b1ca50/LICENSE/dhat.h.LICENSE",
+      "licenses/2dav-crabgrind-30cf77b1ca50/LICENSE/drd.h.LICENSE",
+      "licenses/2dav-crabgrind-30cf77b1ca50/LICENSE/helgrind.h.LICENSE",
+      "licenses/2dav-crabgrind-30cf77b1ca50/LICENSE/memcheck.h.LICENSE",
+      "licenses/2dav-crabgrind-30cf77b1ca50/LICENSE/valgrind.h.LICENSE"
+    ],
+    "fluent-langneg@0.13.1": [
+      "licenses/projectfluent-fluent-langneg-rs-7fdc590466ea/LICENSE-APACHE",
+      "licenses/projectfluent-fluent-langneg-rs-7fdc590466ea/LICENSE-MIT"
+    ],
+    "hax-lib-macros-types@0.3.7": [
+      "licenses/hacspec-hax-d8b5b3d3b666/LICENSE"
+    ],
+    "hax-lib-macros@0.3.7": [
+      "licenses/hacspec-hax-d8b5b3d3b666/LICENSE"
+    ],
+    "hax-lib@0.3.7": [
+      "licenses/hacspec-hax-d8b5b3d3b666/LICENSE"
+    ],
+    "hpke-rs-crypto@0.7.0": [
+      "licenses/celabshq-libcrux-c5fb80f37530/LICENSE",
+      "licenses/celabshq-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "hpke-rs-libcrux@0.7.0": [
+      "licenses/celabshq-libcrux-c5fb80f37530/LICENSE",
+      "licenses/celabshq-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "hpke-rs-rust-crypto@0.7.0": [
+      "licenses/celabshq-libcrux-c5fb80f37530/LICENSE",
+      "licenses/celabshq-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "hpke-rs@0.7.0": [
+      "licenses/celabshq-libcrux-c5fb80f37530/LICENSE",
+      "licenses/celabshq-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "intl_pluralrules@7.0.2": [
+      "licenses/zbraniecki-pluralrules-d0715d5b7cca/intl_pluralrules/LICENSE-APACHE",
+      "licenses/zbraniecki-pluralrules-d0715d5b7cca/intl_pluralrules/LICENSE-MIT"
+    ],
+    "io_tee@0.1.1": [
+      "licenses/TheOnlyMrCat-io_tee-8a7adecebf34/README.md",
+      "licenses/spdx-license-list-data-31ba1a50e539/Apache-2.0.txt"
+    ],
+    "libcrux-aead@0.0.9": [
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-aes@0.0.9": [
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-chacha20poly1305@0.0.9": [
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-curve25519@0.0.8": [
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-ecdh@0.0.8": [
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-ed25519@0.0.9": [
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-hacl-rs@0.0.5": [
+      "licenses/cryspen-libcrux-451259bb704d/LICENSE",
+      "licenses/cryspen-libcrux-451259bb704d/LICENSE-MIT"
+    ],
+    "libcrux-hkdf@0.0.8": [
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-hmac-drbg@0.0.1": [
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-hmac@0.0.8": [
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-intrinsics@0.0.8": [
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-kem@0.0.9": [
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-macros@0.0.3": [
+      "licenses/cryspen-libcrux-8ebe73237378/LICENSE",
+      "licenses/cryspen-libcrux-8ebe73237378/LICENSE-MIT"
+    ],
+    "libcrux-ml-kem@0.0.10": [
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-p256@0.0.8": [
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-platform@0.0.3": [
+      "licenses/cryspen-libcrux-316fcd6c19c2/LICENSE",
+      "licenses/cryspen-libcrux-316fcd6c19c2/LICENSE-MIT"
+    ],
+    "libcrux-poly1305@0.0.6": [
+      "licenses/cryspen-libcrux-451259bb704d/LICENSE",
+      "licenses/cryspen-libcrux-451259bb704d/LICENSE-MIT"
+    ],
+    "libcrux-secrets@0.0.6": [
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-sha2@0.0.8": [
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-sha3@0.0.10": [
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-traits@0.0.8": [
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
+      "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "openmls@0.9.2": [
+      "licenses/openmls-openmls-8a8f83b4b61f/LICENSE"
+    ],
+    "openmls_basic_credential@0.6.0": [
+      "licenses/openmls-openmls-3a3e35de3fee/LICENSE"
+    ],
+    "openmls_libcrux_crypto@0.4.0": [
+      "licenses/openmls-openmls-3a3e35de3fee/LICENSE"
+    ],
+    "openmls_memory_storage@0.6.0": [
+      "licenses/openmls-openmls-3a3e35de3fee/LICENSE"
+    ],
+    "openmls_serialization_helpers@0.1.0": [
+      "licenses/openmls-openmls-3a3e35de3fee/LICENSE"
+    ],
+    "openmls_sqlite_storage@0.3.0": [
+      "licenses/openmls-openmls-3a3e35de3fee/LICENSE"
+    ],
+    "openmls_traits@0.6.0": [
+      "licenses/openmls-openmls-3a3e35de3fee/LICENSE"
+    ],
+    "openraft-macros@0.9.25": [
+      "licenses/datafuselabs-openraft-8815cdba2826/LICENSE-APACHE",
+      "licenses/datafuselabs-openraft-8815cdba2826/LICENSE-MIT"
+    ],
+    "openraft@0.9.25": [
+      "licenses/datafuselabs-openraft-8815cdba2826/LICENSE-APACHE",
+      "licenses/datafuselabs-openraft-8815cdba2826/LICENSE-MIT"
+    ],
+    "r-efi@5.3.0": [
+      "licenses/r-efi-r-efi-97b55bed1c2c/README.md",
+      "licenses/r-efi-r-efi-97b55bed1c2c/AUTHORS",
+      "licenses/spdx-license-list-data-31ba1a50e539/Apache-2.0.txt"
+    ],
+    "r-efi@6.0.0": [
+      "licenses/r-efi-r-efi-7e1b0322d31d/README.md",
+      "licenses/r-efi-r-efi-7e1b0322d31d/AUTHORS",
+      "licenses/spdx-license-list-data-31ba1a50e539/Apache-2.0.txt"
+    ],
+    "refinery-core@0.9.2": [
+      "licenses/rust-db-refinery-e028287bea12/LICENSE"
+    ],
+    "refinery-macros@0.9.2": [
+      "licenses/rust-db-refinery-e028287bea12/LICENSE"
+    ],
+    "refinery@0.9.2": [
+      "licenses/rust-db-refinery-e028287bea12/LICENSE"
+    ]
+  },
+  "selections": {
+    "io_tee@0.1.1": {
+      "basis": "exact upstream README alternative grant",
+      "license": "Apache-2.0",
+      "standard_text": "licenses/spdx-license-list-data-31ba1a50e539/Apache-2.0.txt"
+    },
+    "r-efi@5.3.0": {
+      "basis": "exact upstream README alternative grant",
+      "license": "Apache-2.0",
+      "standard_text": "licenses/spdx-license-list-data-31ba1a50e539/Apache-2.0.txt"
+    },
+    "r-efi@6.0.0": {
+      "basis": "exact upstream README alternative grant",
+      "license": "Apache-2.0",
+      "standard_text": "licenses/spdx-license-list-data-31ba1a50e539/Apache-2.0.txt"
+    }
+  },
+  "sources": {
+    "licenses/2dav-crabgrind-30cf77b1ca50/LICENSE/MIT.LICENSE": {
+      "blob": "582c4ebe49f66e496d316e160e8cda1e435e832a",
+      "repository": "2dav/crabgrind",
+      "revision": "30cf77b1ca50df3b940346000634e66ed1d5c259",
+      "sha256": "ac7ad2d98b077d386c467560708c2fad4bcc08022a8b0d5db28f5b6681a79743"
+    },
+    "licenses/2dav-crabgrind-30cf77b1ca50/LICENSE/cachegrind.h.LICENSE": {
+      "blob": "2708a47314fe53fdc5fdae5d6c17470a18bb25b6",
+      "repository": "2dav/crabgrind",
+      "revision": "30cf77b1ca50df3b940346000634e66ed1d5c259",
+      "sha256": "6a60deb2168cc9d1cfd94f6449b22f724648352ddf823d5db79dea1144db9231"
+    },
+    "licenses/2dav-crabgrind-30cf77b1ca50/LICENSE/callgrind.h.LICENSE": {
+      "blob": "61b18aa153a69dfad9774a4ab535420886e5f728",
+      "repository": "2dav/crabgrind",
+      "revision": "30cf77b1ca50df3b940346000634e66ed1d5c259",
+      "sha256": "8f80203a2206337f12864020560ce8415735cc9bd80481d36637c70025800d02"
+    },
+    "licenses/2dav-crabgrind-30cf77b1ca50/LICENSE/dhat.h.LICENSE": {
+      "blob": "824afe12590133c9f97998b7d8e94123ffc74076",
+      "repository": "2dav/crabgrind",
+      "revision": "30cf77b1ca50df3b940346000634e66ed1d5c259",
+      "sha256": "1a136ab533f5e6fb3b660656a09fbd3ad00ecd7cc48ee58b97061765f836e3d0"
+    },
+    "licenses/2dav-crabgrind-30cf77b1ca50/LICENSE/drd.h.LICENSE": {
+      "blob": "a265d2f259501c0e03d78c84dfa2fe5fe75cdeb0",
+      "repository": "2dav/crabgrind",
+      "revision": "30cf77b1ca50df3b940346000634e66ed1d5c259",
+      "sha256": "143d3ffc9da16f300ca1bc53fafc3cbcbbe71f38f12e9c7dfc4bf10400f1a10f"
+    },
+    "licenses/2dav-crabgrind-30cf77b1ca50/LICENSE/helgrind.h.LICENSE": {
+      "blob": "cb18f0726b642587b80c715dd3a4c4ea6caafc91",
+      "repository": "2dav/crabgrind",
+      "revision": "30cf77b1ca50df3b940346000634e66ed1d5c259",
+      "sha256": "b78a7d46974cc262db8f79e54bf9d6f294fb7aa8ed2b12e12f876edcde943a1e"
+    },
+    "licenses/2dav-crabgrind-30cf77b1ca50/LICENSE/memcheck.h.LICENSE": {
+      "blob": "8b75c4d2a4194e0a532cc8c078602eabe4b16d08",
+      "repository": "2dav/crabgrind",
+      "revision": "30cf77b1ca50df3b940346000634e66ed1d5c259",
+      "sha256": "6e7645bb4d530a7a754a602a45043fdf91d68fd5206fa9a1924c55ab5943a457"
+    },
+    "licenses/2dav-crabgrind-30cf77b1ca50/LICENSE/valgrind.h.LICENSE": {
+      "blob": "c11688c9227e32f3706936311ecb97de7bfb97eb",
+      "repository": "2dav/crabgrind",
+      "revision": "30cf77b1ca50df3b940346000634e66ed1d5c259",
+      "sha256": "1c133c302d38ebfda8a0c12b3ab6f011e3cb747d3de85a4c9c253a9e217de9c5"
+    },
+    "licenses/TheOnlyMrCat-io_tee-8a7adecebf34/README.md": {
+      "blob": "4434eb39e66b30090dab13a8587e734b94a07b29",
+      "repository": "TheOnlyMrCat/io_tee",
+      "revision": "8a7adecebf3429cbc58a0368751d1851dfaf58ed",
+      "sha256": "0ba20a4b5d8188a85014c5f6d52b5407aec2077986c05f6ba686f9899b767b95"
+    },
+    "licenses/celabshq-libcrux-c5fb80f37530/LICENSE": {
+      "blob": "b9000b9bdcba593e73aa283f9a7a7b4cc16e3d26",
+      "repository": "celabshq/libcrux",
+      "revision": "c5fb80f37530ee9b2df9501ae5ff8cb4a973a4bd",
+      "sha256": "c517c468fc7f8d83319dd8b3743923f6891e0dfbaf7c57a874758c8f39b98564"
+    },
+    "licenses/celabshq-libcrux-c5fb80f37530/LICENSE-MIT": {
+      "blob": "e37060b8f11a166b0368a5144814fc081fbb3779",
+      "repository": "celabshq/libcrux",
+      "revision": "c5fb80f37530ee9b2df9501ae5ff8cb4a973a4bd",
+      "sha256": "e40d41f94826514279cc7648088180e19621f7acd281dd394a0534d535da51fd"
+    },
+    "licenses/cryspen-libcrux-316fcd6c19c2/LICENSE": {
+      "blob": "b9000b9bdcba593e73aa283f9a7a7b4cc16e3d26",
+      "repository": "cryspen/libcrux",
+      "revision": "316fcd6c19c2e33bd0429e1319b6557d91038512",
+      "sha256": "c517c468fc7f8d83319dd8b3743923f6891e0dfbaf7c57a874758c8f39b98564"
+    },
+    "licenses/cryspen-libcrux-316fcd6c19c2/LICENSE-MIT": {
+      "blob": "e37060b8f11a166b0368a5144814fc081fbb3779",
+      "repository": "cryspen/libcrux",
+      "revision": "316fcd6c19c2e33bd0429e1319b6557d91038512",
+      "sha256": "e40d41f94826514279cc7648088180e19621f7acd281dd394a0534d535da51fd"
+    },
+    "licenses/cryspen-libcrux-451259bb704d/LICENSE": {
+      "blob": "b9000b9bdcba593e73aa283f9a7a7b4cc16e3d26",
+      "repository": "cryspen/libcrux",
+      "revision": "451259bb704d4a9dab8cd31ac68a97e766fbd2bc",
+      "sha256": "c517c468fc7f8d83319dd8b3743923f6891e0dfbaf7c57a874758c8f39b98564"
+    },
+    "licenses/cryspen-libcrux-451259bb704d/LICENSE-MIT": {
+      "blob": "e37060b8f11a166b0368a5144814fc081fbb3779",
+      "repository": "cryspen/libcrux",
+      "revision": "451259bb704d4a9dab8cd31ac68a97e766fbd2bc",
+      "sha256": "e40d41f94826514279cc7648088180e19621f7acd281dd394a0534d535da51fd"
+    },
+    "licenses/cryspen-libcrux-8ebe73237378/LICENSE": {
+      "blob": "b9000b9bdcba593e73aa283f9a7a7b4cc16e3d26",
+      "repository": "cryspen/libcrux",
+      "revision": "8ebe73237378c80b86a953ec8a77bdd3299918e7",
+      "sha256": "c517c468fc7f8d83319dd8b3743923f6891e0dfbaf7c57a874758c8f39b98564"
+    },
+    "licenses/cryspen-libcrux-8ebe73237378/LICENSE-MIT": {
+      "blob": "e37060b8f11a166b0368a5144814fc081fbb3779",
+      "repository": "cryspen/libcrux",
+      "revision": "8ebe73237378c80b86a953ec8a77bdd3299918e7",
+      "sha256": "e40d41f94826514279cc7648088180e19621f7acd281dd394a0534d535da51fd"
+    },
+    "licenses/cryspen-libcrux-c5fb80f37530/LICENSE": {
+      "blob": "b9000b9bdcba593e73aa283f9a7a7b4cc16e3d26",
+      "repository": "cryspen/libcrux",
+      "revision": "c5fb80f37530ee9b2df9501ae5ff8cb4a973a4bd",
+      "sha256": "c517c468fc7f8d83319dd8b3743923f6891e0dfbaf7c57a874758c8f39b98564"
+    },
+    "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT": {
+      "blob": "e37060b8f11a166b0368a5144814fc081fbb3779",
+      "repository": "cryspen/libcrux",
+      "revision": "c5fb80f37530ee9b2df9501ae5ff8cb4a973a4bd",
+      "sha256": "e40d41f94826514279cc7648088180e19621f7acd281dd394a0534d535da51fd"
+    },
+    "licenses/datafuselabs-openraft-8815cdba2826/LICENSE-APACHE": {
+      "blob": "16fe87b06e802f094b3fbb0894b137bca2b16ef1",
+      "repository": "datafuselabs/openraft",
+      "revision": "8815cdba2826f74e848acef361ad03f93bb1c3f8",
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+    },
+    "licenses/datafuselabs-openraft-8815cdba2826/LICENSE-MIT": {
+      "blob": "31aa79387f27e730e33d871925e152e35e428031",
+      "repository": "datafuselabs/openraft",
+      "revision": "8815cdba2826f74e848acef361ad03f93bb1c3f8",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+    },
+    "licenses/hacspec-hax-d8b5b3d3b666/LICENSE": {
+      "blob": "9b7b24ebdade5b7d4ce74e476d62dbbee593f65b",
+      "repository": "hacspec/hax",
+      "revision": "d8b5b3d3b666fee8943a351445d2b680105e8ea3",
+      "sha256": "9a50bad5a51e0ad726ea3a7f4b7b758e1b4d1784e6abefe1367f5bf01e972725"
+    },
+    "licenses/openmls-openmls-3a3e35de3fee/LICENSE": {
+      "blob": "1f2a3262d0b84159455c08a64dc086027f43824c",
+      "repository": "openmls/openmls",
+      "revision": "3a3e35de3feeca8f6605143c464d5452ae584d43",
+      "sha256": "43e5e3c4b5cca67f9ea912f7e1929702a848aa765d3b3e14f25d3838a5a5565d"
+    },
+    "licenses/openmls-openmls-8a8f83b4b61f/LICENSE": {
+      "blob": "1f2a3262d0b84159455c08a64dc086027f43824c",
+      "repository": "openmls/openmls",
+      "revision": "8a8f83b4b61fc45f28facec25e914992b3465de6",
+      "sha256": "43e5e3c4b5cca67f9ea912f7e1929702a848aa765d3b3e14f25d3838a5a5565d"
+    },
+    "licenses/projectfluent-fluent-langneg-rs-7fdc590466ea/LICENSE-APACHE": {
+      "blob": "8dada3edaf50dbc082c9a125058f25def75e625a",
+      "repository": "projectfluent/fluent-langneg-rs",
+      "revision": "7fdc590466ea63ca2367ac10fb1b881fe561f1a8",
+      "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1"
+    },
+    "licenses/projectfluent-fluent-langneg-rs-7fdc590466ea/LICENSE-MIT": {
+      "blob": "00ec7a238dcd2fb765a6abc64ae43d80f0514140",
+      "repository": "projectfluent/fluent-langneg-rs",
+      "revision": "7fdc590466ea63ca2367ac10fb1b881fe561f1a8",
+      "sha256": "016fcc02048817d628b04b140c54db290fd9d29a5e8a55b77871194e810716ac"
+    },
+    "licenses/r-efi-r-efi-7e1b0322d31d/AUTHORS": {
+      "blob": "79c8b7c4a1dabcfbc718b7fe6d43b1892f9850cd",
+      "repository": "r-efi/r-efi",
+      "revision": "7e1b0322d31d625f81a5656096330934f9cd835d",
+      "sha256": "d027e91dbc9cdbb2f1190068e498bd6b61cff022b6a032b191021ba658d96111"
+    },
+    "licenses/r-efi-r-efi-7e1b0322d31d/README.md": {
+      "blob": "b5b8f8757693ddeeda3e45e2a8a6488cb9bb6a82",
+      "repository": "r-efi/r-efi",
+      "revision": "7e1b0322d31d625f81a5656096330934f9cd835d",
+      "sha256": "420f65fec3ba2e89d49da51b222d2881d26959037a7b7d3794143db4bd4627b1"
+    },
+    "licenses/r-efi-r-efi-97b55bed1c2c/AUTHORS": {
+      "blob": "7397b2bd6a8580d51fe7b23783f8f1a05fa70291",
+      "repository": "r-efi/r-efi",
+      "revision": "97b55bed1c2c91dcbf787674849f05337ff80b33",
+      "sha256": "ff92bed461f50338dd703a9ba9aee496a425957873df1d91192776e4bdf5dda7"
+    },
+    "licenses/r-efi-r-efi-97b55bed1c2c/README.md": {
+      "blob": "b5b8f8757693ddeeda3e45e2a8a6488cb9bb6a82",
+      "repository": "r-efi/r-efi",
+      "revision": "97b55bed1c2c91dcbf787674849f05337ff80b33",
+      "sha256": "420f65fec3ba2e89d49da51b222d2881d26959037a7b7d3794143db4bd4627b1"
+    },
+    "licenses/rust-bakery-cookie-factory-d36b805dbd7d/.reuse/dep5": {
+      "blob": "9708c5afe242ebcc0dbb0b8303b909ecdc480acd",
+      "repository": "rust-bakery/cookie-factory",
+      "revision": "d36b805dbd7dd65f2df947235c5bcc573afe2c76",
+      "sha256": "fac95e33eb175ff151cde39e3f7ad52292e6acf83db22bef30d3bfad417a8846"
+    },
+    "licenses/rust-bakery-cookie-factory-d36b805dbd7d/LICENSES/MIT.txt": {
+      "blob": "d9e66dc90589bbf32cdf66d1431c03434d65bdf3",
+      "repository": "rust-bakery/cookie-factory",
+      "revision": "d36b805dbd7dd65f2df947235c5bcc573afe2c76",
+      "sha256": "d09216dc1ea5f273997667935a8d6514d80f00b89fb6954ecc3a43e0a6e360de"
+    },
+    "licenses/rust-db-refinery-e028287bea12/LICENSE": {
+      "blob": "9c40d528387c353c8dbd3687592cee17436b0777",
+      "repository": "rust-db/refinery",
+      "revision": "e028287bea12296b34f0fb679ff07aa33c53e115",
+      "sha256": "323498c7e64effc93b58919b3764d2d6b054594cfb9cf59886dc35c5235f9f16"
+    },
+    "licenses/rusticata-asn1-rs-a20e5f7319c8/LICENSE-APACHE": {
+      "blob": "16fe87b06e802f094b3fbb0894b137bca2b16ef1",
+      "repository": "rusticata/asn1-rs",
+      "revision": "a20e5f7319c896737ad0f2557037817b91ad854f",
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+    },
+    "licenses/rusticata-asn1-rs-a20e5f7319c8/LICENSE-MIT": {
+      "blob": "290e7b9be19d39a81c8eb24c75a6b5f1e57fea71",
+      "repository": "rusticata/asn1-rs",
+      "revision": "a20e5f7319c896737ad0f2557037817b91ad854f",
+      "sha256": "a5c61b93b6ee1d104af9920cf020ff3c7efe818e31fe562c72261847a728f513"
+    },
+    "licenses/spdx-license-list-data-31ba1a50e539/Apache-2.0.txt": {
+      "blob": "137069b823873b8bcf42979bcf8e9371052d26a2",
+      "repository": "spdx/license-list-data",
+      "revision": "31ba1a50e5397e00a304dbadc76531740e89ee48",
+      "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff"
+    },
+    "licenses/spdx-license-list-data-31ba1a50e539/CC0-1.0.txt": {
+      "blob": "0e259d42c996742e9e3cba14c677129b2c1b6311",
+      "repository": "spdx/license-list-data",
+      "revision": "31ba1a50e5397e00a304dbadc76531740e89ee48",
+      "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499"
+    },
+    "licenses/str4d-rage-7a854c9c8c02/LICENSE-APACHE": {
+      "blob": "1e5006dc141e22213c898c27abaded8d936c32f0",
+      "repository": "str4d/rage",
+      "revision": "7a854c9c8c02dab2ebea19e02e6693a5730a8b2a",
+      "sha256": "3708458dee7f359ac6c9c5558023ed481be87e5372c43ebd7f2ca7ad23c12026"
+    },
+    "licenses/str4d-rage-7a854c9c8c02/LICENSE-MIT": {
+      "blob": "c775f6102aead463c9d606fd34d47a3c2218148f",
+      "repository": "str4d/rage",
+      "revision": "7a854c9c8c02dab2ebea19e02e6693a5730a8b2a",
+      "sha256": "fe56c030c2d8c3404a37fe711cebb27ebea13d0aacf7e3524db4198335ad8cd1"
+    },
+    "licenses/str4d-rage-f6383f367e9a/LICENSE-APACHE": {
+      "blob": "1e5006dc141e22213c898c27abaded8d936c32f0",
+      "repository": "str4d/rage",
+      "revision": "f6383f367e9aa514a3b5fbce7feede08a425d647",
+      "sha256": "3708458dee7f359ac6c9c5558023ed481be87e5372c43ebd7f2ca7ad23c12026"
+    },
+    "licenses/str4d-rage-f6383f367e9a/LICENSE-MIT": {
+      "blob": "c775f6102aead463c9d606fd34d47a3c2218148f",
+      "repository": "str4d/rage",
+      "revision": "f6383f367e9aa514a3b5fbce7feede08a425d647",
+      "sha256": "fe56c030c2d8c3404a37fe711cebb27ebea13d0aacf7e3524db4198335ad8cd1"
+    },
+    "licenses/zbraniecki-pluralrules-d0715d5b7cca/intl_pluralrules/LICENSE-APACHE": {
+      "blob": "1b5ec8b78e237b5c3b3d812a7c0a6589d0f7161d",
+      "repository": "zbraniecki/pluralrules",
+      "revision": "d0715d5b7cca72e228d6e6c4de154bd30dfdd06a",
+      "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+    },
+    "licenses/zbraniecki-pluralrules-d0715d5b7cca/intl_pluralrules/LICENSE-MIT": {
+      "blob": "31aa79387f27e730e33d871925e152e35e428031",
+      "repository": "zbraniecki/pluralrules",
+      "revision": "d0715d5b7cca72e228d6e6c4de154bd30dfdd06a",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+    }
+  }
+}

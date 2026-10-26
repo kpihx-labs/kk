@@ -137,3 +137,34 @@ pub(crate) fn connection_error(error: quinn::ConnectionError) -> Error {
         _ => Error::Network,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quic_network_failures_are_not_misreported_as_certificate_authentication() {
+        assert!(matches!(
+            connection_error(quinn::ConnectionError::TimedOut),
+            Error::Timeout
+        ));
+        assert!(matches!(
+            connection_error(quinn::ConnectionError::Reset),
+            Error::Network
+        ));
+        assert!(matches!(
+            connection_error(quinn::ConnectionError::LocallyClosed),
+            Error::Network
+        ));
+        let alert = quinn::TransportErrorCode::crypto(42).into();
+        assert!(matches!(
+            connection_error(quinn::ConnectionError::TransportError(alert)),
+            Error::Authentication
+        ));
+        let protocol = quinn::TransportErrorCode::PROTOCOL_VIOLATION.into();
+        assert!(matches!(
+            connection_error(quinn::ConnectionError::TransportError(protocol)),
+            Error::Network
+        ));
+    }
+}

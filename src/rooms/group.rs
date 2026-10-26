@@ -14,7 +14,11 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, rc::Rc};
 use tls_codec::{DeserializeBytes, Serialize as TlsSerialize};
 use zeroize::Zeroizing;
+mod applied;
 mod durable;
+mod enrollment;
+mod outbox;
+mod prepared;
 
 const CONTROL_AAD: &[u8] = b"K&K room control v1";
 const TEXT_AAD: &[u8] = b"K&K room text v1";
@@ -24,6 +28,8 @@ const TEXT_AAD: &[u8] = b"K&K room text v1";
 struct Pending {
     digest: [u8; 32],
     welcome: Option<Vec<u8>>,
+    #[serde(default)]
+    proposal: bool,
 }
 
 pub struct Group {
@@ -31,9 +37,11 @@ pub struct Group {
     state: MlsGroup,
     members: Rc<Vec<(LeafNodeIndex, VerifiedMember)>>,
     committed_epoch: u64,
+    outgoing: BTreeSet<[u8; 32]>,
     consumed: BTreeSet<Vec<u8>>,
     pending: Option<Pending>,
     poisoned: bool,
+    applied: Option<super::control::raft::Position>,
 }
 
 #[derive(Debug)]
@@ -82,6 +90,15 @@ impl Group {
         approved_inviter: &Peer,
         committed_epoch: u64,
     ) -> Result<Self> {
+        Self::join_inner(actor, welcome, approved_inviter, committed_epoch, None)
+    }
+    fn join_inner(
+        actor: CryptoMember,
+        welcome: &[u8],
+        approved_inviter: &Peer,
+        committed_epoch: u64,
+        record: Option<&super::control::raft::CommittedRecord>,
+    ) -> Result<Self> {
         bound(welcome)?;
         let transaction = actor.provider.transaction()?;
         Self::ensure_fresh(&actor)?;
@@ -117,7 +134,10 @@ impl Group {
         {
             return Err(Error::Authentication);
         }
-        let group = Self::finish(actor, state)?;
+        let mut group = Self::finish(actor, state)?;
+        if let Some(record) = record {
+            group.bind_join_record(record, approved_inviter)?;
+        }
         group.save_checkpoint()?;
         transaction.commit()?;
         Ok(group)
@@ -132,13 +152,71 @@ impl Group {
             state,
             members: Rc::new(members),
             committed_epoch,
+            outgoing: BTreeSet::new(),
             consumed: BTreeSet::new(),
             pending: None,
             poisoned: false,
+            applied: None,
         })
     }
     pub fn epoch(&self) -> u64 {
         self.committed_epoch
+    }
+    pub fn room_id(&self) -> [u8; 32] {
+        self.actor.anchor.id()
+    }
+    pub fn root_bundle(&self) -> super::RootBundle {
+        self.actor.anchor.bundle().clone()
+    }
+    pub fn owner(&self) -> &str {
+        &self.actor.owner
+    }
+    pub fn membership_digest(&self) -> Result<[u8; 32]> {
+        super::membership_digest(
+            self.actor.anchor.id(),
+            self.committed_epoch,
+            self.members
+                .iter()
+                .map(|(_, member)| (member.peer().fingerprint_bytes(), member.grant_id())),
+        )
+    }
+    fn check_transition_view(&self, expected: [u8; 32]) -> Result<()> {
+        let actual = super::membership_digest(
+            self.actor.anchor.id(),
+            self.state.epoch().as_u64(),
+            self.members
+                .iter()
+                .map(|(_, member)| (member.peer().fingerprint_bytes(), member.grant_id())),
+        )?;
+        if actual != expected {
+            return Err(Error::Authentication);
+        }
+        Ok(())
+    }
+    /// Ordered authority and the accepted logical audience must both be checked.
+    /// A mismatch rolls back crypto and checkpoint before any Welcome is returned.
+    pub fn confirm_ordered_view(
+        &mut self,
+        next_epoch: u64,
+        committed: &[u8],
+        expected: [u8; 32],
+    ) -> Result<Option<Vec<u8>>> {
+        self.transactional(|group| {
+            let welcome = group.confirm_ordered_mut(next_epoch, committed)?;
+            group.check_transition_view(expected)?;
+            Ok(welcome)
+        })
+    }
+    pub fn apply_ordered_view(
+        &mut self,
+        next_epoch: u64,
+        committed: &[u8],
+        expected: [u8; 32],
+    ) -> Result<()> {
+        self.transactional(|group| {
+            group.apply_ordered_mut(next_epoch, committed)?;
+            group.check_transition_view(expected)
+        })
     }
     pub fn is_active(&self) -> bool {
         !self.poisoned && self.state.is_active()
@@ -265,9 +343,13 @@ impl Group {
             ))
         })();
         let (wire, welcome) = encoded?;
+        if let Some(welcome) = welcome.as_ref() {
+            self.check_outgoing_budget(welcome.len())?;
+        }
         self.pending = Some(Pending {
             digest: Sha256::digest(&wire).into(),
             welcome,
+            proposal: false,
         });
         Ok(wire)
     }
@@ -301,7 +383,12 @@ impl Group {
             .merge_pending_commit(&self.actor.provider)
             .map_err(|_| Error::Authentication)?;
         self.refresh()?;
-        Ok(self.pending.take().and_then(|pending| pending.welcome))
+        self.actor.provider.delete_blob("prepared_control")?;
+        let welcome = self.pending.take().and_then(|pending| pending.welcome);
+        if let Some(wire) = welcome.as_ref() {
+            self.save_outgoing(digest, wire)?;
+        }
+        Ok(welcome)
     }
 
     /// Only after verified final rejection by the ordered-delivery owner.
@@ -324,6 +411,7 @@ impl Group {
             .clear_pending_commit(self.actor.provider.storage())
             .map_err(|_| Error::Authentication)?;
         self.pending = None;
+        self.actor.provider.delete_blob("prepared_control")?;
         Ok(())
     }
 
@@ -333,6 +421,14 @@ impl Group {
         self.transactional(|group| group.apply_ordered_mut(next_epoch, wire))
     }
     fn apply_ordered_mut(&mut self, next_epoch: u64, wire: &[u8]) -> Result<()> {
+        self.apply_ordered_from(next_epoch, wire, None)
+    }
+    fn apply_ordered_from(
+        &mut self,
+        next_epoch: u64,
+        wire: &[u8],
+        expected_author: Option<[u8; 32]>,
+    ) -> Result<()> {
         self.ready()?;
         if self.pending.is_some() || self.epoch().checked_add(1) != Some(next_epoch) {
             return Err(Error::Protocol);
@@ -350,6 +446,9 @@ impl Group {
             _ => return Err(Error::Denied),
         };
         let committer = self.member(sender)?.clone();
+        if expected_author.is_some_and(|author| author != committer.peer().fingerprint_bytes()) {
+            return Err(Error::Authentication);
+        }
         let ProcessedMessageContent::StagedCommitMessage(staged) = processed.into_content() else {
             return Err(Error::Protocol);
         };
@@ -457,6 +556,16 @@ impl Group {
         self.transactional(|group| group.decrypt_text_mut(wire))
     }
     fn decrypt_text_mut(&mut self, wire: &[u8]) -> Result<Text> {
+        self.decrypt_text_from_mut(wire, None)
+    }
+    /// Bind the original MLS sender to the authenticated direct transport peer.
+    /// A mismatch rolls ratchet/replay processing back before plaintext escapes.
+    pub fn decrypt_text_from(&mut self, wire: &[u8], sender: &Peer) -> Result<Text> {
+        self.transactional(|group| {
+            group.decrypt_text_from_mut(wire, Some(sender.fingerprint_bytes()))
+        })
+    }
+    fn decrypt_text_from_mut(&mut self, wire: &[u8], expected: Option<[u8; 32]>) -> Result<Text> {
         self.ready()?;
         let message = protocol(wire, ContentType::Application)?;
         let processed = self
@@ -472,6 +581,9 @@ impl Group {
         };
         if !sender.rights().can_publish() {
             return Err(Error::Denied);
+        }
+        if expected.is_some_and(|expected| expected != sender.peer().fingerprint_bytes()) {
+            return Err(Error::Authentication);
         }
         let fingerprint = sender.peer().fingerprint();
         let ProcessedMessageContent::ApplicationMessage(message) = processed.into_content() else {

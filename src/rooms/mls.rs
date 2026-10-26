@@ -7,6 +7,7 @@ use crate::{Error, Identity, Peer, Result, config, signed};
 use openmls::prelude::*;
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_traits::OpenMlsProvider;
+use openmls_traits::crypto::OpenMlsCrypto;
 use openmls_traits::signatures::Signer;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -63,6 +64,43 @@ pub struct Candidate {
     pub(super) package: KeyPackage,
     pub(super) member: Member,
 }
+
+/// Only public credential material. Verification still establishes a ceiling,
+/// not current membership or a quorum-approved snapshot.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublicIdentity {
+    credential: Vec<u8>,
+    signing_key: Vec<u8>,
+}
+impl PublicIdentity {
+    pub(super) fn from_credential(credential: &Credential, key: &[u8]) -> Result<Self> {
+        let basic =
+            BasicCredential::try_from(credential.clone()).map_err(|_| Error::Authentication)?;
+        if basic.identity().len() > MAX_BUNDLE || key.len() != 32 {
+            return Err(Error::Protocol);
+        }
+        Ok(Self {
+            credential: basic.identity().to_vec(),
+            signing_key: key.to_vec(),
+        })
+    }
+    pub fn verify(&self, anchor: &Anchor) -> Result<Member> {
+        if self.credential.len() > MAX_BUNDLE || self.signing_key.len() != 32 {
+            return Err(Error::Protocol);
+        }
+        verify_credential(
+            anchor,
+            &BasicCredential::new(self.credential.clone()).into(),
+            &self.signing_key,
+        )
+    }
+    pub(crate) fn authority_chain(&self, anchor: &Anchor) -> Result<Vec<Grant>> {
+        self.verify(anchor)?;
+        let identity: MemberIdentity = super::decode(&self.credential)?;
+        Ok(identity.authority)
+    }
+}
 impl Candidate {
     pub fn peer(&self) -> Peer {
         self.member.peer()
@@ -70,6 +108,10 @@ impl Candidate {
     /// Offline authority ceiling, not current room admission or live permissions.
     pub fn rights(&self) -> Rights {
         self.member.rights()
+    }
+    pub fn public_identity(&self) -> Result<PublicIdentity> {
+        let leaf = self.package.leaf_node();
+        PublicIdentity::from_credential(leaf.credential(), leaf.signature_key().as_slice())
     }
     pub fn hash_reference(&self, verifier: &CryptoMember) -> Result<Vec<u8>> {
         self.package
@@ -144,6 +186,7 @@ impl CryptoMember {
             .store(actor.provider.storage())
             .map_err(|_| Error::Storage("cannot save MLS signer"))?;
         actor.save_client()?;
+        actor.provider.set_metadata("membership_started", &false)?;
         transaction.commit()?;
         Ok(actor)
     }
@@ -270,36 +313,44 @@ impl CryptoMember {
     }
 
     pub fn validate_package(&self, bytes: &[u8]) -> Result<Candidate> {
-        if bytes.len() > config::ROOM_MAX_WIRE_BYTES {
-            return Err(Error::Limit {
-                resource: "MLS frame",
-                max: config::ROOM_MAX_WIRE_BYTES,
-            });
-        }
-        let package = KeyPackageIn::tls_deserialize_exact_bytes(bytes)
-            .map_err(|_| Error::Protocol)?
-            .validate(self.provider.crypto(), ProtocolVersion::Mls10)
-            .map_err(|_| Error::Authentication)?;
-        let lifetime = package.life_time();
-        if package.ciphersuite() != SUITE
-            || package.last_resort()
-            || lifetime
-                .not_after()
-                .checked_sub(lifetime.not_before())
-                .is_none_or(|span| {
-                    span > config::ROOM_KEY_PACKAGE_LIFETIME + config::ROOM_CLOCK_MARGIN
-                })
-        {
-            return Err(Error::Authentication);
-        }
-        let leaf = package.leaf_node();
-        let member = verify_credential(
-            &self.anchor,
-            leaf.credential(),
-            leaf.signature_key().as_slice(),
-        )?;
-        Ok(Candidate { package, member })
+        validate_package(&self.anchor, self.provider.crypto(), bytes)
     }
+    pub fn public_identity(&self) -> Result<PublicIdentity> {
+        PublicIdentity::from_credential(
+            &self.credential.credential,
+            self.credential.signature_key.as_slice(),
+        )
+    }
+}
+
+pub(super) fn validate_package(
+    anchor: &Anchor,
+    crypto: &impl OpenMlsCrypto,
+    bytes: &[u8],
+) -> Result<Candidate> {
+    if bytes.len() > config::ROOM_MAX_WIRE_BYTES {
+        return Err(Error::Limit {
+            resource: "MLS frame",
+            max: config::ROOM_MAX_WIRE_BYTES,
+        });
+    }
+    let package = KeyPackageIn::tls_deserialize_exact_bytes(bytes)
+        .map_err(|_| Error::Protocol)?
+        .validate(crypto, ProtocolVersion::Mls10)
+        .map_err(|_| Error::Authentication)?;
+    let lifetime = package.life_time();
+    if package.ciphersuite() != SUITE
+        || package.last_resort()
+        || lifetime
+            .not_after()
+            .checked_sub(lifetime.not_before())
+            .is_none_or(|span| span > config::ROOM_KEY_PACKAGE_LIFETIME + config::ROOM_CLOCK_MARGIN)
+    {
+        return Err(Error::Authentication);
+    }
+    let leaf = package.leaf_node();
+    let member = verify_credential(anchor, leaf.credential(), leaf.signature_key().as_slice())?;
+    Ok(Candidate { package, member })
 }
 
 pub(super) fn verify_credential(

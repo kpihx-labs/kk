@@ -35,10 +35,17 @@ impl Peer {
     pub fn fingerprint(&self) -> String {
         use std::fmt::Write;
         let mut fingerprint = String::with_capacity(64);
-        for byte in Sha256::digest(self.certificate.as_ref()) {
+        for byte in self.fingerprint_bytes() {
             write!(fingerprint, "{byte:02x}").expect("writing into a String");
         }
         fingerprint
+    }
+    pub fn fingerprint_bytes(&self) -> [u8; 32] {
+        Sha256::digest(self.certificate.as_ref()).into()
+    }
+    /// Public identity export only; this exposes no device or room private key.
+    pub fn certificate_der(&self) -> &[u8] {
+        self.certificate.as_ref()
     }
 }
 

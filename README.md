@@ -2,6 +2,89 @@
 
 **Communication between your devices, without an obligatory cloud.**
 
+## Current Linux Delivery: 0.8
+
+The implemented stack now includes confirmed room enrollment, distinct data and
+voter authority, durable crash recovery, consented resumable files, targeted copy
+availability, native Opus/VP8 media and the bundled neutral-grey light/dark UI.
+The separate post-integration review found and fixed two additional boundary
+counterexamples. Current evidence is in [progress](docs/progress.md) and the
+[software review](docs/security-review.md); the older checkpoint paragraphs below
+are retained historical snapshots, not the current command inventory.
+
+```sh
+make check
+make build
+./target/release/kk ui
+# A separately confirmed device uses its own profile and backend.
+```
+
+`kk ui` stays in the foreground and opens a private single-use browser launch.
+Initialize the device explicitly, create/join a room, compare CONFIRM on both
+devices and separately consent to file/media reception. No mandatory intermediary,
+background service, remote-triggered capture or automatic secret replication is
+installed. See [the UI](docs/ui.md), [explicit copies](docs/replicas.md),
+[native media](docs/media.md), [platform claims](docs/platforms.md) and
+[archive/provenance verification](docs/distribution.md).
+
+Full-feature native Windows/macOS protection and capture are not qualified and
+are not advertised by these Linux artifacts. Linux ARM64 is conditional on its
+actual required CI result. A responsive mobile layout is not a physical-device
+or permission-portal qualification. This is not an independently audited production
+security product.
+
+Latest unreleased integration (2026-10-26): `kk ui` now provides the foreground
+grey light/dark device workspace over the existing room SDK. Browser pairing,
+text, consented files and live synthetic VP8/Opus encode/transport/decode pass in
+the operator's configured Edge profile; responsive layout passes at 390 x 844.
+The full host check passes 147 Rust and five JavaScript tests. These results do
+not close physical-device, replica-availability, platform, deep-review or release
+gates. See [the UI boundary](docs/ui.md) and [current evidence](docs/progress.md).
+The older progress paragraphs below are retained historical snapshots.
+
+Current unreleased progress: the public room CLI/file slice passes fourteen real
+three-VM scenarios plus the complete 66-case baseline, including explicit verified
+copy forwarding after the original VM is off. Native media work has begun with
+`kk media doctor` and explicitly consented local preview, not room conferencing.
+See [native media boundaries](docs/media.md) and [current evidence](docs/progress.md).
+The in-progress notes below predate these results. Final product delivery remains
+open, including live room media, GUI, platform releases and the deep review.
+
+## Public Room CLI (Unreleased)
+
+The working tree now exposes `kk room create`, `serve`, `invite`, `join`, `send`,
+`status`, `controllers`, `remove` and `stop`. Three independent CLI processes pass
+network enrollment, broadcast, explicit voter selection and cold resume on the
+host. A dedicated three-VM public-CLI gate is being run; earlier fixture reports
+are not substituted for this gate. See [the room CLI](docs/cli.md#public-rooms)
+and [current evidence](docs/progress.md). Room files/replicas, native media, GUI,
+portable packaging and the final security review are still incomplete.
+
+The checkpoint descriptions below are retained historical observations, not the
+current command inventory or test totals.
+
+Verification completion note (2026-10-26): the repaired transport passes the ten
+private cross-guest scenarios AND all 66 paired-node regression scenarios. Host
+checks pass 111 Rust/19 lab tests; guests are stopped. Earlier replay-in-progress
+wording below describes the preceding state, not a current failure. The remaining
+product gates are still open; this is not a complete-product release.
+
+Latest verification boundary (2026-10-26): ten actual private three-guest scenarios
+passed on the recorded runtime slice, including creator-off delegated admission,
+restart, sender-generation continuity and pre-crash replay refusal. Subsequent
+transport hardening exposed another reconnect timeout; its cache fix and the full
+regression are being replayed. Local checks pass 111 Rust tests. This remains an
+unreleased SDK/CLI working tree, not a completed room CLI, scoped invitation/voter
+lifecycle, media stack, GUI or signed portable release. Earlier first-run wording
+below is retained as provenance; current evidence is in `docs/progress.md`.
+
+Unreleased source update: public room consensus/recovery passes a real three-VM
+gate, and the library now has private runtime, bounded actors and replicated
+encrypted admission artifacts. The first actual private room VM fault gate is
+running. This is not yet a complete `kk room` CLI, media stack, GUI or signed
+portable product. Current versus historical capabilities are distinguished in
+[the backend map](docs/backend-map.md) and [progress](docs/progress.md).
+
 ## Development Checkpoint: 0.8
 
 The library now contains tested MLS group crypto and protected private persistence.

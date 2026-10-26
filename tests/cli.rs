@@ -72,6 +72,32 @@ fn help_describes_only_available_behavior() {
 }
 
 #[test]
+fn native_preview_requires_explicit_consent_and_rejects_pipeline_syntax_before_capture() {
+    let missing = Command::new(env!("CARGO_BIN_EXE_kk"))
+        .args(["media", "preview", "camera", "--device", "/dev/video0"])
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(2));
+    let injected = Command::new(env!("CARGO_BIN_EXE_kk"))
+        .args([
+            "media",
+            "preview",
+            "microphone",
+            "--device",
+            "device ! filesink location=/tmp/forbidden",
+            "--consent",
+        ])
+        .output()
+        .unwrap();
+    assert!(!injected.status.success());
+    assert!(
+        String::from_utf8(injected.stderr)
+            .unwrap()
+            .contains("CONFIGURATION")
+    );
+}
+
+#[test]
 fn unsupported_arguments_fail_without_claiming_success() {
     for args in [vec!["send"], vec!["identity", "unknown"], vec!["--unknown"]] {
         let output = Command::new(env!("CARGO_BIN_EXE_kk"))

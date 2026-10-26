@@ -8,13 +8,7 @@ use std::{
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
-    let result = tokio::select! {
-        biased;
-        signal = tokio::signal::ctrl_c() => match signal {
-            Ok(()) => Err(Error::Cancelled), Err(error) => Err(Error::Io(error)),
-        },
-        result = cli::run() => result,
-    };
+    let result = cli::run().await;
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {

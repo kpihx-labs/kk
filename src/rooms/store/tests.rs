@@ -1,4 +1,5 @@
 use super::*;
+use crate::profile;
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_traits::{signatures::Signer, types::SignatureScheme};
 use std::{

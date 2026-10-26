@@ -93,7 +93,7 @@ impl Reply {
     }
 }
 
-pub(super) struct Listener {
+pub(crate) struct Listener {
     listener: UnixListener,
     path: PathBuf,
     inode: u64,
@@ -166,7 +166,7 @@ fn check_user(stream: &UnixStream) -> Result<()> {
     }
     Ok(())
 }
-async fn read<T: serde::de::DeserializeOwned>(stream: &mut UnixStream) -> Result<T> {
+pub(crate) async fn read<T: serde::de::DeserializeOwned>(stream: &mut UnixStream) -> Result<T> {
     let length = stream.read_u32().await? as usize;
     if length == 0 || length > MAX_FRAME {
         return Err(Error::Protocol);
@@ -175,7 +175,7 @@ async fn read<T: serde::de::DeserializeOwned>(stream: &mut UnixStream) -> Result
     stream.read_exact(&mut bytes).await?;
     serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)
 }
-async fn write<T: Serialize>(stream: &mut UnixStream, value: &T) -> Result<()> {
+pub(crate) async fn write<T: Serialize>(stream: &mut UnixStream, value: &T) -> Result<()> {
     let bytes = Zeroizing::new(serde_json::to_vec(value).map_err(|_| Error::Protocol)?);
     if bytes.len() > MAX_FRAME {
         return Err(Error::Protocol);
@@ -276,24 +276,40 @@ pub async fn request(
     request: &Request,
     deadline: Duration,
 ) -> Result<Option<Reply>> {
-    crate::transport::validate_duration(deadline, config::MAX_FILE_TIMEOUT)?;
+    let reply: Option<Reply> = exchange(profile, request, deadline).await?;
+    if let Some(reply) = &reply {
+        reply.result()?;
+    }
+    Ok(reply)
+}
+
+pub(crate) async fn connect(profile: &Path) -> Result<Option<UnixStream>> {
     crate::profile::private_directory(profile, false)?;
     let path = profile.join("node.sock");
-    let metadata = match std::fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => safe_socket(&metadata)?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
-    };
-    safe_socket(&metadata)?;
+    }
+    let stream = UnixStream::connect(&path)
+        .await
+        .map_err(|_| Error::Node("stale/unavailable session; no automatic network retry"))?;
+    check_user(&stream)?;
+    Ok(Some(stream))
+}
+
+pub(crate) async fn exchange<Q: Serialize, R: serde::de::DeserializeOwned>(
+    profile: &Path,
+    request: &Q,
+    deadline: Duration,
+) -> Result<Option<R>> {
+    crate::transport::validate_duration(deadline, config::MAX_FILE_TIMEOUT)?;
     tokio::time::timeout(deadline, async {
-        let mut stream = UnixStream::connect(&path)
-            .await
-            .map_err(|_| Error::Node("stale/unavailable session; no automatic network retry"))?;
-        check_user(&stream)?;
+        let Some(mut stream) = connect(profile).await? else {
+            return Ok(None);
+        };
         write(&mut stream, request).await?;
-        let reply: Reply = read(&mut stream).await?;
-        reply.result()?;
-        Ok(Some(reply))
+        Ok(Some(read(&mut stream).await?))
     })
     .await
     .map_err(|_| Error::Timeout)?

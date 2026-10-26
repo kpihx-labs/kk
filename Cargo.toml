@@ -1,20 +1,27 @@
 [package]
 name = "kk"
-version = "0.8.0-dev.1"
+version = "0.8.0"
 edition = "2024"
 description = "Local-first communication primitives between trusted devices"
+repository = "https://github.com/kpihx-labs/kk"
+homepage = "https://github.com/kpihx-labs/kk"
 license = "BUSL-1.1"
 publish = false
-include = ["/src/**/*.rs", "/tests/**/*.rs", "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/README.md", "/CONTRACT.md", "/CHANGELOG.md", "/docs/*.md"]
+include = ["/src/**/*.rs", "/src/ui/assets/*", "/tests/**/*.rs", "/tests/*.mjs", "/tests/test_release.py", "/scripts/*.py", "/third_party/**", "/Makefile", "/rust-toolchain.toml", "/lab/control_node.rs", "/lab/room_fixture.rs", "/lab/scoped_pairing.rs", "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/README.md", "/CONTRACT.md", "/CHANGELOG.md", "/docs/*.md"]
 
 [package.metadata.kk]
-contract-version = "0.8.0-dev.1"
+contract-version = "0.8.0"
 
 [lints.rust]
 unsafe_code = "forbid"
 
+[[example]]
+name = "control-node-fixture"
+path = "lab/control_node.rs"
+
 [dependencies]
 age = { version = "0.12.1", default-features = false, features = ["armor", "async"] }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "query", "tokio", "ws"] }
 bip39 = { version = "3.0.0", default-features = false, features = ["std"] }
 chacha20poly1305 = "0.10"
 clap = { version = "4.6.7", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
@@ -29,6 +36,7 @@ openmls_basic_credential = "0.6.0"
 openmls_libcrux_crypto = "0.4.0"
 openmls_sqlite_storage = "0.3.0"
 openmls_traits = "0.6.0"
+openraft = { version = "0.9.25", default-features = false, features = ["serde", "storage-v2"] }
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 quircs = "0.10.3"
@@ -42,11 +50,14 @@ sha2 = "0.11.1"
 sha2_10 = { version = "0.10", package = "sha2" }
 tempfile = "3.27.0"
 thiserror = "2.0.21"
-tls_codec = "0.5"
-tokio = { version = "1.54.1", features = ["rt", "macros", "signal", "time", "fs", "io-util", "net", "sync"] }
+tls_codec = { version = "0.5", features = ["derive", "serde"] }
+tokio = { version = "1.54.1", features = ["rt", "macros", "signal", "time", "fs", "io-util", "net", "sync", "process"] }
 tokio-util = { version = "0.7.20", features = ["compat"] }
 x509-parser = "0.18.1"
 zeroize = { version = "1.9.1", features = ["derive"] }
 
 [target."cfg(unix)".dependencies]
-rustix = { version = "1.1.5", features = ["event", "fs", "pipe", "process", "termios"] }
+rustix = { version = "1.1.5", features = ["event", "fs", "net", "pipe", "process", "termios"] }
+
+[dev-dependencies]
+tower = { version = "0.5.3", features = ["util"] }

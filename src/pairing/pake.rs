@@ -29,6 +29,13 @@ impl CipherSuite for Suite {
 const DOMAIN: &[u8] = b"kk-pair/1;ristretto255;argon2id-m19456-t2-p1";
 const MAX_FRAME: usize = 16_384;
 
+/// Bootstrap purpose, not application membership or a global contact grant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    Contact,
+    Room([u8; 32]),
+}
+
 fn ksf() -> Argon2<'static> {
     Argon2::new(
         Algorithm::Argon2id,
@@ -42,12 +49,21 @@ fn identifiers(id: &[u8; 16]) -> Identifiers<'_> {
         server: Some(id),
     }
 }
-fn context(id: &[u8; 16]) -> Vec<u8> {
-    [DOMAIN, id.as_slice()].concat()
+fn context(id: &[u8; 16], scope: Scope) -> Vec<u8> {
+    match scope {
+        Scope::Contact => [DOMAIN, id.as_slice()].concat(),
+        Scope::Room(room) => [DOMAIN, b"\0room\0", room.as_slice(), id.as_slice()].concat(),
+    }
 }
-fn transcript(id: &[u8; 16], request: &[u8], response: &[u8], finish: &[u8]) -> [u8; 32] {
+fn transcript(
+    id: &[u8; 16],
+    scope: Scope,
+    request: &[u8],
+    response: &[u8],
+    finish: &[u8],
+) -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(context(id));
+    hash.update(context(id, scope));
     for message in [request, response, finish] {
         hash.update((message.len() as u32).to_be_bytes());
         hash.update(message);
@@ -56,6 +72,7 @@ fn transcript(id: &[u8; 16], request: &[u8], response: &[u8], finish: &[u8]) -> 
 }
 
 pub struct Invitation {
+    scope: Scope,
     id: [u8; 16],
     code: Option<SecretString>,
     setup: ServerSetup<Suite>,
@@ -64,12 +81,14 @@ pub struct Invitation {
     ttl: Duration,
 }
 pub struct ServerExchange {
+    scope: Scope,
     state: ServerLogin<Suite>,
     id: [u8; 16],
     request: Vec<u8>,
     response: Vec<u8>,
 }
 pub struct ClientExchange {
+    scope: Scope,
     state: ClientLogin<Suite>,
     code: SecretString,
     id: [u8; 16],
@@ -78,6 +97,9 @@ pub struct ClientExchange {
 
 impl Invitation {
     pub fn generate(ttl: Duration) -> Result<Self> {
+        Self::generate_scoped(ttl, Scope::Contact)
+    }
+    pub fn generate_scoped(ttl: Duration, scope: Scope) -> Result<Self> {
         if ttl.is_zero() || ttl > Duration::from_secs(300) {
             return Err(Error::Pairing);
         }
@@ -112,6 +134,7 @@ impl Invitation {
             )
             .map_err(|_| Error::Pairing)?;
         Ok(Self {
+            scope,
             id,
             code: Some(code),
             setup,
@@ -122,6 +145,9 @@ impl Invitation {
     }
     pub fn id(&self) -> [u8; 16] {
         self.id
+    }
+    pub fn scope(&self) -> Scope {
+        self.scope
     }
     pub fn remaining(&self) -> Result<Duration> {
         self.ttl
@@ -139,7 +165,7 @@ impl Invitation {
         if self.created.elapsed() >= self.ttl || request.len() > MAX_FRAME {
             return Err(Error::Pairing);
         }
-        let binding = context(&self.id);
+        let binding = context(&self.id, self.scope);
         let started = ServerLogin::start(
             &mut OsRng,
             &self.setup,
@@ -155,6 +181,7 @@ impl Invitation {
         let response = started.message.serialize().to_vec();
         Ok((
             ServerExchange {
+                scope: self.scope,
                 state: started.state,
                 id: self.id,
                 request: request.to_vec(),
@@ -167,6 +194,9 @@ impl Invitation {
 
 impl ClientExchange {
     pub fn start(id: [u8; 16], code: SecretString) -> Result<(Self, Vec<u8>)> {
+        Self::start_scoped(id, code, Scope::Contact)
+    }
+    pub fn start_scoped(id: [u8; 16], code: SecretString, scope: Scope) -> Result<(Self, Vec<u8>)> {
         if code.expose_secret().len() > 512 || code.expose_secret().is_empty() {
             return Err(Error::Pairing);
         }
@@ -175,6 +205,7 @@ impl ClientExchange {
         let request = started.message.serialize().to_vec();
         Ok((
             Self {
+                scope,
                 state: started.state,
                 code,
                 id,
@@ -187,7 +218,7 @@ impl ClientExchange {
         if response.len() > MAX_FRAME {
             return Err(Error::Pairing);
         }
-        let binding = context(&self.id);
+        let binding = context(&self.id, self.scope);
         let stretch = ksf();
         let finished = self
             .state
@@ -203,7 +234,7 @@ impl ClientExchange {
             )
             .map_err(|_| Error::Pairing)?;
         let finalization = finished.message.serialize().to_vec();
-        let hash = transcript(&self.id, &self.request, response, &finalization);
+        let hash = transcript(&self.id, self.scope, &self.request, response, &finalization);
         Ok((
             Channel::new(finished.session_key.as_slice(), hash, false)?,
             finalization,
@@ -216,7 +247,7 @@ impl ServerExchange {
         if finalization.len() > MAX_FRAME {
             return Err(Error::Pairing);
         }
-        let binding = context(&self.id);
+        let binding = context(&self.id, self.scope);
         let finished = self
             .state
             .finish(
@@ -229,7 +260,13 @@ impl ServerExchange {
             .map_err(|_| Error::Pairing)?;
         Channel::new(
             finished.session_key.as_slice(),
-            transcript(&self.id, &self.request, &self.response, finalization),
+            transcript(
+                &self.id,
+                self.scope,
+                &self.request,
+                &self.response,
+                finalization,
+            ),
             true,
         )
     }
@@ -307,6 +344,40 @@ impl Channel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn scope_is_in_opaque_and_channel_transcripts_not_just_an_address_hint() {
+        let scope = Scope::Room([1; 32]);
+        let mut invitation = Invitation::generate_scoped(Duration::from_secs(5), scope).unwrap();
+        let (client, request) = ClientExchange::start_scoped(
+            invitation.id(),
+            invitation.code().unwrap().clone(),
+            scope,
+        )
+        .unwrap();
+        let (server, response) = invitation.start(&request).unwrap();
+        let (mut client, finalization) = client.finish(&response).unwrap();
+        let mut server = server.finish(&finalization).unwrap();
+        assert_eq!(
+            server
+                .open(&client.seal(b"scoped metadata").unwrap())
+                .unwrap()
+                .as_slice(),
+            b"scoped metadata"
+        );
+        for wrong in [Scope::Contact, Scope::Room([2; 32])] {
+            let mut invitation =
+                Invitation::generate_scoped(Duration::from_secs(5), scope).unwrap();
+            let (client, request) = ClientExchange::start_scoped(
+                invitation.id(),
+                invitation.code().unwrap().clone(),
+                wrong,
+            )
+            .unwrap();
+            let (_, response) = invitation.start(&request).unwrap();
+            assert!(client.finish(&response).is_err());
+            assert!(invitation.start(&request).is_err()); // Still ONE global attempt.
+        }
+    }
     #[test]
     fn correct_code_confirms_both_directions_and_replay_fails() {
         let mut invitation = Invitation::generate(Duration::from_secs(60)).unwrap();

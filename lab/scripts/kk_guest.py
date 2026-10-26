@@ -10,6 +10,32 @@ import xml.etree.ElementTree as ET
 URI = "qemu:///system"
 
 
+def virsh(*args, input=None):
+    result = subprocess.run(["virsh", "-c", URI, *map(str, args)], input=input,
+                            capture_output=True, text=True, check=False)
+    if result.returncode:
+        raise RuntimeError(f"virsh {' '.join(map(str, args))}: {result.stderr.strip()}")
+    return result.stdout
+
+
+def shutdown_guests(names):
+    """An asynchronous shutdown can close its RPC before the reply arrives."""
+    errors = []
+    for name in names:
+        if virsh("domstate", name).strip() == "running":
+            try:
+                print(virsh("shutdown", name, "--mode", "agent"), flush=True)
+            except RuntimeError as error:
+                errors.append(str(error))
+    deadline = time.monotonic() + 60
+    while any(virsh("domstate", name).strip() != "shut off" for name in names):
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Guests did not shut down; refusing forced destruction. " + "; ".join(errors))
+        time.sleep(0.2)
+    for error in errors:
+        print("Shutdown RPC error resolved by confirmed domain shut-off: " + error, flush=True)
+
+
 def declared_peers():
     definition = Path(__file__).resolve().parents[1] / "xml/kk-isolated.xml"
     return [dict(host.attrib) for host in ET.parse(definition).findall("./ip/dhcp/host")]
@@ -83,5 +109,49 @@ class Guest:
             raise ValueError("public certificate exceeds the K&K bound")
         return certificate
 
+    def room_invitation(self, source):
+        """Opaque intended delivery of one ephemeral TEST invite, never keys."""
+        parts = PurePosixPath(source).parts
+        run = parts[3].removeprefix("kk-room-") if len(parts) == 5 else ""
+        if (len(parts) != 5 or parts[:3] != ("/", "var", "tmp")
+                or not parts[3].startswith("kk-room-") or len(run) != 12
+                or any(char not in "0123456789abcdef" for char in run)
+                or parts[4] != "scoped-invitation.json"):
+            raise ValueError("Only the explicit ephemeral room-test invitation is exportable")
+        if self.run("test", "-L", source, check=False)["code"] == 0:
+            raise ValueError("Invitation symlinks are not exportable")
+        # Bound on the guest BEFORE output allocation. No identity/MLS key path
+        # is accepted, and the opaque code bundle is never logged.
+        result = self.run("/usr/bin/dd", "if=" + source, "bs=4097", "count=1", "status=none", check=False)
+        if result["code"]:
+            raise RuntimeError("Private invitation transfer failed (exit " + str(result["code"]) + ")")
+        data = result["out"].encode()
+        if len(data) > 4096:
+            raise ValueError("Room invitation exceeds the private bundle bound")
+        return data
+
     def interfaces(self):
         return self.agent("guest-network-get-interfaces")
+
+    def configure_isolated_network(self, peer):
+        """Restore the lab's volatile address after every boot, via virtio only."""
+        if peer["name"] != self.name:
+            raise ValueError("Guest/network roster identity mismatch")
+        # Virtio-agent readiness precedes the networking service on some boots.
+        # Starting the existing guest unit waits for its service activation;
+        # it does not enable/install a host or guest service.
+        self.run("systemctl", "start", "NetworkManager")
+        matches = [item["name"] for item in self.interfaces()
+                   if item.get("hardware-address") == peer["mac"]]
+        if len(matches) != 1:
+            raise RuntimeError(f"{self.name}: expected exactly one interface with MAC {peer['mac']}")
+        device = matches[0]
+        self.run("/usr/bin/nmcli", "device", "set", device, "managed", "no")
+        self.run("ip", "address", "flush", "dev", device)
+        self.run("ip", "link", "set", device, "up")
+        self.run("ip", "address", "replace", peer["ip"] + "/24", "dev", device)
+        for family in ["-4", "-6"]:
+            self.run("ip", family, "route", "flush", "default")
+            if json.loads(self.run("ip", family, "-j", "route", "show", "default")["out"]):
+                raise RuntimeError(f"{self.name}: {family} default Internet route remains")
+        peer["device"] = device

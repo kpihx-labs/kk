@@ -1,5 +1,22 @@
 # Room Runtime: Remaining Boundary
 
+Current 0.8 update: the runtime, public CLI, scoped enrollment/recovery, voter and
+address lifecycle, explicit copies, native/browser media and GUI are integrated
+on the qualified Linux software slice. Public cross-VM and native shaped-link
+results, with exact hashes and residual limits, are in [progress.md](progress.md).
+The post-integration [review](security-review.md) adds actual counterexamples and
+regressions. The design acceptance text below remains historical provenance;
+portable release status follows [platforms.md](platforms.md) and
+[distribution.md](distribution.md), never this old heading alone.
+
+Implementation update (2026-10-26): the public OpenRaft service now passes a real
+three-VM recovery gate. Protected local committed-record catch-up and an atomic
+private MLS applied cursor are implemented and locally tested. Retention is
+bounded to 64 records / 8 MiB; a missing bridge or public-only snapshot requires
+verified rejoin, never private-state regeneration. Historical receipts are not
+applied-record audience proofs. The older design notes below remain provenance;
+the integrated private network runtime and delivery/replication gates are open.
+
 > Design/acceptance boundary, not an implemented network room service.
 > The tested Group object is a crypto state machine with an external order precondition.
 

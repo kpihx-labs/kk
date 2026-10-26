@@ -4,7 +4,6 @@
 import argparse
 import hashlib
 import json
-import subprocess
 import tempfile
 import time
 import uuid
@@ -12,7 +11,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from kk_file_cases import file_cases
-from kk_guest import URI, Guest, declared_peers
+from kk_guest import Guest, declared_peers, virsh, shutdown_guests
 from kk_node_cases import node_cases
 from kk_pair_cases import pair_cases
 from kk_sensitive_cases import sensitive_cases
@@ -31,20 +30,6 @@ PROFILES = {
 }
 
 
-def virsh(*args, input=None):
-    result = subprocess.run(["virsh", "-c", URI, *map(str, args)], input=input, capture_output=True, text=True, check=False)
-    if result.returncode:
-        raise RuntimeError(f"virsh {' '.join(map(str, args))}: {result.stderr.strip()}")
-    return result.stdout
-
-
-def interface(guest, mac):
-    matches = [item["name"] for item in guest.interfaces() if item.get("hardware-address") == mac]
-    if len(matches) != 1:
-        raise RuntimeError(f"{guest.name}: expected exactly one interface with MAC {mac}")
-    return matches[0]
-
-
 def isolate(peer):
     guest = Guest(peer["name"])
     tree = ET.fromstring(virsh("dumpxml", guest.name))
@@ -58,16 +43,7 @@ def isolate(peer):
         virsh("detach-interface", guest.name, "network", "--mac", peer["mac"], "--live", "--config")
         virsh("attach-interface", guest.name, "network", "kk-isolated", "--model", "virtio",
               "--mac", peer["mac"], "--live", "--config")
-    device = interface(guest, peer["mac"])
-    guest.run("/usr/bin/nmcli", "device", "set", device, "managed", "no")
-    guest.run("ip", "address", "flush", "dev", device)
-    guest.run("ip", "link", "set", device, "up")
-    guest.run("ip", "address", "replace", peer["ip"] + "/24", "dev", device)
-    for family in ["-4", "-6"]:
-        guest.run("ip", family, "route", "flush", "default")
-        if json.loads(guest.run("ip", family, "-j", "route", "show", "default")["out"]):
-            raise RuntimeError(f"{guest.name}: {family} default Internet route remains")
-    peer["device"] = device
+    guest.configure_isolated_network(peer)
 
 
 def setup():
@@ -315,14 +291,7 @@ def start():
 
 
 def stop():
-    for peer in PEERS:
-        if virsh("domstate", peer["name"]).strip() == "running":
-            print(virsh("shutdown", peer["name"], "--mode", "agent"), flush=True)
-    deadline = time.monotonic() + 60
-    while any(virsh("domstate", peer["name"]).strip() != "shut off" for peer in PEERS):
-        if time.monotonic() >= deadline:
-            raise TimeoutError("Guests did not shut down cleanly; refusing forced destruction")
-        time.sleep(0.2)
+    shutdown_guests([peer["name"] for peer in PEERS])
     saved = Path(tempfile.mkdtemp(prefix="kk-headless-backup-"))
     for peer in PEERS:
         original = virsh("dumpxml", peer["name"], "--inactive")

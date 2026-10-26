@@ -11,6 +11,10 @@ struct Checkpoint {
     epoch: u64,
     consumed: Vec<Vec<u8>>,
     pending: Option<Pending>,
+    #[serde(default)]
+    outgoing: Vec<[u8; 32]>,
+    #[serde(default)]
+    applied: Option<super::super::control::raft::Position>,
 }
 struct Loaded {
     state: MlsGroup,
@@ -19,8 +23,29 @@ struct Loaded {
 }
 
 impl Group {
+    /// Distinguish an untouched candidate from lost/corrupt membership history.
+    /// Legacy initialized stores remain restorable; an unmarked empty store is
+    /// not permission to regenerate keys or retry a consumed Welcome.
+    pub fn has_membership(actor: &CryptoMember) -> Result<bool> {
+        let checkpoint = actor.provider.metadata::<Checkpoint>("group")?.is_some();
+        let sdk = MlsGroup::load(
+            actor.provider.storage(),
+            &GroupId::from_slice(&actor.anchor.id()),
+        )
+        .map_err(|_| Error::Storage("cannot inspect existing MLS membership"))?
+        .is_some();
+        match actor.provider.metadata::<bool>("membership_started")? {
+            Some(true) => Ok(true),
+            Some(false) if !checkpoint && !sdk => Ok(false),
+            None if checkpoint || sdk => Ok(true),
+            _ => Err(Error::Storage(
+                "membership initialization evidence is missing or inconsistent; verified recovery required",
+            )),
+        }
+    }
     pub(super) fn ensure_fresh(actor: &CryptoMember) -> Result<()> {
-        if actor.provider.metadata::<Checkpoint>("group")?.is_some()
+        if actor.provider.metadata::<bool>("membership_started")? != Some(false)
+            || actor.provider.metadata::<Checkpoint>("group")?.is_some()
             || MlsGroup::load(
                 actor.provider.storage(),
                 &GroupId::from_slice(&actor.anchor.id()),
@@ -29,7 +54,7 @@ impl Group {
             .is_some()
         {
             return Err(Error::Storage(
-                "membership already exists; restore instead of regenerating",
+                "membership is not proven fresh; restore instead of regenerating",
             ));
         }
         Ok(())
@@ -43,9 +68,11 @@ impl Group {
             state: loaded.state,
             members: loaded.members,
             committed_epoch: loaded.checkpoint.epoch,
+            outgoing: loaded.checkpoint.outgoing.into_iter().collect(),
             consumed: loaded.checkpoint.consumed.into_iter().collect(),
             pending: loaded.checkpoint.pending,
             poisoned: false,
+            applied: loaded.checkpoint.applied,
         })
     }
     fn load(actor: &CryptoMember) -> Result<Loaded> {
@@ -70,6 +97,8 @@ impl Group {
         {
             return Err(Error::Storage("invalid room checkpoint"));
         }
+        super::outbox::validate(actor, &checkpoint.outgoing, 0)?;
+        Self::load_prepared_control(actor, checkpoint.pending.as_ref(), checkpoint.epoch)?;
         let state = MlsGroup::load(
             actor.provider.storage(),
             &GroupId::from_slice(&actor.anchor.id()),
@@ -115,6 +144,7 @@ impl Group {
         let pending = self.pending.as_ref().map(|pending| Pending {
             digest: pending.digest,
             welcome: pending.welcome.clone(),
+            proposal: pending.proposal,
         });
         self.actor.provider.set_metadata(
             "group",
@@ -124,9 +154,14 @@ impl Group {
                 owner: self.actor.owner.clone(),
                 epoch: self.state.epoch().as_u64(),
                 consumed: self.consumed.iter().cloned().collect(),
+                outgoing: self.outgoing.iter().copied().collect(),
                 pending,
+                applied: self.applied,
             },
-        )
+        )?;
+        self.actor
+            .provider
+            .set_metadata("membership_started", &true)
     }
     pub(super) fn transactional<T>(
         &mut self,
@@ -135,6 +170,8 @@ impl Group {
         let transaction = self.actor.provider.transaction()?;
         let prior_members = self.members.clone();
         let prior_epoch = self.committed_epoch;
+        let prior_outgoing = self.outgoing.clone();
+        let prior_applied = self.applied;
         let outcome = operation(self).and_then(|output| {
             self.save_checkpoint()?;
             Ok(output)
@@ -150,6 +187,8 @@ impl Group {
                     // membership/epoch left in memory after failed COMMIT.
                     self.members = prior_members;
                     self.committed_epoch = prior_epoch;
+                    self.outgoing = prior_outgoing;
+                    self.applied = prior_applied;
                     self.poisoned = true;
                     Err(error)
                 }
@@ -163,12 +202,18 @@ impl Group {
                         self.state = loaded.state;
                         self.members = loaded.members;
                         self.committed_epoch = loaded.checkpoint.epoch;
+                        self.outgoing = loaded.checkpoint.outgoing.into_iter().collect();
                         self.consumed = loaded.checkpoint.consumed.into_iter().collect();
                         self.pending = loaded.checkpoint.pending;
+                        self.applied = loaded.checkpoint.applied;
                         self.poisoned = false;
                         Err(error)
                     }
                     Err(_) => {
+                        self.members = prior_members;
+                        self.committed_epoch = prior_epoch;
+                        self.outgoing = prior_outgoing;
+                        self.applied = prior_applied;
                         self.poisoned = true;
                         Err(Error::Storage("failed mutation requires verified recovery"))
                     }

@@ -4,7 +4,7 @@ use std::process::Command;
 fn study_clones_and_local_files_stay_out_of_the_package() {
     let output = Command::new(env!("CARGO"))
         .current_dir(env!("CARGO_MANIFEST_DIR"))
-        // There are deliberately no hosted project URLs in this local scaffold.
+        // Metadata-only inventory; private fixtures and local study clones stay out.
         .args([
             "package",
             "--offline",

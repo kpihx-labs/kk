@@ -1,8 +1,9 @@
-name: Rust foundation checks
+name: Verify And Release
 
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -26,25 +27,85 @@ jobs:
       - name: Mocked lab-control tests, not a VM claim
         run: uv run --managed-python --python 3.12 --no-project --directory lab/scripts python -m unittest discover -s ../tests -p 'test_kk_*.py'
   linux:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
     env:
-      RUSTUP_TOOLCHAIN: 1.99.1
+      TARGET: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
         with:
           persist-credentials: false
       - name: Rust tools
-        run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
+        run: rustup show active-toolchain
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.10.3"
+          enable-cache: false
       - name: Locked dependencies
         run: cargo fetch --locked
-      - name: Format
-        run: cargo fmt --all -- --check
-      - name: Lint
-        run: cargo clippy --locked --all-targets -- -D warnings
-      - name: Local integration tests, not a VM claim
-        run: cargo test --locked --all-targets
-      - name: Documentation
+      - name: Full local checks, not a VM or physical-device claim
+        run: make check
+      - name: Packaging tool lint
+        run: uvx --from ruff==0.16.9 ruff check --target-version py311 scripts tests/test_release.py
+      - name: Clean committed archives and offline vendored source
+        if: github.event_name != 'pull_request'
+        run: make bundle TARGET="$TARGET"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: github.event_name != 'pull_request'
+        with:
+          name: kk-${{ matrix.target }}
+          path: target/dist/*
+          if-no-files-found: error
+          retention-days: 14
+  release:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    needs: [linux, lab-static]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: kk-*
+          path: artifacts
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.10.3"
+          enable-cache: false
+      - name: Refuse conflicting matrix files
+        run: uv run --no-project scripts/release.py collect --input artifacts --output target/dist
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        id: provenance
+        with:
+          subject-path: target/dist/*.tar.gz
+      - name: Include the public verification bundle
         env:
-          RUSTDOCFLAGS: -D warnings
-        run: cargo doc --locked --no-deps
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: cp "$BUNDLE" "target/dist/kk-${GITHUB_REF_NAME}.sigstore.jsonl"
+      - name: Publish qualified archives and verification material
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" target/dist/* --verify-tag --title "K&K $GITHUB_REF_NAME" --generate-notes
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kk-public-provenance
+          path: target/dist/*
+          if-no-files-found: error

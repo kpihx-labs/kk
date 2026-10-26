@@ -21,12 +21,33 @@ pub(crate) async fn receive(
 
 pub(crate) async fn receive_with(
     peer: &Peer,
-    mut request: quinn::RecvStream,
-    mut response: quinn::SendStream,
+    request: quinn::RecvStream,
+    response: quinn::SendStream,
     authorize: impl Fn() -> Result<()>,
     choose: impl FnOnce(&FileInfo) -> Result<ReceivePolicy>,
 ) -> Result<Receipt> {
-    authorize()?;
+    receive_with_async(
+        peer,
+        request,
+        response,
+        || std::future::ready(authorize()),
+        choose,
+    )
+    .await
+}
+
+pub(crate) async fn receive_with_async<F, Fut>(
+    peer: &Peer,
+    mut request: quinn::RecvStream,
+    mut response: quinn::SendStream,
+    mut authorize: F,
+    choose: impl FnOnce(&FileInfo) -> Result<ReceivePolicy>,
+) -> Result<Receipt>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    authorize().await?;
     let mut offer = [0; 41];
     request.read_exact(&mut offer).await?;
     if offer[0] > 1 {
@@ -48,7 +69,7 @@ pub(crate) async fn receive_with(
     let mut binding = [0; 73];
     binding[..41].copy_from_slice(&offer);
     binding[41..].copy_from_slice(&Sha256::digest(peer.certificate.as_ref()));
-    authorize()?;
+    authorize().await?;
     let mut store = Store::open(&policy.destination, &binding).await?;
     let offset = store.file.metadata().await?.len();
     if offset > bytes {
@@ -77,7 +98,7 @@ pub(crate) async fn receive_with(
         store.file.write_all(&buffer[..read]).await?;
         since_authorization += read;
         if since_authorization >= config::FILE_CHUNK_BYTES {
-            authorize()?;
+            authorize().await?;
             since_authorization = 0;
         }
         remaining -= read as u64;
@@ -94,7 +115,7 @@ pub(crate) async fn receive_with(
     {
         return Err(Error::Integrity);
     }
-    authorize()?;
+    authorize().await?;
     store.commit().await?;
     response.write_all(&expected).await?;
     response.finish().map_err(|_| Error::Network)?;
@@ -112,11 +133,29 @@ pub(crate) async fn send(
     file: &mut File,
     info: FileInfo,
     sensitive: bool,
-    mut request: quinn::SendStream,
-    mut response: quinn::RecvStream,
+    request: quinn::SendStream,
+    response: quinn::RecvStream,
     authorize: impl Fn() -> Result<()>,
 ) -> Result<Receipt> {
-    authorize()?;
+    send_with_async(file, info, sensitive, request, response, || {
+        std::future::ready(authorize())
+    })
+    .await
+}
+
+pub(crate) async fn send_with_async<F, Fut>(
+    file: &mut File,
+    info: FileInfo,
+    sensitive: bool,
+    mut request: quinn::SendStream,
+    mut response: quinn::RecvStream,
+    mut authorize: F,
+) -> Result<Receipt>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    authorize().await?;
     request.write_all(&[u8::from(sensitive)]).await?;
     request.write_all(&info.bytes.to_be_bytes()).await?;
     request.write_all(&info.sha256).await?;
@@ -129,7 +168,7 @@ pub(crate) async fn send(
     let mut remaining = info.bytes - offset;
     let mut buffer = Zeroizing::new(vec![0; config::FILE_CHUNK_BYTES]);
     while remaining > 0 {
-        authorize()?;
+        authorize().await?;
         let count = remaining.min(buffer.len() as u64) as usize;
         file.read_exact(&mut buffer[..count])
             .await
@@ -140,7 +179,7 @@ pub(crate) async fn send(
     if file.read(&mut [0]).await? != 0 {
         return Err(Error::Integrity);
     }
-    authorize()?;
+    authorize().await?;
     request.finish().map_err(|_| Error::Network)?;
     if response.read_to_end(32).await? != info.sha256 {
         return Err(Error::Integrity);

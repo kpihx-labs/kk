@@ -1,4 +1,6 @@
 //! One owner for pinned mutual TLS, QUIC bounds and connection lifetime.
+mod lifetime;
+pub(crate) use lifetime::{DriverOwner, server as owned_server};
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
@@ -13,6 +15,7 @@ use crate::{Error, Identity, Peer, Result, config, error::connection_error};
 pub(crate) enum Policy {
     OneShot,
     Interactive,
+    Room,
 }
 
 pub(crate) fn server(
@@ -207,7 +210,12 @@ fn settings(policy: Policy) -> Arc<quinn::TransportConfig> {
     transport
         .max_concurrent_bidi_streams(streams.into())
         .max_concurrent_uni_streams(0u8.into())
-        .datagram_receive_buffer_size(None)
+        .datagram_receive_buffer_size(if matches!(policy, Policy::Room) {
+            Some(config::MEDIA_DATAGRAM_BUFFER_BYTES)
+        } else {
+            None
+        })
+        .datagram_send_buffer_size(config::MEDIA_DATAGRAM_BUFFER_BYTES)
         .stream_receive_window(config::WINDOW_BYTES.into())
         .receive_window(window.into())
         .send_window(window as u64)

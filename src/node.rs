@@ -84,8 +84,7 @@ struct Shared {
     next_connection: AtomicU64,
     received: AtomicU64,
     sent: AtomicU64,
-    budget: AtomicU64,
-    file_attempts: AtomicU64,
+    inbox: Option<files::Inbox>,
     streams: Arc<Semaphore>,
     files: Arc<Semaphore>,
     local_text: Arc<Semaphore>,
@@ -143,9 +142,13 @@ impl Node {
             return Err(Error::FileTooLarge);
         }
         crate::profile::private_directory(&options.profile, true)?;
-        if let Some(inbox) = &options.inbox {
-            crate::profile::private_directory(inbox, true)?;
-        }
+        let inbox = options
+            .inbox
+            .as_ref()
+            .map(|path| {
+                files::Inbox::new(path.clone(), options.max_file_bytes, options.file_budget)
+            })
+            .transpose()?;
         let registry = Registry::open(options.profile.clone())?;
         let peers = admitted(&registry, &identity)?;
         let server = transport::server_config(
@@ -157,7 +160,6 @@ impl Node {
         let endpoint = quinn::Endpoint::server(server, options.bind)?;
         let local = ipc::Listener::bind(&options.profile).await?;
         let (events, receiver) = mpsc::channel(config::NODE_EVENT_QUEUE);
-        let budget = options.file_budget;
         let shared = Arc::new(Shared {
             stopping: AtomicBool::new(false),
             stop: Notify::new(),
@@ -171,8 +173,7 @@ impl Node {
             next_connection: AtomicU64::new(0),
             received: AtomicU64::new(0),
             sent: AtomicU64::new(0),
-            budget: AtomicU64::new(budget),
-            file_attempts: AtomicU64::new(config::NODE_FILE_COUNT_BUDGET),
+            inbox,
             streams: Arc::new(Semaphore::new(config::NODE_MAX_STREAMS)),
             files: Arc::new(Semaphore::new(config::NODE_MAX_FILES)),
             local_text: Arc::new(Semaphore::new(config::NODE_MAX_STREAMS)),
@@ -291,7 +292,7 @@ async fn receive_connection(shared: Arc<Shared>, incoming: quinn::Incoming) -> R
     let connection = tokio::time::timeout(config::DEFAULT_TIMEOUT, incoming)
         .await
         .map_err(|_| Error::Timeout)?
-        .map_err(|_| Error::Authentication)?;
+        .map_err(crate::error::connection_error)?;
     let peer = transport::peer_identity(&connection)?;
     let (alias, _) = shared.registry.find_peer(&peer, &shared.identity)?;
     let protocol = transport::protocol(&connection)?;
@@ -393,7 +394,7 @@ async fn receive_operation(
             .clone()
             .try_acquire_owned()
             .map_err(|_| Error::Node("file capacity exhausted"))?;
-        let inbox = shared.options.inbox.as_ref().ok_or(Error::Denied)?;
+        let inbox = shared.inbox.as_ref().ok_or(Error::Denied)?;
         let receipt = files::stream::receive_with(
             peer,
             request,
@@ -403,39 +404,13 @@ async fn receive_operation(
                     .registry
                     .authorize_peer(peer, &shared.identity, Action::Files, true)
             },
-            |info| {
-                if info.bytes > shared.options.max_file_bytes {
-                    return Err(Error::FileTooLarge);
-                }
-                shared
-                    .file_attempts
-                    .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
-                        left.checked_sub(1)
-                    })
-                    .map_err(|_| Error::Node("file count budget exhausted"))?;
-                shared
-                    .budget
-                    .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
-                        left.checked_sub(info.bytes)
-                    })
-                    .map_err(|_| Error::Node("file byte budget exhausted"))?;
-                files::ReceivePolicy::accept(
-                    inbox.join(format!("{}-{}.bin", peer.fingerprint(), info.hash_hex())),
-                    shared.options.max_file_bytes,
-                )
-            },
+            |info| inbox.choose(peer, info),
         )
         .await?;
         // Successful resume used no storage for the retained prefix; failed offers
         // retain their reservation conservatively rather than bypassing the quota.
-        shared
-            .budget
-            .fetch_add(receipt.resumed_from, Ordering::SeqCst);
-        let path = inbox.join(format!(
-            "{}-{}.bin",
-            peer.fingerprint(),
-            receipt.info.hash_hex()
-        ));
+        inbox.complete(&receipt);
+        let path = inbox.destination(peer, &receipt.info);
         shared.received.fetch_add(1, Ordering::Relaxed);
         event.send(Event::File {
             alias,
@@ -613,14 +588,19 @@ impl Handle {
                 })
             })
             .count();
+        let (file_budget_remaining, file_attempts_remaining) = shared
+            .inbox
+            .as_ref()
+            .map(files::Inbox::remaining)
+            .unwrap_or((shared.options.file_budget, config::NODE_FILE_COUNT_BUDGET));
         Ok(Status {
             connections_accepted: shared.next_connection.load(Ordering::Relaxed),
             active_connections,
             outgoing_links,
             received_operations: shared.received.load(Ordering::Relaxed),
             sent_operations: shared.sent.load(Ordering::Relaxed),
-            file_budget_remaining: shared.budget.load(Ordering::Relaxed),
-            file_attempts_remaining: shared.file_attempts.load(Ordering::Relaxed),
+            file_budget_remaining,
+            file_attempts_remaining,
             local_text_operations: config::NODE_MAX_STREAMS - shared.local_text.available_permits(),
             local_file_operations: config::NODE_MAX_FILES - shared.local_files.available_permits(),
         })

@@ -54,6 +54,35 @@ Previously preserved backups remain at their original locations.
 
 ## Evidence And Limits
 
+The optional native contention gate is separate from RTP-only interoperability:
+
+```sh
+make lab-native-media-test MEDIA_RECEIVER=DECLARED_GUEST MEDIA_XVFB=GUEST_XVFB_PATH
+make lab-stop
+```
+
+It requires native GStreamer on the host/selected guest, host Xwayland in an
+existing Wayland session, and a guest Xvfb executable. It captures only the owned
+private host display, renders only into an owned guest display, and checks actual
+decoded pixels during a verified bulk transfer and text acknowledgements. A live
+libvirt inbound bandwidth cap is restored to its exact pre-test state. The harness
+refuses to replace an existing bandwidth policy. This is not hardware camera/mic,
+physical radio or automatic permission-portal evidence.
+
+Keep guest Internet isolation intact during dependency preparation. A compatible
+signed-distribution package may be transferred from the host and extracted under
+the private test directory rather than installed system-wide; check its runtime
+dependencies and startup before use. No host service or global shell setting is
+created for this optional gate. Its generated logs and results remain in `tmp/`.
+
+If an extracted X server needs a matching private X11 library, explicitly pass
+`MEDIA_XVFB_LIBS=GUEST_PRIVATE_LIBRARY_DIRECTORY`. This affects only that test
+server, never the product's native-child whitelist or the guest's system loader.
+The harness records explicit outbound return-flow preparation for the host's
+existing firewall policy; it does not modify firewall rules and does not qualify
+automatic inbound traversal. Native decoder selection is explicit X11, and the
+pixel probe must change from its pre-load image while the bulk transfer is active.
+
 New results, guest definitions and state belong to ignored `lab/tmp/` and generated
 `lab/xml/` files. Older results remain untouched in `../vm-lab/tmp/`; references
 to them in the project history still identify the original files.

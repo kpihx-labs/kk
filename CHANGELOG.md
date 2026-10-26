@@ -1,5 +1,104 @@
 # Changelog
 
+## 0.8.0 - Linux Delivery
+
+Integrate the public room CLI and bundled neutral-grey browser workspace over the
+same typed SDK. Confirm scoped PAKE admission, independent roles/votes, signed
+address movement, actual process-kill recovery and creator-independent operation.
+Add explicit audience/epoch-bound copy offers, lookup, verified retrieval and
+withdrawal without deleting stored bytes or silently republishing on restart.
+
+Add real bounded native Opus/VP8 capture/playback and browser codecs. Qualify the
+owned-private-display path across an impaired guest link with concurrent verified
+files and text acknowledgements. Make X11 output selection and decoder diagnostics
+explicit. Stop paced publication only at complete IPC packet boundaries.
+
+Complete the requested second software review. Reproduce and fix post-close late
+driver resource retention and the uncommitted public member cache after failed
+mutation/reload. Add socket-stdio, session expiry, inbox-error visibility, replica
+resource and saturated-slot withdrawal regressions. Retain historical evidence
+and declare physical-device, Byzantine and unsupported native-platform limits.
+
+Prepare clean-source binary manifests, complete dependency notices, offline
+vendored source and bounded archive verification. Add native Linux x86_64/ARM64
+CI, immutable versioned user installation and tag-gated keyless provenance/release.
+Published assets and ARM64 qualification depend on their actual CI results, not
+this prepared source entry. Older development notes below remain provenance.
+
+## 0.8.0-dev.2 - Unreleased Working Tree
+
+Browser integration update (2026-10-26): verify confirmed independent-profile
+pairing, cold room resume, escaped text, consented files and live synthetic VP8
+and Opus in the operator's existing browser window, without raw/HITL dependence.
+Fix the actual neutral modal backdrop, app-local Dark Reader double coloring,
+pairing notices obscuring Send and narrow-screen composer displacement. Retire
+expired UI credentials and stop media before parsing an unauthenticated response.
+Support socket-backed standard input/output with per-call nonblocking I/O and
+unchanged shared descriptor flags; reproduce normal and saturated socket cases.
+Full host check passes 147 Rust and five JavaScript tests; four separate native
+media gates remain explicitly opt-in and were previously exercised. Product
+completion and publication gates remain open.
+
+Public room adapter update (2026-10-26): add explicit private profile manifests,
+create/resume/foreground serve, scoped PAKE invitation and joining, bounded shared
+same-user IPC, exact-audience broadcasts with per-recipient outcome reports,
+cached status, explicit controller selection, data-member removal and graceful
+stop. Refuse profile-key regeneration when room history exists. Two real CLI-process
+integration tests pass locally; a dedicated public CLI three-VM gate is in progress.
+This is not completion of room files, replicas, media, GUI or portable publication.
+
+Verification completion (2026-10-26): selective cache retirement passes the new
+private ten-scenario VM replay, followed by all 66 paired-node regression scenarios.
+Cleanup succeeds. Host checks remain 111 Rust/19 lab tests. Earlier pending/failure
+wording below is retained history; scoped room invitation/control lifecycle and
+the later product gates are still open, so no final publication is claimed.
+
+Latest runtime verification (2026-10-26): ten private cross-guest scenarios pass on
+the recorded slice, including generation continuity and old-ciphertext refusal
+after restart. Add bounded cached actor status and caller-drop cancellation that
+remain responsive without quorum. Fix per-stream cancellation ownership and
+retire only the suspect cache entry after deadline/network failure, without
+closing independent connection holders. Reuse the existing QUIC error classifier
+at three handshake sites. Local checks pass 111 Rust/19 lab tests; the newer
+transport slice's reconnect/full VM regression remains in progress after a
+post-reboot timeout. These updates do not close the remaining product gates.
+
+Later verification update (2026-10-26): the Mint routing fix passes the complete
+38-room-test plus crash-test native matrix on all three guests. Subsequent source
+adds authenticated recipient-only Welcome lookup/activation and the real private
+foreground VM driver. Local checks pass 107 Rust tests and 17 lab tests; the first
+private cross-guest gate is running, not yet a completed product/room gate.
+The earlier in-progress notes below remain provenance for this working tree.
+
+Add signed public control, bounded official OpenRaft/SQLite storage, exact accepted
+operation receipts, snapshots and scoped pinned-TLS control RPCs. Run foreground
+control processes across three independent guests with quorum loss/recovery and
+cold creator catch-up. Keep historical receipt epochs distinct from actual
+applied-record epochs and audiences.
+
+Persist the private MLS applied position atomically with group changes and
+Welcome outbox state. Add a bounded local applied-record journal, explicit gap
+refusal and exact signed proposal/nonce recovery. Bind private join to recipient,
+author, audience and record, and bind incoming text to its direct TLS sender.
+
+Add thread-confined private runtime/actor, bounded Send handles and event queues,
+real linearizable quorum freshness, local profile veto and QUIC room-text delivery.
+Separate data admission from control RPC capacity; reserve application event
+capacity before consuming receive ratchets. Retry transient election routing
+inside the original deadline without changing operation identity.
+
+Commit recipient-encrypted SDK Welcome with the signed admission in control wire
+v2. Retain bounded encrypted artifacts in replicated public state/snapshots without
+exporting private MLS databases, plaintext epoch keys or private signers. Validate
+prospective snapshot resources before mutating membership/delivery state.
+
+Repair lab cold-boot address restoration and asynchronous shutdown error handling.
+Local checks pass 104 Rust tests and 17 lab tests. Actual public-control VM gates
+pass, but the latest native runtime replay exposed an election-routing failure;
+its fix and a new VM replay are in progress. Detailed immutable evidence and open
+gates live in `docs/progress.md`. This is NOT a completed private cross-guest room
+CLI, scoped invitation flow, voter lifecycle, media/GUI or signed portable release.
+
 ## 0.8.0-dev.1 - 2026-10-25 (Development Checkpoint)
 
 Add bounded room-scoped authority, device-signed MLS identity bindings and

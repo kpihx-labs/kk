@@ -2,6 +2,95 @@
 
 > Normal transport is already encrypted. Sensitive mode protects local handling.
 
+## Current 0.8 Additions
+
+`kk ui` is a foreground loopback-only browser workspace with a private one-use
+launch. `kk room files NAME share/locate/fetch/unshare` implements the exact-audience
+copy protocol in [replicas.md](replicas.md); lookup is a hint and fetch still needs
+receiving consent. `kk room media NAME publish/listen` uses explicit local source
+and selected recipient/kind consent. `listen --inspect` is transport-only;
+`listen --x11` selects actual X11 video output and conflicts with inspection/audio.
+Native cancellation completes the active packet before finish. See
+[ui.md](ui.md), [media.md](media.md) and [platforms.md](platforms.md). Older
+implementation-in-progress descriptions below are retained checkpoint notes.
+
+## Public Rooms
+
+Current file extension (unreleased): explicitly consent on the receiving room
+process with `--accept-files --inbox PRIVATE_DIR`, optionally `--max-bytes` and
+`--file-budget`. Then send with
+`kk room send team ./report.pdf -f --to FULL_RECIPIENT_DIGEST`. Files use direct
+pinned TLS in this room scope and current publisher/file permissions; they are
+not MLS text payloads and are never silently replicated to every member. `-s`
+suppresses the local receipt digest, not bytes deliberately stored in the inbox.
+Retry the same stable file to verify/resume its prefix. A successful receipt means
+verified durable recipient storage, not automatic replica discovery or future
+availability. Host integration passes; the new VM slice is being verified.
+Earlier unimplemented-file wording below predates this extension.
+
+Unreleased Unix commands use the same explicit profile identity and backend as
+the library. They install no service. Initialize each device separately:
+
+```sh
+kk init
+kk room create team --title "Our room" --bind LOCAL_IP:45462
+kk room serve team
+```
+
+While that foreground process stays open, another terminal creates one invitation:
+
+```sh
+kk room invite team --bind LOCAL_IP:45463 --invite-out PRIVATE_DIR/invitation.json
+```
+
+Deliver that private, single-use capability to the intended device. On that device:
+
+```sh
+kk init
+kk room join team --invitation PRIVATE_DIR/invitation.json --bind OTHER_IP:45462
+```
+
+Compare `CONFIRM` on both devices and type `yes` in each command terminal. Explicit
+`--confirm` is available for deliberately approved unattended use; it is not a
+default. The invitation never prints its secret capability on a pipe. Matching
+`--role reader|participant|inviter|moderator` selections must be explicit at both
+ends; the default is participant. Admission creates recipient-owned keys and
+starts the joined foreground room, not a global contact or a voter.
+
+```sh
+kk room send team "hello everyone"
+kk room send team - -s
+kk room status team
+kk room controllers team FULL_ADMIN_DIGEST_1 FULL_ADMIN_DIGEST_2 FULL_ADMIN_DIGEST_3
+kk room remove team FULL_MEMBER_DIGEST
+kk room stop team
+kk room serve team
+```
+
+Text is positional and bounded; sensitive literal argv is refused. A broadcast
+reports each recipient's durable-processing/event-queue acknowledgement or failure.
+It never means human reading or all-or-nothing delivery. Partial delivery exits
+unsuccessfully and retains the per-peer report; blind retries can create a new
+message. Ordinary output escapes terminal controls. Sensitive incoming text is
+redacted unless the serving command explicitly selected `--reveal`.
+
+Status is a cached durable local view, not a fresh quorum proof. A controller
+transition requires admitted administrative peers and completes the consensus
+transition; data removal does not silently retire a controller's vote. Retire votes
+explicitly before taking controllers offline if continued quorum is required.
+`stop` acknowledges shutdown initiation; process exit and socket removal prove
+completion. Ctrl-C on an enrollment waits for bounded transaction cleanup, because
+cancellation cannot undo an admission already committed by another device.
+
+Room names contain 1..40 lowercase letters, digits or hyphens. Bind addresses must
+be concrete and have a nonzero port. Owned profile/room directories are 0700;
+the manifest and credential-checked same-user IPC are private. Resume opens the
+existing MLS/control stores and reconstructs transport pins from durable committed
+state. Missing keys are never regenerated over room history. Interrupted creation
+or enrollment retains its directory; explicit incomplete-enrollment recovery and
+authenticated address changes remain unfinished, not an automatic reset path.
+Room files/replicas and native media are not implemented by these text commands.
+
 ## One Send Surface
 
 ```sh

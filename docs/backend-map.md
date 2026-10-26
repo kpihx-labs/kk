@@ -3,6 +3,62 @@
 > A feature is complete only with implementation, observable behavior and evidence.
 > Frontend work is authorized only after the backend acceptance gates pass.
 
+## Current 0.8 Software Map
+
+The historical tables below predate the integrated delivery. Public room CLI,
+confirmed enrollment, separate voters/data rights, durable crash recovery, signed
+address movement and explicit copy availability are implemented and exercised by
+the public cross-VM gate. The native private-display shaped-link gate now also
+proves actual decode during verified bulk transfer and acknowledged text. The
+bundled grey UI uses the same owners and has HTTP/browser evidence.
+
+The dedicated second review is recorded in [security-review.md](security-review.md),
+including reproduced/fixed cache and lifetime counterexamples. Actual binary hashes
+and result boundaries remain in [progress.md](progress.md). Artifact/provenance CI
+and installer behavior are governed by [distribution.md](distribution.md), and
+[platforms.md](platforms.md) explicitly declines unsupported native Windows/macOS
+claims. Neither a successful build nor synthetic media is physical-device proof.
+
+## Public Adapter Update (2026-10-26)
+
+`rooms::local` now owns explicit profile-scoped creation/resume and foreground
+lifecycle. The CLI is a thin adapter for create/serve/invite/join/broadcast/status,
+controller selection, data removal and stop. Private IPC reuses the node's single
+same-UID/frame/lock implementation, with separate bounded command/invitation lanes.
+An actor publication captures ciphertext and its exact epoch audience together;
+the adapter does not infer audience from a later cached status.
+
+Two actual CLI-process integration tests pass on the host, including three-way
+enrollment/broadcast and same-port cold resume. The dedicated public CLI VM gate
+is in progress, not yet claimed as evidence. Earlier source-inventory rows below
+remain historical. Interrupted enrollment recovery, authenticated address changes,
+room files/replicas, native media, GUI, portable distribution and the requested
+post-integration adversarial audit remain open.
+
+## Current Source Audit (2026-10-26)
+
+The core contract, README, changelog, TODO, all ten `docs/` files and lab README
+have been reread in full. That is a document review, NOT a completed source,
+security or whole-product audit. The checkpoint inventory below is historical.
+
+| Layer | Implemented source / evidence | Still required |
+| --- | --- | --- |
+| Paired identities, text/files and profiles | Published 0.6/0.7 foundation, private IPC and 66 three-guest node scenarios | Room/session integration, native Windows/macOS storage and physical devices |
+| Room authority and private MLS | Signed bounded delegation, durable official SDK state, applied cursor and nonce/replay recovery | Scoped invitation and complete lifecycle integration |
+| Public room control | Signed Raft order, private-owned SQLite log, snapshots, exact receipts; seven real cross-VM scenarios pass | Authorized voter/learner changes, application-level reconnect/address lifecycle |
+| Private room runtime | Thread-confined actor, quorum freshness, profile veto, direct TLS/MLS sender binding, bounded queues | Complete room CLI/IPC and private guest-to-guest admission/data/fault scenarios |
+| Welcome availability | Ciphertext committed atomically with admission; bounded replicas and recipient-authenticated retrieval | Verify creator-VM loss during actual delivery and explicit rejoin paths |
+| Room status/cancellation | Cached actor status is typed; work/deadlines are bounded | Prove status/cancel responsiveness while quorum work occupies the private actor |
+| File availability after source loss | Consented resumable point-to-point files exist | Explicit replica consent, replica verification and room-aware availability |
+| Native media | Not implemented; image parsing is not capture | Real audio/camera/screen sources and sinks, codecs, negotiation, pacing and measured contention |
+| GUI | Not implemented | Required light/dark thin adapter after backend gates; no UI-owned trust rules |
+| Distribution | Source checkpoints on both remotes | Tested platform storage/builds, signed artifacts/provenance, offline kit, verified installers and final CI |
+
+Detailed test runs, code versions and failed evidence remain in `progress.md`.
+Successful per-OS crypto execution and loopback private RPCs are not a private
+cross-VM room gate. Preapproved fixture bootstrap is not scoped OPAQUE admission.
+Old permission/gate wording remains below as provenance, not a new approval gate.
+
 ## Primitive Inventory
 
 | Primitive | Existing foundation | Remaining work / proof |

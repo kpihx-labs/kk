@@ -17,7 +17,10 @@ pub async fn line(value: String) -> Result<()> {
             event::{PollFd, PollFlags, poll},
             fs::{Mode, OFlags},
         };
-        let file = if std::fs::metadata("/dev/stdout")?.is_file() {
+        use std::os::unix::fs::FileTypeExt;
+        let metadata = std::fs::metadata("/dev/stdout")?;
+        let socket = metadata.file_type().is_socket();
+        let file = if metadata.is_file() || socket {
             std::fs::File::from(rustix::io::dup(io::stdout())?)
         } else {
             std::fs::File::from(rustix::fs::open(
@@ -40,7 +43,19 @@ pub async fn line(value: String) -> Result<()> {
             if !descriptors[1].revents().is_empty() {
                 return Err(Error::Cancelled);
             }
-            match (&file).write(&bytes[position..]) {
+            // Socket descriptors cannot be reopened. Per-call flags avoid changing
+            // O_NONBLOCK on the caller's shared open-file description.
+            let written = if socket {
+                rustix::net::send(
+                    &file,
+                    &bytes[position..],
+                    rustix::net::SendFlags::DONTWAIT | rustix::net::SendFlags::NOSIGNAL,
+                )
+                .map_err(io::Error::from)
+            } else {
+                (&file).write(&bytes[position..])
+            };
+            match written {
                 Ok(0) => return Err(Error::Io(io::ErrorKind::WriteZero.into())),
                 Ok(count) => position += count,
                 Err(error)

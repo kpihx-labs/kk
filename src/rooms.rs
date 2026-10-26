@@ -2,8 +2,15 @@
 //! are separate layers; verifying a grant never imports a global contact.
 
 use crate::{Error, Identity, Peer, Result, signed};
+pub mod control;
+mod database;
+pub mod enrollment;
 pub mod group;
+mod lease;
+#[cfg(unix)]
+pub mod local;
 pub mod mls;
+pub mod runtime;
 pub mod store;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
@@ -14,6 +21,36 @@ const ROOT_DOMAIN: &[u8] = b"K&K room root v1\0";
 const GRANT_DOMAIN: &[u8] = b"K&K room grant v1\0";
 pub const MAX_CHAIN: usize = 8;
 pub const MAX_BUNDLE: usize = 131_072;
+
+// Common public/private view commitment: logical identity and authority, not
+// private epoch authenticators, traffic secrets or changing HPKE path keys.
+pub(super) fn membership_digest(
+    room: [u8; 32],
+    epoch: u64,
+    identities: impl IntoIterator<Item = ([u8; 32], [u8; 32])>,
+) -> Result<[u8; 32]> {
+    let mut identities: Vec<_> = identities
+        .into_iter()
+        .take(crate::config::ROOM_MAX_MEMBERS + 1)
+        .collect();
+    if identities.is_empty() || identities.len() > crate::config::ROOM_MAX_MEMBERS {
+        return Err(Error::Protocol);
+    }
+    identities.sort_unstable();
+    if identities.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+        return Err(Error::Protocol);
+    }
+    let mut digest = Sha256::new();
+    digest.update(b"K&K logical membership v1\0");
+    digest.update(room);
+    digest.update(epoch.to_be_bytes());
+    digest.update((identities.len() as u32).to_be_bytes());
+    for (fingerprint, grant) in identities {
+        digest.update(fingerprint);
+        digest.update(grant);
+    }
+    Ok(digest.finalize().into())
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -40,6 +77,11 @@ impl Rights {
     }
     pub fn can_remove(self) -> bool {
         self.0 & 16 != 0
+    }
+    /// Explicit controller-set approval requires the existing administrative
+    /// ceiling, never mere membership, read/publish access or device possession.
+    pub fn can_control(self) -> bool {
+        self.can_invite() && self.can_remove() && self.can_delegate()
     }
     fn valid(self) -> bool {
         self.0 & 1 != 0 && self.0 & !31 == 0
@@ -105,6 +147,16 @@ impl RootBundle {
             creator,
             id,
         })
+    }
+    /// Alternative explicit trust input: an already approved exact room digest
+    /// (e.g. the purpose-bound invitation). Never take this expected ID from the
+    /// same untrusted authority payload and call that independent approval.
+    pub fn verify_id(&self, expected_room: [u8; 32]) -> Result<Anchor> {
+        let id: [u8; 32] = Sha256::digest(signed::preimage(ROOT_DOMAIN, &self.body)?).into();
+        if id != expected_room {
+            return Err(Error::Authentication);
+        }
+        self.verify(&Peer::from_der(self.body.creator.clone())?)
     }
     pub fn encode(&self) -> Result<Vec<u8>> {
         encode(self)
