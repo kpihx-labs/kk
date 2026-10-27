@@ -1,5 +1,27 @@
 # Verifiable Distribution
 
+## Exact Artifact Publication
+
+CI binaries are not assumed byte-identical across separate builds, even when
+runtime source is unchanged. Qualification of one binary digest is not silently
+transferred to another digest. The tag workflow therefore signs and uploads a
+draft release only, after its required checks succeed. It does not immediately
+make the final release assets public.
+
+Authenticate the draft archives against the exact tag, source commit, workflow
+and hosted-runner policy. Verify their member manifests and checksums, then replay
+the exact draft executable on the owned isolated guests, including the public
+CLI and native contention gates. Publish that same draft without rebuilding or
+replacing its assets only after these checks and cleanup succeed:
+
+```sh
+gh release edit "$TAG" --draft=false --repo kpihx-labs/kk
+```
+
+The draft transition is an explicit authorized release step, not another operator
+approval gate. A failed artifact stays unpublished; source/tag history and old
+artifact bytes are never force-moved or overwritten to hide the failure.
+
 ## 0.8.1 Candidate Update
 
 The local dependency hold recorded below for 0.8.0 is resolved by the explicit

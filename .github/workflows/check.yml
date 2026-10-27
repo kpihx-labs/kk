@@ -142,11 +142,11 @@ jobs:
         env:
           BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
         run: cp "$BUNDLE" "target/dist/kk-${GITHUB_REF_NAME}.sigstore.jsonl"
-      - name: Publish qualified archives and verification material
+      - name: Stage signed draft assets for exact-artifact replay before publication
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" target/dist/* --verify-tag --title "K&K $GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" target/dist/* --draft --verify-tag --title "K&K $GITHUB_REF_NAME" --generate-notes
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: kk-public-provenance
