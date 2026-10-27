@@ -42,6 +42,8 @@ packaging-check: ## Release integrity, archive safety and clean-source policy te
 
 sdk-check: ## Historical reference packages may need network/cache; not part of offline product checks
 	cargo test --locked --manifest-path third_party/overrides/elliptic-curve-xmd/Cargo.toml
+	cargo fetch --locked --manifest-path lab/opaque-interop/reference/Cargo.toml
+	cargo fetch --locked --manifest-path lab/opaque-interop/restricted/Cargo.toml
 	cargo build --locked --manifest-path lab/opaque-interop/reference/Cargo.toml
 	cargo build --locked --manifest-path lab/opaque-interop/restricted/Cargo.toml
 	uv run --no-project lab/opaque-interop/run.py

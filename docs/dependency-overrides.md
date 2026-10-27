@@ -78,6 +78,21 @@ An offline product-source rebuild does not promise uncached reference downloads.
 
 ## Continuing Duties
 
+Fresh-runner follow-up: run `40487733279` passes the product audit and application
+architecture checks, but its SDK graph inventory fails on an uncached non-host
+dependency after a host-only build. `sdk-check` now fetches both locked peer
+graphs before its offline metadata comparison. Reproduction with a fresh empty
+`CARGO_HOME` passes all vectors, independent graph checks and six wire scenarios.
+The SDK job installs the repository-pinned stable toolchain explicitly rather
+than relying on Cargo's warning-producing lazy installation.
+
+An additional bounded local check resumes the agent-owned multi-member GUI room
+created with the installed 0.8.0 candidate, first with 0.8.0 and then with 0.8.1.
+Both reach foreground readiness, return public status and stop cleanly while
+using the existing private store. No private files or keys are displayed, copied
+or regenerated. This is a concrete prior-state recovery check, not a universal
+storage-format or physical-device qualification claim.
+
 Follow upstream advisories for the recorded components, review source updates
 explicitly and retain original notices. Do not edit copied primitive files and
 continue claiming byte identity. Any primitive change, additional suite or feature

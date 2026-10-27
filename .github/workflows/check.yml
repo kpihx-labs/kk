@@ -40,7 +40,13 @@ jobs:
         with:
           version: "0.10.3"
           enable-cache: false
+      - name: Install the repository-pinned Rust toolchain explicitly
+        run: |
+          toolchain=$(uv run --no-project python -c 'import pathlib,tomllib; print(tomllib.loads(pathlib.Path("rust-toolchain.toml").read_text())["toolchain"]["channel"])')
+          rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
       - name: Preserved upstream vectors and independently resolved OPAQUE peers
+        env:
+          RUSTUP_AUTO_INSTALL: "0"
         run: make sdk-check
       - name: Upstream Hax macro toolchain, without changing the product toolchain
         run: rustup toolchain install nightly-2025-11-08 --profile minimal
