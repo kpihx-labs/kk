@@ -50,6 +50,7 @@ impl Message {
 }
 struct Operation {
     room: String,
+    issuing: bool,
     state: &'static str,
     proposal: Option<Value>,
     confirm: Option<oneshot::Sender<bool>>,
@@ -194,11 +195,23 @@ async fn invitation(
         .map_err(|_| Error::Node("UI state is unavailable"))?
         .operations
         .get(&id)
+        .filter(|operation| operation.issuing && operation.state == "waiting")
         .map(|operation| operation.bundle.clone())
         .ok_or(Error::Configuration("invitation operation is unavailable"))?;
     let invite = crate::pairing::Invite::load(&path).await?;
     drop(invite);
     let bytes = Zeroizing::new(tokio::fs::read(path).await.map_err(Error::Io)?);
+    if !app
+        .0
+        .data
+        .lock()
+        .map_err(|_| Error::Node("UI state is unavailable"))?
+        .operations
+        .get(&id)
+        .is_some_and(|operation| operation.issuing && operation.state == "waiting")
+    {
+        return Err(Error::Configuration("invitation operation is unavailable").into());
+    }
     if bytes.len() > 4096 {
         return Err(Error::Protocol.into());
     }

@@ -10,7 +10,7 @@ use super::{
     mls::{CryptoMember, PublicIdentity},
     runtime::Room,
 };
-use crate::{Error, Identity, Result, contacts::Registry, profile};
+use crate::{Error, Identity, Peer, Result, contacts::Registry, profile};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -48,7 +48,8 @@ pub struct Summary {
 }
 
 pub fn list(profile: &Path) -> Result<Vec<Summary>> {
-    let identity = profile::identity(profile, false)?;
+    profile::private_directory(profile, false)?;
+    let peer = Peer::load(&profile.join("identity/certificate.der"))?;
     let rooms = profile.join("rooms");
     if !rooms.exists() {
         return Ok(Vec::new());
@@ -67,8 +68,8 @@ pub fn list(profile: &Path) -> Result<Vec<Summary>> {
             .file_name()
             .into_string()
             .map_err(|_| Error::Storage("room directory name is not UTF-8"))?;
-        let summary = match directory(profile, &name)
-            .and_then(|directory| Definition::load(&directory, &identity))
+        let summary = match room_path(profile, &name, false)
+            .and_then(|directory| Definition::load_for_peer(&directory, &peer))
         {
             Ok(definition) => Summary {
                 name,
@@ -126,6 +127,10 @@ struct AddressRecord {
 }
 
 pub fn directory(profile: &Path, name: &str) -> Result<PathBuf> {
+    room_path(profile, name, true)
+}
+
+fn room_path(profile: &Path, name: &str, create_parent: bool) -> Result<PathBuf> {
     if name.is_empty()
         || name.len() > 40
         || !name
@@ -138,7 +143,7 @@ pub fn directory(profile: &Path, name: &str) -> Result<PathBuf> {
     }
     profile::private_directory(profile, false)?;
     let rooms = profile.join("rooms");
-    profile::private_directory(&rooms, true)?;
+    profile::private_directory(&rooms, create_parent)?;
     Ok(rooms.join(name))
 }
 
@@ -156,6 +161,10 @@ fn reserve(profile: &Path, name: &str, listen: SocketAddr) -> Result<PathBuf> {
 
 impl Definition {
     fn load(directory: &Path, identity: &Identity) -> Result<Self> {
+        Self::load_for_peer(directory, &identity.peer())
+    }
+
+    fn load_for_peer(directory: &Path, peer: &Peer) -> Result<Self> {
         use rustix::fs::{Mode, OFlags, open};
         profile::private_directory(directory, false)?;
         let mut file = std::fs::File::from(open(
@@ -181,7 +190,7 @@ impl Definition {
         }
         let value: Self =
             serde_json::from_slice(&bytes).map_err(|_| Error::Storage("invalid room manifest"))?;
-        if value.version != 1 || value.owner != raft::PeerId::from_peer(&identity.peer()) {
+        if value.version != 1 || value.owner != raft::PeerId::from_peer(peer) {
             return Err(Error::Authentication);
         }
         let anchor = value.root.verify_id(value.room.0)?;

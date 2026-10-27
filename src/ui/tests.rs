@@ -154,12 +154,80 @@ fn address() -> String {
         .to_string()
 }
 
+#[test]
+fn ui_profiles_are_isolated_and_selection_does_not_move_the_running_identity() {
+    const CHILD: &str = "KK_UI_PROFILE_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let root = tempfile::tempdir().unwrap();
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "ui::tests::ui_profiles_are_isolated_and_selection_does_not_move_the_running_identity", "--nocapture"])
+            .env(CHILD, "1")
+            .env("XDG_DATA_HOME", root.path())
+            .output().unwrap();
+        assert!(
+            result.status.success(),
+            "isolated profile test failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        return;
+    }
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(tokio::task::LocalSet::new().run_until(async {
+            let base = crate::profile::data_directory().unwrap();
+            let device = Device::new(base.clone(), 12349).await;
+            device.action(json!({"action":"init"})).await;
+            let original = device.state().await["identity"].clone();
+            let created = device
+                .action(json!({"action":"profile-create","id":"other","display_name":"Other"}))
+                .await;
+            let directory = created["directory"].as_str().unwrap();
+            assert_ne!(created["fingerprint"], original);
+            assert_eq!(
+                device
+                    .action(json!({"action":"profiles"}))
+                    .await
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                2
+            );
+            assert_eq!(
+                device
+                    .action(json!({"action":"profile-select","id":"other"}))
+                    .await["restart_required"],
+                true
+            );
+            assert_eq!(device.state().await["identity"], original);
+            device
+                .action(json!({"action":"profile-select","id":"default"}))
+                .await;
+            device
+                .action(json!({"action":"profile-unregister","id":"other"}))
+                .await;
+            assert!(std::path::Path::new(directory).exists());
+            device
+                .action(json!({"action":"profile-register","id":"other","directory":directory}))
+                .await;
+            device
+                .action(json!({"action":"profile-unregister","id":"other"}))
+                .await;
+            device.close().await;
+        }));
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn ui_requires_private_session_exact_host_and_same_origin_without_port_leaking_cookies() {
     tokio::task::LocalSet::new()
         .run_until(async {
             let root = tempfile::tempdir().unwrap();
             let device = Device::new(root.path().join("profile"), 12345).await;
+            let state = device.state().await;
+            assert_eq!(state["media"]["max_tracks"], config::MEDIA_MAX_STREAMS);
+            assert_eq!(state["media"]["max_subscriptions"], config::MEDIA_MAX_STREAMS);
+            assert_eq!(state["media"]["max_users"], config::MEDIA_MAX_STREAMS * 2);
             assert_eq!(
                 device
                     .request(Method::GET, "/api/state", None, None, false)
@@ -216,6 +284,25 @@ async fn ui_requires_private_session_exact_host_and_same_origin_without_port_lea
             assert_eq!(response.status(), StatusCode::OK);
             assert!(!response.headers().contains_key(header::SET_COOKIE));
             assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+            assert_eq!(device.state().await["settings"]["display_name"], "My profile");
+            device.action(json!({"action":"settings", "display_name":"Alice"})).await;
+            device.action(json!({"action":"settings", "appearance":{"hue":120,"clarity":60,"saturation":30}})).await;
+            let settings = device.state().await["settings"].clone();
+            assert_eq!(settings["display_name"], "Alice");
+            assert_eq!(settings["appearance"]["hue"], 120);
+            let refused = device.request(Method::POST, "/api/action", Some(json!({"action":"settings", "appearance":{"hue":400,"clarity":60,"saturation":30}})), Some(&device.app.0.origin), true).await;
+            assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(device.state().await["settings"], settings);
+            let refused = device.request(Method::POST, "/api/action", Some(json!({"action":"join", "name":"../bad", "invitation":"{}", "bind":address(), "accept_files":true})), Some(&device.app.0.origin), true).await;
+            assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+            let operations = device.state().await["operations"].clone();
+            assert_eq!(operations[0]["state"], "failed");
+            assert_eq!(operations[0]["invitation_ready"], false);
+            let refused = device.request(Method::POST, "/api/action", Some(json!({"action":"join", "name":"valid", "invitation":"not json", "bind":address(), "accept_files":false})), Some(&device.app.0.origin), true).await;
+            assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+            let operations = device.state().await["operations"].clone();
+            assert_eq!(operations[1]["state"], "failed");
+            assert_eq!(operations[1]["kind"], "join");
             assert!(
                 response
                     .headers()
@@ -243,13 +330,42 @@ async fn ui_http_pairs_independent_devices_owns_foreground_rooms_and_redacts_sen
         let response = a.request(Method::GET, &format!("/api/operations/{invitation}/invitation"), None, None, true).await;
         assert_eq!(response.status(), StatusCode::OK);
         let bundle = Zeroizing::new(String::from_utf8(to_bytes(response.into_body(), 4096).await.unwrap().to_vec()).unwrap());
-        let joined = b.action(json!({"action": "join", "name": "team", "invitation": bundle.as_str(), "bind": address(), "role": "participant", "accept_files": true})).await["operation"].as_u64().unwrap();
+        let failed = b.action(json!({"action": "join", "name": "invalid/name", "invitation": bundle.as_str(), "bind": address(), "role": "participant", "accept_files": false})).await["operation"].as_u64().unwrap();
+        let failure = b.until(|state| state["operations"].as_array().unwrap().iter().any(|op| op["id"] == failed && op["state"] == "failed")).await;
+        assert!(failure["operations"].as_array().unwrap().iter().any(|op| op["id"] == failed && op["kind"] == "join"));
+        let joined = b.action(json!({"action": "join", "name": "team", "invitation": bundle.as_str(), "bind": address(), "role": "participant", "accept_files": false})).await["operation"].as_u64().unwrap();
+        assert_eq!(b.request(Method::GET, &format!("/api/operations/{joined}/invitation"), None, None, true).await.status(), StatusCode::BAD_REQUEST);
+        assert!(b.state().await["operations"].as_array().unwrap().iter().filter(|op| op["kind"] == "join").all(|op| op["invitation_ready"] == false));
         let pending_a = a.until(|state| state["operations"].as_array().unwrap().iter().any(|operation| operation["proposal"].is_object())).await;
         let pending_b = b.until(|state| state["operations"].as_array().unwrap().iter().any(|operation| operation["proposal"].is_object())).await;
-        assert_eq!(pending_a["operations"][0]["proposal"]["confirmation"], pending_b["operations"][0]["proposal"]["confirmation"]);
+        assert_eq!(pending_a["operations"].as_array().unwrap().iter().find(|op| op["id"] == invitation).unwrap()["proposal"]["confirmation"], pending_b["operations"].as_array().unwrap().iter().find(|op| op["id"] == joined).unwrap()["proposal"]["confirmation"]);
         a.action(json!({"action": "confirm", "id": invitation, "accept": true})).await;
         b.action(json!({"action": "confirm", "id": joined, "accept": true})).await;
+        assert_eq!(a.request(Method::GET, &format!("/api/operations/{invitation}/invitation"), None, None, true).await.status(), StatusCode::BAD_REQUEST);
         b.until(|state| state["rooms"].as_array().unwrap().iter().any(|room| room["status"]["running"] == true)).await;
+        let peer_b = b.state().await["identity"].as_str().unwrap().to_owned();
+        let before_label = a.state().await;
+        let member = before_label["rooms"][0]["presentation"].as_array().unwrap().iter().find(|entry| entry["id"] == peer_b).unwrap();
+        assert_eq!(member["source"], "unknown");
+        a.action(json!({"action":"member-label","name":"team","member":peer_b,"display_name":"Local friend"})).await;
+        let labeled = a.state().await;
+        let member = labeled["rooms"][0]["presentation"].as_array().unwrap().iter().find(|entry| entry["id"] == peer_b).unwrap();
+        assert_eq!(member["display_name"], "Local friend");
+        assert_eq!(member["source"], "local_override");
+        let remote_view = b.state().await;
+        let peer_a = a.state().await["identity"].as_str().unwrap().to_owned();
+        assert_eq!(remote_view["rooms"][0]["presentation"].as_array().unwrap().iter().find(|entry| entry["id"] == peer_a).unwrap()["source"], "unknown");
+        assert_eq!(before_label["rooms"][0]["status"]["members"], labeled["rooms"][0]["status"]["members"]);
+        let outsider = "ab".repeat(32);
+        let refused = a.request(Method::POST, "/api/action", Some(json!({"action":"member-label","name":"team","member":outsider,"display_name":"Not a member"})), Some(&a.app.0.origin), true).await;
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+        let refused = a.request(Method::POST, "/api/action", Some(json!({"action":"member-label","name":"team","member":peer_a,"display_name":"Self alias"})), Some(&a.app.0.origin), true).await;
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+        let refused = a.request(Method::POST, "/api/action", Some(json!({"action":"member-label","name":"team","member":peer_b,"display_name":"bad\nname"})), Some(&a.app.0.origin), true).await;
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+        a.action(json!({"action":"member-label","name":"team","member":peer_b,"display_name":null})).await;
+        let cleared = a.state().await;
+        assert_eq!(cleared["rooms"][0]["presentation"].as_array().unwrap().iter().find(|entry| entry["id"] == peer_b).unwrap()["source"], "unknown");
         a.action(json!({"action": "send", "name": "team", "text": "actual UI event", "sensitive": false})).await;
         b.until(|state| state["messages"].as_array().unwrap().iter().any(|message| message["text"] == "actual UI event")).await;
         a.action(json!({"action": "send", "name": "team", "text": "synthetic sensitive UI payload", "sensitive": true})).await;
@@ -257,8 +373,20 @@ async fn ui_http_pairs_independent_devices_owns_foreground_rooms_and_redacts_sen
         assert!(!received.to_string().contains("synthetic sensitive UI payload"));
         let id = received["messages"].as_array().unwrap().iter().find(|message| message["sensitive"] == true).unwrap()["id"].as_u64().unwrap();
         assert_eq!(b.action(json!({"action": "reveal", "id": id})).await["text"], "synthetic sensitive UI payload");
-        let peer_b = b.state().await["identity"].as_str().unwrap().to_owned();
         let bytes = vec![0xa7; config::FILE_CHUNK_BYTES + 3];
+        let before = b.state().await["rooms"][0]["status"].clone();
+        assert_eq!(before["files"]["accepted"], false);
+        let refused_upload = HttpRequest::builder().method(Method::POST).uri(format!("/api/rooms/team/files?to={peer_b}"))
+            .header(header::HOST, &a.app.0.host).header(header::ORIGIN, &a.app.0.origin)
+            .header(header::AUTHORIZATION, format!("Bearer {}", a.token.as_str())).header(header::CONTENT_TYPE, "application/octet-stream")
+            .body(Body::from(bytes.clone())).unwrap();
+        let refused = router(a.app.clone()).oneshot(refused_upload).await.unwrap();
+        let refused: Value = serde_json::from_slice(&to_bytes(refused.into_body(), config::UI_JSON_BYTES).await.unwrap()).unwrap();
+        assert_eq!(refused["ok"], false);
+        assert_eq!(b.action(json!({"action":"file-consent","name":"team","accepted":true})).await["accepted"], true);
+        let after = b.state().await["rooms"][0]["status"].clone();
+        assert_eq!(after["files"]["accepted"], true);
+        for key in ["owner", "epoch", "address", "voters"] { assert_eq!(before[key], after[key]); }
         let upload = HttpRequest::builder().method(Method::POST).uri(format!("/api/rooms/team/files?to={peer_b}"))
             .header(header::HOST, &a.app.0.host).header(header::ORIGIN, &a.app.0.origin)
             .header(header::AUTHORIZATION, format!("Bearer {}", a.token.as_str())).header(header::CONTENT_TYPE, "application/octet-stream")
@@ -272,6 +400,9 @@ async fn ui_http_pairs_independent_devices_owns_foreground_rooms_and_redacts_sen
         let id = inbox[0]["id"].as_str().unwrap();
         let response = b.request(Method::GET, &format!("/api/rooms/team/files/{id}"), None, None, true).await;
         assert_eq!(to_bytes(response.into_body(), config::DEFAULT_FILE_LIMIT as usize).await.unwrap().as_ref(), bytes);
+        assert_eq!(b.action(json!({"action":"file-consent","name":"team","accepted":false})).await["accepted"], false);
+        assert_eq!(b.state().await["rooms"][0]["status"]["files"]["accepted"], false);
+        b.action(json!({"action":"file-consent","name":"team","accepted":true})).await;
         let peer_a = a.state().await["identity"].as_str().unwrap().to_owned();
         let digest = reply["result"]["sha256"].as_str().unwrap();
         let offered = b.action(json!({"action":"copies","name":"team","command":{"operation":"share","id":id,"peers":[peer_a]}})).await;
@@ -296,6 +427,13 @@ async fn ui_http_pairs_independent_devices_owns_foreground_rooms_and_redacts_sen
         assert_eq!(response.status(), StatusCode::OK);
         let forwarded: Value = serde_json::from_slice(&to_bytes(response.into_body(), config::UI_JSON_BYTES).await.unwrap()).unwrap();
         assert_eq!(forwarded["ok"], true);
+        std::fs::write(a.app.0.profile.join("labels.json"), b"invalid labels").unwrap();
+        let corrupted = a.state().await;
+        assert!(corrupted["rooms"][0]["presentation_error"].is_string());
+        assert!(corrupted["rooms"][0]["presentation"].is_null());
+        let refused = a.request(Method::POST, "/api/action", Some(json!({"action":"member-label","name":"team","member":peer_b,"display_name":"Again"})), Some(&a.app.0.origin), true).await;
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(std::fs::read(a.app.0.profile.join("labels.json")).unwrap(), b"invalid labels");
         {
             use std::os::unix::fs::OpenOptionsExt;
             let directory = a.app.0.profile.join("rooms/team/inbox");

@@ -43,6 +43,36 @@ pub(super) enum Action {
         command: super::files::CopyAction,
     },
     Init,
+    Settings {
+        #[serde(default)]
+        display_name: Option<String>,
+        #[serde(default)]
+        appearance: Option<crate::profile::Appearance>,
+    },
+    Profiles,
+    ProfileCreate {
+        id: String,
+        display_name: String,
+    },
+    ProfileRegister {
+        id: String,
+        directory: PathBuf,
+    },
+    ProfileSelect {
+        id: String,
+    },
+    ProfileUnregister {
+        id: String,
+    },
+    MemberLabel {
+        name: String,
+        member: PeerId,
+        display_name: Option<String>,
+    },
+    FileConsent {
+        name: String,
+        accepted: bool,
+    },
     Create {
         name: String,
         title: String,
@@ -107,6 +137,24 @@ fn next(data: &mut Data) -> Result<u64> {
         .checked_add(1)
         .ok_or(Error::Node("UI event sequence exhausted"))?;
     Ok(data.next)
+}
+
+#[derive(Deserialize)]
+struct Membership {
+    room: PeerId,
+    owner: PeerId,
+    members: Vec<PeerId>,
+}
+
+fn membership(value: &Value, room: PeerId, own: PeerId) -> Result<Membership> {
+    let status: Membership = serde_json::from_value(value.clone())
+        .map_err(|_| Error::Configuration("invalid room membership status"))?;
+    if status.room != room || status.owner != own || !status.members.contains(&own) {
+        return Err(Error::Configuration(
+            "room membership does not match this profile",
+        ));
+    }
+    Ok(status)
 }
 fn phase(app: &App, room: &str, state: &str, error: Option<String>) {
     if let Ok(mut data) = app.0.data.lock() {
@@ -216,7 +264,7 @@ async fn monitor(
     }
     name
 }
-fn operation(app: &App, room: &str) -> Result<(u64, PathBuf)> {
+fn operation(app: &App, room: &str, issuing: bool) -> Result<(u64, PathBuf)> {
     let mut data = app
         .0
         .data
@@ -244,6 +292,7 @@ fn operation(app: &App, room: &str) -> Result<(u64, PathBuf)> {
         id,
         Operation {
             room: room.into(),
+            issuing,
             state: "waiting",
             proposal: None,
             confirm: None,
@@ -323,6 +372,36 @@ pub(super) async fn run(app: App, mut requests: mpsc::Receiver<Request>) -> Resu
                 Action::Transfer(_) => unreachable!("owned transfers run in their bounded task lane"),
                 Action::Copies { .. } => unreachable!("owned copy operations run in their bounded task lane"),
                 Action::Init => Ok(json!({"identity": crate::profile::identity(&app.0.profile, true)?.peer().fingerprint()})),
+                Action::Settings { display_name, appearance } => Ok(json!(crate::profile::Settings::update(&app.0.profile, display_name, appearance)?)),
+                Action::Profiles => Ok(json!(crate::profile::catalog::list()?)),
+                Action::ProfileCreate { id, display_name } => Ok(json!(crate::profile::catalog::create(&id, display_name, None)?)),
+                Action::ProfileRegister { id, directory } => Ok(json!(crate::profile::catalog::register(&id, directory)?)),
+                Action::ProfileSelect { id } => { crate::profile::catalog::select(&id)?; Ok(json!({"restart_required": true})) },
+                Action::ProfileUnregister { id } => {
+                    if crate::profile::catalog::resolve(&id)? == app.0.profile { return Err(Error::Configuration("cannot unregister the profile running this UI")); }
+                    crate::profile::catalog::remove(&id)?;
+                    Ok(json!({"unregistered": true}))
+                },
+                Action::MemberLabel { name, member, display_name } => {
+                    let summary = local::list(&app.0.profile)?.into_iter().find(|room| room.name == name)
+                        .ok_or(Error::Configuration("unknown local room"))?;
+                    let room = summary.room.filter(|_| summary.problem.is_none()).ok_or(Error::Configuration("room needs recovery"))?;
+                    let own = PeerId::from_peer(&Peer::load(&app.0.profile.join("identity/certificate.der"))?);
+                    let reply = local::request(&app.0.profile, &name, &Command::Status).await?;
+                    reply.check()?;
+                    let status = membership(&reply.result, room, own)?;
+                    if member == own || !status.members.contains(&member) { return Err(Error::Configuration("choose another current room member")); }
+                    crate::profile::labels::set(&app.0.profile, room.0, member, display_name)?;
+                    Ok(json!({"updated": true}))
+                },
+                Action::FileConsent { name, accepted } => {
+                    let inbox = if accepted { Some(local::directory(&app.0.profile, &name)?.join("inbox")) } else { None };
+                    let reply = local::request(&app.0.profile, &name, &Command::FileReception {
+                        inbox, max_bytes: config::DEFAULT_FILE_LIMIT, budget: config::NODE_FILE_BUDGET,
+                    }).await?;
+                    reply.check()?;
+                    Ok(reply.result)
+                },
                 Action::Create { name, title, bind } => Ok(json!({"room": local::create(&app.0.profile, &name, &title, bind).await?})),
                 Action::Serve { name, bind, accept_files } => {
                     if managed.contains_key(&name) { return Err(Error::Node("this room already has a foreground UI owner")); }
@@ -359,7 +438,7 @@ pub(super) async fn run(app: App, mut requests: mpsc::Receiver<Request>) -> Resu
                     Ok(reply.result)
                 },
                 Action::Invite { name, bind, role } => {
-                    let (id, bundle) = operation(&app, &name)?;
+                    let (id, bundle) = operation(&app, &name, true)?;
                     let current = app.clone();
                     invitations.spawn_local(async move {
                         let expected = current.clone();
@@ -377,13 +456,27 @@ pub(super) async fn run(app: App, mut requests: mpsc::Receiver<Request>) -> Resu
                     if managed.contains_key(&name) { return Err(Error::Node("this room already has a foreground UI owner")); }
                     let invitation = Zeroizing::new(invitation);
                     if invitation.len() > 4096 { return Err(Error::Pairing); }
-                    let (id, bundle) = operation(&app, &name)?;
-                    let mut file = std::fs::OpenOptions::new();
-                    use std::os::unix::fs::OpenOptionsExt;
-                    let mut file = file.write(true).create_new(true).mode(0o600).open(&bundle)?;
-                    file.write_all(invitation.as_bytes())?;
-                    file.sync_all()?;
-                    let RunOptions { options, stop, ready, events } = options(&app, &name, None, accept_files)?;
+                    let (id, bundle) = operation(&app, &name, false)?;
+                    let setup = async {
+                        let mut file = std::fs::OpenOptions::new();
+                        use std::os::unix::fs::OpenOptionsExt;
+                        let mut file = file.write(true).create_new(true).mode(0o600).open(&bundle)?;
+                        file.write_all(invitation.as_bytes())?;
+                        file.sync_all()?;
+                        let invite = crate::pairing::Invite::load(&bundle).await?;
+                        if !matches!(invite.scope, crate::pairing::Scope::Room(_)) { return Err(Error::Pairing); }
+                        options(&app, &name, None, accept_files)
+                    }.await;
+                    let RunOptions { options, stop, ready, events } = match setup {
+                        Ok(options) => options,
+                        Err(error) => {
+                            if let Ok(mut data) = app.0.data.lock() && let Some(operation) = data.operations.get_mut(&id) {
+                                operation.state = "failed";
+                                operation.error = Some(error.to_string());
+                            }
+                            return Err(error);
+                        }
+                    };
                     phase(&app, &name, "joining", None);
                     managed.insert(name.clone(), stop);
                     let current = app.clone();
@@ -429,9 +522,9 @@ pub(super) async fn run(app: App, mut requests: mpsc::Receiver<Request>) -> Resu
 }
 
 pub(super) async fn snapshot(app: &App) -> Result<Value> {
-    let identity = Peer::load(&app.0.profile.join("identity/certificate.der"))
-        .ok()
-        .map(|peer| peer.fingerprint());
+    let peer = Peer::load(&app.0.profile.join("identity/certificate.der")).ok();
+    let own = peer.as_ref().map(PeerId::from_peer);
+    let identity = peer.map(|peer| peer.fingerprint());
     let rooms = if identity.is_some() {
         local::list(&app.0.profile)?
     } else {
@@ -452,18 +545,42 @@ pub(super) async fn snapshot(app: &App) -> Result<Value> {
                 Ok(Ok(reply)) if reply.ok => Some(reply.result), _ => None,
             }
         } else { None };
-        json!({"name": room.name, "title": room.title, "id": room.room, "problem": room.problem, "status": status})
+        let presentation = match (&status, room.room, own) {
+            (Some(status), Some(id), Some(own)) => Some(membership(status, id, own).and_then(|membership| crate::profile::labels::present(&app.0.profile, id.0, own, &membership.members))),
+            _ => None,
+        };
+        let (presentation, presentation_error) = match presentation { Some(Ok(items)) => (Some(items), None), Some(Err(error)) => (None, Some(error.to_string())), None => (None, None) };
+        json!({"name": room.name, "title": room.title, "id": room.room, "problem": room.problem, "status": status, "presentation": presentation, "presentation_error": presentation_error})
     }})).await;
+    let candidates = {
+        let data = app
+            .0
+            .data
+            .lock()
+            .map_err(|_| Error::Node("UI event store is unavailable"))?;
+        data.operations
+            .iter()
+            .filter(|(_, op)| op.issuing && op.state == "waiting")
+            .map(|(id, op)| (*id, op.bundle.clone()))
+            .collect::<Vec<_>>()
+    };
+    let mut valid = std::collections::BTreeSet::new();
+    for (id, path) in candidates {
+        if crate::pairing::Invite::load(&path).await.is_ok() {
+            valid.insert(id);
+        }
+    }
     let data = app
         .0
         .data
         .lock()
         .map_err(|_| Error::Node("UI event store is unavailable"))?;
-    let operations: Vec<_> = data.operations.iter().map(|(id, operation)| json!({"id": id, "room": operation.room, "state": operation.state, "proposal": operation.proposal,
-        "invitation_ready": operation.bundle.is_file(), "error": operation.error})).collect();
+    let operations: Vec<_> = data.operations.iter().map(|(id, operation)| json!({"id": id, "room": operation.room, "kind": if operation.issuing { "invite" } else { "join" }, "state": operation.state, "proposal": operation.proposal,
+        "invitation_ready": operation.issuing && operation.state == "waiting" && valid.contains(id), "error": operation.error})).collect();
     Ok(
-        json!({"version": crate::VERSION, "identity": identity, "rooms": rooms, "messages": data.messages.iter().map(Message::view).collect::<Vec<_>>(),
+        json!({"version": crate::VERSION, "identity": identity, "settings": crate::profile::Settings::load(&app.0.profile)?, "rooms": rooms, "messages": data.messages.iter().map(Message::view).collect::<Vec<_>>(),
         "operations": operations, "phases": data.phases, "history": "bounded-memory-only", "files": {"max_bytes": config::DEFAULT_FILE_LIMIT}, "media": {"width": config::MEDIA_VIDEO_WIDTH, "height": config::MEDIA_VIDEO_HEIGHT, "fps": config::MEDIA_VIDEO_FPS,
-        "packet_bytes": config::MEDIA_PACKET_BYTES, "frame_bytes": config::MEDIA_ENCODED_FRAME_BYTES, "datagram_buffer_bytes": config::MEDIA_DATAGRAM_BUFFER_BYTES, "packet_age_ms": config::MEDIA_PACKET_MAX_AGE.as_millis(), "audio_bitrate": config::MEDIA_AUDIO_BITRATE}}),
+        "packet_bytes": config::MEDIA_PACKET_BYTES, "frame_bytes": config::MEDIA_ENCODED_FRAME_BYTES, "datagram_buffer_bytes": config::MEDIA_DATAGRAM_BUFFER_BYTES, "packet_age_ms": config::MEDIA_PACKET_MAX_AGE.as_millis(), "audio_bitrate": config::MEDIA_AUDIO_BITRATE,
+        "max_tracks": config::MEDIA_MAX_STREAMS, "max_subscriptions": config::MEDIA_MAX_STREAMS, "max_users": config::MEDIA_MAX_STREAMS * 2}}),
     )
 }

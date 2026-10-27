@@ -82,7 +82,7 @@ ui-check: ## Offline browser-adapter syntax and standard RTP unit tests
 	node --check src/ui/assets/media.js
 	node --check src/ui/assets/rtp.js
 	node --check src/ui/assets/audio-worklet.js
-	node --test tests/ui_rtp.mjs tests/ui_client.mjs
+	node --test tests/ui_rtp.mjs tests/ui_client.mjs tests/ui_workflows.cjs tests/ui_media.mjs
 
 build: ## Build the release CLI
 	cargo build --offline --locked --release

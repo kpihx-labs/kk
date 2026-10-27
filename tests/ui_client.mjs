@@ -34,7 +34,8 @@ for (const status of [401, 403]) {
     const storage = new Map([["kk-session", "expired-test-session"], ["kk-room", "studio"]]);
     const elements = new Map();
     const node = (id) => {
-      if (!elements.has(id)) elements.set(id, { textContent: "", hidden: false });
+      if (!elements.has(id)) elements.set(id, { textContent: "", hidden: false, open: true,
+        close() { this.open = false; }, replaceChildren(...children) { this.children = children; } });
       return elements.get(id);
     };
     let mediaStops = 0, requests = 0;
@@ -51,7 +52,7 @@ for (const status of [401, 403]) {
       setInterval() { assert.fail("Do not poll with a retired credential"); },
     });
     const boot = vm.runInContext(source, context);
-    vm.runInContext("mediaControl = { stopAll: recordStop };", context);
+    vm.runInContext("mediaControl = { stopAll: recordStop }; joinDrafts.set(1, {name:'private-room',bind:'127.0.0.1:1234',role:'reader'});", context);
     await boot;
     assert.equal(storage.has("kk-session"), false);
     assert.equal(storage.get("kk-room"), "studio");
@@ -61,5 +62,8 @@ for (const status of [401, 403]) {
     assert.equal(mediaStops, 1);
     assert.equal(requests, 1);
     assert.equal(vm.runInContext("token", context), "");
+    assert.equal(vm.runInContext("joinDrafts.size", context), 0);
+    assert.equal(node("dialog").open, false);
+    assert.equal(node("dialog-content").children.length, 0);
   });
 }

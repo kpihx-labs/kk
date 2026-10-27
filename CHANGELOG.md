@@ -3,6 +3,20 @@
 This records changes, not live delivery status. See [TODO.md](TODO.md) for the
 current state and Git history for detailed implementation checkpoints.
 
+## 0.9.0-dev.1 - Unreleased Development Checkpoint
+
+- Add explicit local profile catalogs, locked settings updates, CLI management
+  and public-only offline/live status without identity regeneration.
+- Resolve local room nicknames by exact member identity, with explicit provenance;
+  local aliases are not authenticated remote profile announcements.
+- Make file consent revocable while online, preserving lifetime budgets and
+  preventing publication after withdrawal, cancellation or owner shutdown.
+- Reserve control IPC admission and bound stalled control handshakes.
+- Add quantified profile themes, primary profile names, editable invitation/join
+  workflows and independent keyed media controls with concurrency regressions.
+- Add deterministic ZIP archives and bounded immutable-snapshot verification.
+- Add nonpublishing native foundation jobs; these are not product qualification.
+
 ## 0.8.2 - 2026-10-27
 
 - Replace accumulated work diaries with concise, schematic current guides.

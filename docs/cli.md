@@ -1,11 +1,15 @@
 # CLI
 
 Use `kk COMMAND --help` for every supported flag. These examples use one private
-profile per device; add global `--profile PRIVATE_DIR` to select another.
+profile per device; add global `--profile PRIVATE_DIR` for an explicit path or
+`--profile-name ID` for a registered profile. These options are mutually exclusive.
 
 Examples use placeholders: replace `LOCAL_IP`/`OTHER_IP` with each device's actual
 LAN IP, and `PRIVATE_DIR` with an existing owned directory of mode 0700. Peer
 digests are the full values reported by the room, not nicknames or IP addresses.
+
+Manage names, selection, appearance and offline status through
+[local profiles and settings](profiles.md).
 
 ## Rooms
 
@@ -46,12 +50,17 @@ at both ends; the default is `participant`.
 | Broadcast text | `kk room send team "hello"` |
 | Hidden input | `kk room send team - -s` |
 | Inspect cached state | `kk room status team` |
+| Withdraw incoming-file consent | `kk room receiving team --disable` |
+| Enable incoming-file consent | `kk room receiving team --accept-files --inbox PRIVATE_DIR/inbox` |
 | Set controllers | `kk room controllers team ADMIN_DIGEST_1 ADMIN_DIGEST_2 ADMIN_DIGEST_3` |
 | Remove a data member | `kk room remove team MEMBER_DIGEST` |
 | Stop / reopen | `kk room stop team` / `kk room serve team` |
 
 Room peer arguments are full certificate digests. Retire votes explicitly before
 taking controllers offline. Cached status is not a fresh quorum proof.
+Receiving consent changes without a room restart. Re-enabling uses the same inbox
+path and limits; it does not replenish service-lifetime byte or attempt budgets.
+Change the path or limits by restarting the foreground room explicitly.
 
 ## Contacts And Direct Sends
 

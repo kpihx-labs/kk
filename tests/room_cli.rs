@@ -48,6 +48,64 @@ fn cancelled_status_observations_are_not_failed_room_operations() {
     );
 }
 
+#[test]
+fn consent_withdrawal_and_status_bypass_saturated_ordinary_ipc_connections() {
+    let root = tempfile::tempdir().unwrap();
+    let profile = root.path().join("saturation");
+    let inbox = root.path().join("inbox");
+    call(&profile, &["init"]);
+    call(&profile, &["room", "create", "team", "--bind", &address()]);
+    let mut server = Process::start(
+        &profile,
+        &[
+            "room",
+            "serve",
+            "team",
+            "--accept-files",
+            "--inbox",
+            inbox.to_str().unwrap(),
+        ],
+    );
+    server.until("ROOM SERVING");
+    // Queue more than the entire ordinary connection budget, withholding every
+    // command frame. FIFO acceptance cannot reach a later ordinary control RPC
+    // before the stalled-handshake timeout. The reserved endpoint stays free.
+    let stalled: Vec<_> = (0..40)
+        .map(|_| {
+            std::os::unix::net::UnixStream::connect(profile.join("rooms/team/node.sock")).unwrap()
+        })
+        .collect();
+    // Also occupy every reserved handshake slot. These readers have a short
+    // control-specific expiry, not the ordinary ten-second data timeout.
+    let stalled_control: Vec<_> = (0..4)
+        .map(|_| {
+            std::os::unix::net::UnixStream::connect(profile.join("rooms/team/ctl/node.sock"))
+                .unwrap()
+        })
+        .collect();
+    let started = std::time::Instant::now();
+    let reply: serde_json::Value =
+        serde_json::from_str(&call(&profile, &["room", "receiving", "team", "--disable"])).unwrap();
+    assert_eq!(reply["result"]["accepted"], false);
+    let status: serde_json::Value =
+        serde_json::from_str(&call(&profile, &["room", "status", "team"])).unwrap();
+    assert_eq!(status["result"]["running"], true);
+    assert!(
+        started.elapsed() < kk::config::DEFAULT_TIMEOUT / 2,
+        "control calls waited for stalled ordinary connections"
+    );
+    let global: serde_json::Value =
+        serde_json::from_str(&call(&profile, &["status", "--json"])).unwrap();
+    assert_eq!(global["node"]["state"], "offline");
+    assert_eq!(global["rooms"][0]["observation"]["state"], "online");
+    call(&profile, &["room", "stop", "team"]);
+    server.finish();
+    drop(stalled);
+    drop(stalled_control);
+    assert!(!profile.join("rooms/team/ctl/node.sock").exists());
+    assert!(!profile.join("rooms/team/node.sock").exists());
+}
+
 struct Process {
     child: Child,
     lines: mpsc::Receiver<String>,

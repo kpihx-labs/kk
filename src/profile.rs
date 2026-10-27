@@ -2,6 +2,11 @@
 
 use crate::{Error, Result};
 use std::path::{Path, PathBuf};
+pub mod catalog;
+pub mod labels;
+mod settings;
+mod storage;
+pub use settings::{Appearance, Settings};
 
 #[cfg(unix)]
 pub fn private_directory(path: &Path, create: bool) -> Result<()> {
@@ -29,6 +34,27 @@ pub fn private_directory(path: &Path, create: bool) -> Result<()> {
 
 #[cfg(not(unix))]
 pub fn private_directory(_path: &Path, _create: bool) -> Result<()> {
+    Err(Error::UnsupportedPlatform)
+}
+
+#[cfg(unix)]
+fn reserve_directory(path: &Path) -> Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    let parent = path
+        .parent()
+        .ok_or(Error::Destination("missing profile parent"))?;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(parent)?;
+    // Unlike ensure/create-all, this final creation is exclusive. A concurrent
+    // initializer must not turn profile creation into adoption of its identity.
+    std::fs::DirBuilder::new().mode(0o700).create(path)?;
+    private_directory(path, false)
+}
+
+#[cfg(not(unix))]
+fn reserve_directory(_path: &Path) -> Result<()> {
     Err(Error::UnsupportedPlatform)
 }
 
@@ -83,6 +109,34 @@ pub fn identity(directory: &Path, create: bool) -> Result<crate::Identity> {
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+    #[test]
+    fn new_profile_reservation_has_one_winner_and_never_adopts_existing_state() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("profiles/new");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let workers: Vec<_> = (0..2)
+            .map(|_| {
+                let directory = directory.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    reserve_directory(&directory).is_ok()
+                })
+            })
+            .collect();
+        assert_eq!(
+            workers
+                .into_iter()
+                .map(|worker| worker.join().unwrap())
+                .filter(|success| *success)
+                .count(),
+            1
+        );
+        let marker = directory.join("retained-state");
+        std::fs::write(&marker, b"retained profile state").unwrap();
+        assert!(reserve_directory(&directory).is_err());
+        assert_eq!(std::fs::read(marker).unwrap(), b"retained profile state");
+    }
     #[test]
     fn missing_identity_is_not_regenerated_over_existing_trust() {
         let root = tempfile::tempdir().unwrap();

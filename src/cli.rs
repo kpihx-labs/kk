@@ -15,6 +15,7 @@ use std::{
 use zeroize::Zeroizing;
 mod media;
 mod pair;
+mod profile;
 #[cfg(unix)]
 mod replica;
 #[cfg(unix)]
@@ -31,6 +32,9 @@ mod serve;
 struct Cli {
     #[arg(long, global = true)]
     profile: Option<PathBuf>,
+    /// Select a registered local profile by ID, never a filesystem path
+    #[arg(long, global = true, conflicts_with = "profile")]
+    profile_name: Option<String>,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -78,15 +82,14 @@ impl TrustArgs {
 fn profile_directory(selected: Option<&std::path::Path>) -> Result<PathBuf> {
     let path = match selected {
         Some(path) => path.to_owned(),
-        None => kk::profile::base_directory()?,
+        None => kk::profile::catalog::active_directory()?,
     };
-    kk::profile::private_directory(&path, true)?;
     Ok(path)
 }
 
 #[derive(Subcommand)]
 enum Command {
-    /// Private local light/dark workspace; foreground SDK rooms, no installed service
+    /// Private local workspace; foreground SDK rooms, no installed service
     #[cfg(unix)]
     Ui {
         #[arg(long, default_value = "127.0.0.1:0")]
@@ -131,7 +134,16 @@ enum Command {
         reveal: bool,
     },
     #[cfg(unix)]
-    Status,
+    Status {
+        /// Emit structured local profile and optional live-node state
+        #[arg(long)]
+        json: bool,
+    },
+    /// Manage local profiles and appearance without exporting private keys
+    Profile {
+        #[command(subcommand)]
+        command: profile::Command,
+    },
     /// Initialize a private default identity; never replaces an existing key
     Init,
     /// Single-use PAKE pairing, confirmation, strict TLS proof and contact storage
@@ -254,7 +266,15 @@ fn cipher_path(selected: Option<PathBuf>) -> Result<PathBuf> {
 }
 
 pub(crate) async fn run() -> Result<()> {
-    let Cli { profile, command } = Cli::parse();
+    let Cli {
+        profile,
+        profile_name,
+        command,
+    } = Cli::parse();
+    let profile = match profile_name {
+        Some(id) => Some(kk::profile::catalog::resolve(&id)?),
+        None => profile,
+    };
     let command = match command {
         #[cfg(unix)]
         Some(Command::Ui {
@@ -304,23 +324,11 @@ async fn execute(profile: Option<PathBuf>, command: Option<Command>) -> Result<(
         Some(Command::Room { .. }) => unreachable!("room commands own their shutdown boundary"),
         None => Cli::command().print_help()?,
         #[cfg(unix)]
-        Some(Command::Status) => {
+        Some(Command::Status { json }) => {
             let directory = profile_directory(profile.as_deref())?;
-            let reply = kk::node::ipc::request(
-                &directory,
-                &kk::node::ipc::Request::Status,
-                kk::config::DEFAULT_TIMEOUT,
-            )
-            .await?
-            .ok_or(Error::Node("no active node"))?;
-            reply.result()?;
-            writeln!(
-                io::stdout(),
-                "{}",
-                serde_json::to_string(&reply.status.ok_or(Error::Protocol)?)
-                    .map_err(|_| Error::Protocol)?
-            )?;
+            profile::status(&directory, json).await?;
         }
+        Some(Command::Profile { command }) => profile::run(command, profile.as_deref())?,
         #[cfg(unix)]
         Some(Command::Serve {
             bind,
