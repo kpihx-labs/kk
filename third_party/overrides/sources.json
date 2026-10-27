@@ -1,0 +1,20 @@
+{
+  "format": 1,
+  "packages": {
+    "age@0.12.1": {"repository": "https://github.com/str4d/rage", "revision": "b5b68c4f4f7ea5c368bc060f6fe0237549c3a13f", "changes": ["CLI helper feature gate"]},
+    "age-core@0.12.0": {"repository": "https://github.com/str4d/rage", "revision": "b5b68c4f4f7ea5c368bc060f6fe0237549c3a13f", "changes": []},
+    "openmls_basic_credential@0.6.0": {"repository": "https://github.com/openmls/openmls", "revision": "be248d4b1306d87a641ce24ed0ffcab2b27967f6", "changes": []},
+    "openmls_libcrux_crypto@0.4.0": {"repository": "https://github.com/openmls/openmls", "revision": "be248d4b1306d87a641ce24ed0ffcab2b27967f6", "changes": []},
+    "openmls_traits@0.6.0": {"repository": "https://github.com/openmls/openmls", "revision": "be248d4b1306d87a641ce24ed0ffcab2b27967f6", "changes": []},
+    "i18n-config@0.4.8": {"repository": "https://github.com/kellpossible/cargo-i18n", "revision": "10e345470d97c9cffb3bc611182f595ad93251bf", "changes": []},
+    "hax-lib-macros@0.3.7": {"repository": "https://github.com/hacspec/hax", "revision": "d8b5b3d3b666fee8943a351445d2b680105e8ea3", "changes": ["proc-macro-error3 with syn2-error; seven crate-name references"]},
+    "opaque-ke@4.0.1": {"repository": "https://github.com/facebook/opaque-ke", "registry_version": "4.0.1", "changes": ["Remove legacy NIST adapter", "Own generic-array zeroize feature", "Gate unused signature helper"]},
+    "voprf@0.5.0": {"repository": "https://github.com/facebook/voprf", "registry_version": "0.5.0", "changes": ["Remove legacy NIST adapter and blanket ciphersuite", "Explicit lifetime annotation"]},
+    "elliptic-curve@0.13.8+kk.xmd.1": {"repository": "https://github.com/RustCrypto/traits", "revision": "5ddf0f52f07f65f319ffd423c52e696406924d90", "registry_version": "0.13.8", "changes": ["Unchanged expansion-only source subset", "Module re-exports and maintained error type; no legacy arithmetic"]}
+  },
+  "unchanged_primitives": {
+    "elliptic-curve-xmd/src/expand_msg.rs": "7615b8d2ba958a6d11d0f50143b9c2aa78649ea7c2dd87d16f2da4cf09578e50",
+    "elliptic-curve-xmd/src/expand_msg/xmd.rs": "5a85d4084395e924bbb2e32640beaba8c8c8476695e70baf0b341155a6a5dd87",
+    "elliptic-curve-xmd/src/expand_msg/xof.rs": "42bf7796706105e8d521137679a458e0c9e2ed3463adaa0f1c505b5d9bb2804d"
+  }
+}

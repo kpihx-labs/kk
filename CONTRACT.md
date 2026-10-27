@@ -1,5 +1,15 @@
 # K&K Contract
 
+## 0.8.1 Dependency Boundary
+
+The security dependency update preserves the existing 0.8 wire and authorization
+contract, including Ristretto pairing, scoped identifiers/context, explicit
+consent, durable private state and fail-closed protections. It does not introduce
+another PAKE, NIST suite, database migration or key regeneration. The restricted
+source scope, provenance and regression evidence are recorded in
+`docs/dependency-overrides.md`. No audit exception replaces the remaining final
+platform, VM, hosted CI or artifact gates.
+
 ## Current 0.8 Linux Delivery Addenda
 
 The current public scope includes the confirmed room CLI, targeted file copies,

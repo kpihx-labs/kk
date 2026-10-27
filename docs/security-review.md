@@ -1,5 +1,16 @@
 # Post-Integration Boundary Review
 
+## 0.8.1 Local Dependency Barrier Resolved (2026-10-27)
+
+The root product lockfile, not just the isolated experiment, now passes the
+unsuppressed strict audit. The four crypto advisories and two maintenance findings
+recorded below are absent from the current graph. The scope and immutable source
+origins, unchanged primitive guards, preserved upstream vectors and independent
+OPAQUE reference/restricted interoperability are documented in
+`dependency-overrides.md`. Local application and packaging checks also pass.
+The earlier blocked entries remain historical evidence. Hosted CI, frozen VM
+and artifact qualification remain required before final publication.
+
 ## Fresh Runner Audit Bootstrap (2026-10-27)
 
 CI run `40423939230` passes both Linux architectures and refuses release, but its

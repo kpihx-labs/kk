@@ -1,0 +1,21 @@
+[package]
+name = "elliptic-curve"
+version = "0.13.8+kk.xmd.1"
+edition = "2021"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "Experimental XMD/XOF-only subset of RustCrypto elliptic-curve 0.13.8"
+
+[features]
+default = []
+hash2curve = []
+
+[dependencies]
+digest = "0.10"
+generic-array = "0.14"
+elliptic-curve-modern = { package = "elliptic-curve", version = "0.14", default-features = false }
+
+[dev-dependencies]
+hex-literal = "0.4"
+sha2 = "0.10"
+sha3 = "0.10"

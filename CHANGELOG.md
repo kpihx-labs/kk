@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.8.1 - Security Dependency Qualification
+
+Replace the vulnerable and unmaintained locked routes with explicit, attributed
+source overrides. Keep the existing Ristretto pairing protocol and unchanged
+RustCrypto expansion source while excluding unused legacy NIST adapters and
+crypto-bigint 0.5. Update the coordinated OpenMLS/age dependencies and conditional
+Hax diagnostic binding, with preserved upstream licenses and no audit ignores.
+
+Add preserved-source hash guards, independent reference/restricted OPAQUE wire
+checks and the actual upstream-nightly Hax macro compilation to the release gates.
+Include local dependencies in the notice inventory. Retain immutable 0.8.0
+installation bytes; this candidate uses its own package version. Final release
+claims depend on the actual hosted CI, VM replay and artifact verification.
+
 ## 0.8.0 - Linux Delivery
 
 Bound compressed input and complete gzip expansion before TAR extended-header

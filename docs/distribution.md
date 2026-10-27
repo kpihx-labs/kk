@@ -1,5 +1,15 @@
 # Verifiable Distribution
 
+## 0.8.1 Candidate Update
+
+The local dependency hold recorded below for 0.8.0 is resolved by the explicit
+overrides and qualification in `dependency-overrides.md`. All strict audit and
+local software/SDK checks pass. Source overrides and their original licenses are
+included in offline source; their unchanged primitive hashes are checked before
+notice/archive generation. The production graph and the historical reference
+test graph are separate. Final hosted and VM/artifact gates are still pending;
+no final release is asserted by these local results.
+
 ## Current Security Hold (2026-10-27)
 
 The current source is a candidate with unresolved dependency advisories. Its

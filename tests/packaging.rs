@@ -27,6 +27,7 @@ fn study_clones_and_local_files_stay_out_of_the_package() {
         assert!(
             !path.starts_with("refs/")
                 && !path.starts_with("tmp/")
+                && !path.contains("/target/")
                 && path != "AGENTS.md"
                 && !path.ends_with("private-key.der"),
             "local-only file leaked into package: {path}"

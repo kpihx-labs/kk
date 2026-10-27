@@ -1,2 +1,4 @@
 # Preserve pinned upstream legal notices byte-for-byte, including whitespace.
 third_party/licenses/** -whitespace
+# Imported SDK snapshots retain upstream formatting and whitespace provenance.
+third_party/overrides/** -whitespace

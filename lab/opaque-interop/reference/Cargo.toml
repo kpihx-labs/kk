@@ -1,0 +1,16 @@
+[package]
+name = "opaque-wire-probe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "opaque-wire-probe"
+path = "../src/main.rs"
+
+[dependencies]
+opaque-ke = { version = "=4.0.1", default-features = false, features = ["ristretto255", "argon2", "std"] }
+sha2 = "0.10"
+rand = "0.8"

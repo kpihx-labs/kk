@@ -1,5 +1,17 @@
 # Pending Work
 
+## 0.8.1 Qualification In Progress (2026-10-27)
+
+The local product dependency barrier below is resolved without an ignore. The
+0.8.1 root graph passes strict audit, all 155 Rust/six JavaScript/11 packaging
+checks pass, and the independent SDK/vector/Hax gates pass. All 485 dependency
+notices are present. Full review: `docs/dependency-overrides.md`.
+Remaining release work is the frozen 0.8.1 VM/native replay, clean-source archives,
+offline rebuild, hosted x86_64/ARM64/audit/SDK gates and final signed publication
+and installation. No final tag is created by this local qualification. Native
+Windows/macOS and physical device/portal qualifications are not silently closed.
+The 0.8.0 hold/probe entries below are dated historical evidence.
+
 ## Release Blocker (2026-10-27)
 
 Publication is blocked by the unsuppressed RustSec result, not by a missing

@@ -3,11 +3,13 @@ SHELL := /bin/sh
 GITHUB_SSH_COMMAND ?= ssh
 GITLAB_SSH_COMMAND ?= ssh
 
-.PHONY: help check ui-check packaging-check bundle verify-bundle install tag-release publish-tag build fmt run push lab-check lab-test lab-crypto-test lab-control-test lab-room-test lab-enrollment-test lab-room-cli-test lab-native-media-test lab-stop
+.PHONY: help check ui-check packaging-check sdk-check hax-check bundle verify-bundle install tag-release publish-tag build fmt run push lab-check lab-test lab-crypto-test lab-control-test lab-room-test lab-enrollment-test lab-room-cli-test lab-native-media-test lab-stop
 
 help: ## Show available tasks
 	@printf '%s\n' \
 	  'make check           Format, lint, tests and documentation' \
+	  'make sdk-check       Upstream expansion vectors and independent OPAQUE interoperability' \
+	  'make hax-check       Explicit upstream-nightly macro check, not a formal proof' \
 	  'make build           Build the release CLI' \
 	  'make bundle TARGET=... Clean binary/notices/offline-source archives' \
 	  'make verify-bundle ARCHIVE=... Integrity verification; attestations establish origin' \
@@ -28,7 +30,7 @@ help: ## Show available tasks
 	  'make push            Push this branch to both SSH remotes'
 
 check: ## Validate offline with local loopback network tests
-	cargo fmt --all -- --check
+	cargo fmt --package kk -- --check
 	cargo clippy --offline --locked --all-targets -- -D warnings
 	cargo test --offline --locked --all-targets
 	RUSTDOCFLAGS="-D warnings" cargo doc --offline --locked --no-deps
@@ -37,6 +39,16 @@ check: ## Validate offline with local loopback network tests
 
 packaging-check: ## Release integrity, archive safety and clean-source policy tests
 	uv run --no-project python -m unittest discover -s tests -p 'test_release.py'
+
+sdk-check: ## Historical reference packages may need network/cache; not part of offline product checks
+	cargo test --locked --manifest-path third_party/overrides/elliptic-curve-xmd/Cargo.toml
+	cargo build --locked --manifest-path lab/opaque-interop/reference/Cargo.toml
+	cargo build --locked --manifest-path lab/opaque-interop/restricted/Cargo.toml
+	uv run --no-project lab/opaque-interop/run.py
+
+HAX_TOOLCHAIN ?= nightly-2025-11-08
+hax-check: ## Compile the actual macro implementation with its upstream nightly
+	env RUSTFLAGS="--cfg hax" cargo +$(HAX_TOOLCHAIN) check --locked --manifest-path third_party/overrides/hax-lib-macros-0.3.7/Cargo.toml --lib
 
 TARGET ?= x86_64-unknown-linux-gnu
 
@@ -69,7 +81,7 @@ build: ## Build the release CLI
 	cargo build --offline --locked --release
 
 fmt: ## Format Rust source
-	cargo fmt --all
+	cargo fmt --package kk
 
 run: ## Show CLI help
 	cargo run --offline --locked -- --help

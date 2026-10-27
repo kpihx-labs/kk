@@ -34,6 +34,16 @@
       "licenses/2dav-crabgrind-30cf77b1ca50/LICENSE/memcheck.h.LICENSE",
       "licenses/2dav-crabgrind-30cf77b1ca50/LICENSE/valgrind.h.LICENSE"
     ],
+    "crabgrind@0.3.1": [
+      "licenses/2dav-crabgrind-ea38389bdf07/LICENSE/MIT.LICENSE",
+      "licenses/2dav-crabgrind-ea38389bdf07/LICENSE/cachegrind.h.LICENSE",
+      "licenses/2dav-crabgrind-ea38389bdf07/LICENSE/callgrind.h.LICENSE",
+      "licenses/2dav-crabgrind-ea38389bdf07/LICENSE/dhat.h.LICENSE",
+      "licenses/2dav-crabgrind-ea38389bdf07/LICENSE/drd.h.LICENSE",
+      "licenses/2dav-crabgrind-ea38389bdf07/LICENSE/helgrind.h.LICENSE",
+      "licenses/2dav-crabgrind-ea38389bdf07/LICENSE/memcheck.h.LICENSE",
+      "licenses/2dav-crabgrind-ea38389bdf07/LICENSE/valgrind.h.LICENSE"
+    ],
     "fluent-langneg@0.13.1": [
       "licenses/projectfluent-fluent-langneg-rs-7fdc590466ea/LICENSE-APACHE",
       "licenses/projectfluent-fluent-langneg-rs-7fdc590466ea/LICENSE-MIT"
@@ -51,17 +61,33 @@
       "licenses/celabshq-libcrux-c5fb80f37530/LICENSE",
       "licenses/celabshq-libcrux-c5fb80f37530/LICENSE-MIT"
     ],
+    "hpke-rs-crypto@0.8.0": [
+      "licenses/celabshq-libcrux-42d68bd49b24/LICENSE",
+      "licenses/celabshq-libcrux-42d68bd49b24/LICENSE-MIT"
+    ],
     "hpke-rs-libcrux@0.7.0": [
       "licenses/celabshq-libcrux-c5fb80f37530/LICENSE",
       "licenses/celabshq-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "hpke-rs-libcrux@0.8.0": [
+      "licenses/celabshq-libcrux-42d68bd49b24/LICENSE",
+      "licenses/celabshq-libcrux-42d68bd49b24/LICENSE-MIT"
     ],
     "hpke-rs-rust-crypto@0.7.0": [
       "licenses/celabshq-libcrux-c5fb80f37530/LICENSE",
       "licenses/celabshq-libcrux-c5fb80f37530/LICENSE-MIT"
     ],
+    "hpke-rs-rust-crypto@0.8.0": [
+      "licenses/celabshq-libcrux-42d68bd49b24/LICENSE",
+      "licenses/celabshq-libcrux-42d68bd49b24/LICENSE-MIT"
+    ],
     "hpke-rs@0.7.0": [
       "licenses/celabshq-libcrux-c5fb80f37530/LICENSE",
       "licenses/celabshq-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "hpke-rs@0.8.0": [
+      "licenses/celabshq-libcrux-42d68bd49b24/LICENSE",
+      "licenses/celabshq-libcrux-42d68bd49b24/LICENSE-MIT"
     ],
     "intl_pluralrules@7.0.2": [
       "licenses/zbraniecki-pluralrules-d0715d5b7cca/intl_pluralrules/LICENSE-APACHE",
@@ -71,13 +97,25 @@
       "licenses/TheOnlyMrCat-io_tee-8a7adecebf34/README.md",
       "licenses/spdx-license-list-data-31ba1a50e539/Apache-2.0.txt"
     ],
+    "libcrux-aead@0.0.10": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
+    ],
     "libcrux-aead@0.0.9": [
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
     ],
+    "libcrux-aes@0.0.10": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
+    ],
     "libcrux-aes@0.0.9": [
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-chacha20poly1305@0.0.10": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
     ],
     "libcrux-chacha20poly1305@0.0.9": [
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
@@ -87,9 +125,25 @@
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
     ],
+    "libcrux-curve25519@0.0.9": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
+    ],
     "libcrux-ecdh@0.0.8": [
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-ecdh@0.0.9": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
+    ],
+    "libcrux-ecdsa@0.0.9": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
+    ],
+    "libcrux-ed25519@0.0.10": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
     ],
     "libcrux-ed25519@0.0.9": [
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
@@ -99,21 +153,45 @@
       "licenses/cryspen-libcrux-451259bb704d/LICENSE",
       "licenses/cryspen-libcrux-451259bb704d/LICENSE-MIT"
     ],
+    "libcrux-hacl-rs@0.0.6": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
+    ],
     "libcrux-hkdf@0.0.8": [
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-hkdf@0.0.9": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
     ],
     "libcrux-hmac-drbg@0.0.1": [
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
     ],
+    "libcrux-hmac-drbg@0.0.2": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
+    ],
     "libcrux-hmac@0.0.8": [
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
     ],
+    "libcrux-hmac@0.0.9": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
+    ],
     "libcrux-intrinsics@0.0.8": [
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-intrinsics@0.0.9": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
+    ],
+    "libcrux-kem@0.0.10": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
     ],
     "libcrux-kem@0.0.9": [
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
@@ -123,37 +201,73 @@
       "licenses/cryspen-libcrux-8ebe73237378/LICENSE",
       "licenses/cryspen-libcrux-8ebe73237378/LICENSE-MIT"
     ],
+    "libcrux-macros@0.0.4": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
+    ],
     "libcrux-ml-kem@0.0.10": [
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-ml-kem@0.0.11": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
     ],
     "libcrux-p256@0.0.8": [
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
     ],
+    "libcrux-p256@0.0.9": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
+    ],
     "libcrux-platform@0.0.3": [
       "licenses/cryspen-libcrux-316fcd6c19c2/LICENSE",
       "licenses/cryspen-libcrux-316fcd6c19c2/LICENSE-MIT"
+    ],
+    "libcrux-platform@0.0.4": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
     ],
     "libcrux-poly1305@0.0.6": [
       "licenses/cryspen-libcrux-451259bb704d/LICENSE",
       "licenses/cryspen-libcrux-451259bb704d/LICENSE-MIT"
     ],
+    "libcrux-poly1305@0.0.7": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
+    ],
     "libcrux-secrets@0.0.6": [
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-secrets@0.0.7": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
     ],
     "libcrux-sha2@0.0.8": [
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
     ],
+    "libcrux-sha2@0.0.9": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
+    ],
     "libcrux-sha3@0.0.10": [
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
     ],
+    "libcrux-sha3@0.0.11": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
+    ],
     "libcrux-traits@0.0.8": [
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE",
       "licenses/cryspen-libcrux-c5fb80f37530/LICENSE-MIT"
+    ],
+    "libcrux-traits@0.0.9": [
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE",
+      "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT"
     ],
     "openmls@0.9.2": [
       "licenses/openmls-openmls-8a8f83b4b61f/LICENSE"
@@ -270,11 +384,71 @@
       "revision": "30cf77b1ca50df3b940346000634e66ed1d5c259",
       "sha256": "1c133c302d38ebfda8a0c12b3ab6f011e3cb747d3de85a4c9c253a9e217de9c5"
     },
+    "licenses/2dav-crabgrind-ea38389bdf07/LICENSE/MIT.LICENSE": {
+      "blob": "582c4ebe49f66e496d316e160e8cda1e435e832a",
+      "repository": "2dav/crabgrind",
+      "revision": "ea38389bdf0731866d812352c11a921c6c657d5d",
+      "sha256": "ac7ad2d98b077d386c467560708c2fad4bcc08022a8b0d5db28f5b6681a79743"
+    },
+    "licenses/2dav-crabgrind-ea38389bdf07/LICENSE/cachegrind.h.LICENSE": {
+      "blob": "2708a47314fe53fdc5fdae5d6c17470a18bb25b6",
+      "repository": "2dav/crabgrind",
+      "revision": "ea38389bdf0731866d812352c11a921c6c657d5d",
+      "sha256": "6a60deb2168cc9d1cfd94f6449b22f724648352ddf823d5db79dea1144db9231"
+    },
+    "licenses/2dav-crabgrind-ea38389bdf07/LICENSE/callgrind.h.LICENSE": {
+      "blob": "61b18aa153a69dfad9774a4ab535420886e5f728",
+      "repository": "2dav/crabgrind",
+      "revision": "ea38389bdf0731866d812352c11a921c6c657d5d",
+      "sha256": "8f80203a2206337f12864020560ce8415735cc9bd80481d36637c70025800d02"
+    },
+    "licenses/2dav-crabgrind-ea38389bdf07/LICENSE/dhat.h.LICENSE": {
+      "blob": "824afe12590133c9f97998b7d8e94123ffc74076",
+      "repository": "2dav/crabgrind",
+      "revision": "ea38389bdf0731866d812352c11a921c6c657d5d",
+      "sha256": "1a136ab533f5e6fb3b660656a09fbd3ad00ecd7cc48ee58b97061765f836e3d0"
+    },
+    "licenses/2dav-crabgrind-ea38389bdf07/LICENSE/drd.h.LICENSE": {
+      "blob": "a265d2f259501c0e03d78c84dfa2fe5fe75cdeb0",
+      "repository": "2dav/crabgrind",
+      "revision": "ea38389bdf0731866d812352c11a921c6c657d5d",
+      "sha256": "143d3ffc9da16f300ca1bc53fafc3cbcbbe71f38f12e9c7dfc4bf10400f1a10f"
+    },
+    "licenses/2dav-crabgrind-ea38389bdf07/LICENSE/helgrind.h.LICENSE": {
+      "blob": "cb18f0726b642587b80c715dd3a4c4ea6caafc91",
+      "repository": "2dav/crabgrind",
+      "revision": "ea38389bdf0731866d812352c11a921c6c657d5d",
+      "sha256": "b78a7d46974cc262db8f79e54bf9d6f294fb7aa8ed2b12e12f876edcde943a1e"
+    },
+    "licenses/2dav-crabgrind-ea38389bdf07/LICENSE/memcheck.h.LICENSE": {
+      "blob": "8b75c4d2a4194e0a532cc8c078602eabe4b16d08",
+      "repository": "2dav/crabgrind",
+      "revision": "ea38389bdf0731866d812352c11a921c6c657d5d",
+      "sha256": "6e7645bb4d530a7a754a602a45043fdf91d68fd5206fa9a1924c55ab5943a457"
+    },
+    "licenses/2dav-crabgrind-ea38389bdf07/LICENSE/valgrind.h.LICENSE": {
+      "blob": "c11688c9227e32f3706936311ecb97de7bfb97eb",
+      "repository": "2dav/crabgrind",
+      "revision": "ea38389bdf0731866d812352c11a921c6c657d5d",
+      "sha256": "1c133c302d38ebfda8a0c12b3ab6f011e3cb747d3de85a4c9c253a9e217de9c5"
+    },
     "licenses/TheOnlyMrCat-io_tee-8a7adecebf34/README.md": {
       "blob": "4434eb39e66b30090dab13a8587e734b94a07b29",
       "repository": "TheOnlyMrCat/io_tee",
       "revision": "8a7adecebf3429cbc58a0368751d1851dfaf58ed",
       "sha256": "0ba20a4b5d8188a85014c5f6d52b5407aec2077986c05f6ba686f9899b767b95"
+    },
+    "licenses/celabshq-libcrux-42d68bd49b24/LICENSE": {
+      "blob": "b9000b9bdcba593e73aa283f9a7a7b4cc16e3d26",
+      "repository": "celabshq/libcrux",
+      "revision": "42d68bd49b244b09bd02626c6ffa95e54dc64f91",
+      "sha256": "c517c468fc7f8d83319dd8b3743923f6891e0dfbaf7c57a874758c8f39b98564"
+    },
+    "licenses/celabshq-libcrux-42d68bd49b24/LICENSE-MIT": {
+      "blob": "e37060b8f11a166b0368a5144814fc081fbb3779",
+      "repository": "celabshq/libcrux",
+      "revision": "42d68bd49b244b09bd02626c6ffa95e54dc64f91",
+      "sha256": "e40d41f94826514279cc7648088180e19621f7acd281dd394a0534d535da51fd"
     },
     "licenses/celabshq-libcrux-c5fb80f37530/LICENSE": {
       "blob": "b9000b9bdcba593e73aa283f9a7a7b4cc16e3d26",
@@ -298,6 +472,18 @@
       "blob": "e37060b8f11a166b0368a5144814fc081fbb3779",
       "repository": "cryspen/libcrux",
       "revision": "316fcd6c19c2e33bd0429e1319b6557d91038512",
+      "sha256": "e40d41f94826514279cc7648088180e19621f7acd281dd394a0534d535da51fd"
+    },
+    "licenses/cryspen-libcrux-42d68bd49b24/LICENSE": {
+      "blob": "b9000b9bdcba593e73aa283f9a7a7b4cc16e3d26",
+      "repository": "cryspen/libcrux",
+      "revision": "42d68bd49b244b09bd02626c6ffa95e54dc64f91",
+      "sha256": "c517c468fc7f8d83319dd8b3743923f6891e0dfbaf7c57a874758c8f39b98564"
+    },
+    "licenses/cryspen-libcrux-42d68bd49b24/LICENSE-MIT": {
+      "blob": "e37060b8f11a166b0368a5144814fc081fbb3779",
+      "repository": "cryspen/libcrux",
+      "revision": "42d68bd49b244b09bd02626c6ffa95e54dc64f91",
       "sha256": "e40d41f94826514279cc7648088180e19621f7acd281dd394a0534d535da51fd"
     },
     "licenses/cryspen-libcrux-451259bb704d/LICENSE": {

@@ -78,14 +78,32 @@ def verify(path, expected=None):
             "authenticity": "authenticate the archive with its CI attestation or an independently trusted digest"}
 
 
+def check_override_sources():
+    base = ROOT / "third_party/overrides"
+    origins = json.loads((base / "sources.json").read_text())
+    for relative, expected in origins["unchanged_primitives"].items():
+        path = base / relative
+        if path.is_symlink() or not path.resolve().is_relative_to(base.resolve()) or not path.is_file():
+            raise ValueError("Unsafe upstream primitive path")
+        with path.open("rb") as source:
+            if hashlib.file_digest(source, "sha256").hexdigest() != expected:
+                raise ValueError("Imported upstream primitive changed: " + relative)
+    return origins["packages"]
+
+
 def licenses():
+    overrides = check_override_sources()
     metadata = json.loads(command("cargo", "metadata", "--offline", "--locked", "--format-version", "1"))
     extra_path = ROOT / "third_party/notices.json"
     extra = json.loads(extra_path.read_text()) if extra_path.exists() else {"packages": {}, "sources": {}}
     notices, files = [], {}
     for package in sorted(metadata["packages"], key=lambda value: (value["name"], value["version"])):
-        if package["source"] is None:
+        if package["id"] == metadata["resolve"]["root"]:
             continue
+        key = package["name"] + "@" + package["version"]
+        override = overrides.get(key) if package["source"] is None else None
+        if package["source"] is None and override is None:
+            raise ValueError("Unrecorded local dependency source: " + key)
         if not package.get("license"):
             raise ValueError("Review missing dependency license: " + package["name"])
         directory = Path(package["manifest_path"]).parent
@@ -111,7 +129,7 @@ def licenses():
                     raise ValueError("Collected upstream notice changed")
                 files[relative] = (data, 0o644)
                 included.append(relative)
-        notices.append({"name": package["name"], "version": package["version"], "license": package["license"], "repository":package.get("repository"), "revision":revision, "path_in_vcs":vcs.get("path_in_vcs", ""), "notices": included})
+        notices.append({"name": package["name"], "version": package["version"], "license": package["license"], "repository":package.get("repository"), "revision":revision, "path_in_vcs":vcs.get("path_in_vcs", ""), "override": override, "notices": included})
     return notices, files
 
 

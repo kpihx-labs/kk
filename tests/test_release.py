@@ -13,6 +13,27 @@ spec.loader.exec_module(release)
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_imported_primitive_changes_are_rejected_before_packaging(self):
+        release.check_override_sources()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = root / "third_party/overrides"
+            base.mkdir(parents=True)
+            (base / "primitive.rs").write_bytes(b"changed")
+            (base / "sources.json").write_text(json.dumps({
+                "packages": {}, "unchanged_primitives": {"primitive.rs": release.digest(b"original")},
+            }))
+            with mock.patch.object(release, "ROOT", root), self.assertRaisesRegex(ValueError, "primitive changed"):
+                release.check_override_sources()
+
+    def test_local_dependency_overrides_are_not_omitted_from_notices(self):
+        expected = release.check_override_sources()
+        notices, _ = release.licenses()
+        actual = {item["name"] + "@" + item["version"]: item for item in notices}
+        for key in expected:
+            self.assertIn(key, actual)
+            self.assertEqual(actual[key]["override"], expected[key])
+
     def test_installation_keeps_foreign_cli_and_prior_version_bytes_intact(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

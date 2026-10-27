@@ -1,4 +1,5 @@
 /target/
+**/target/
 **/__pycache__/
 .ruff_cache/
 /tmp/
@@ -9,6 +10,7 @@ private-key.der
 .env.*
 !.env.example
 /lab/tmp/
+/lab/opaque-interop/**/target/
 /lab/**/__pycache__/
 /lab/xml/*.xml
 !/lab/xml/kk-isolated.xml

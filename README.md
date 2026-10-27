@@ -1,5 +1,16 @@
 # K&K
 
+## Current Candidate: 0.8.1
+
+The dependency hold recorded for 0.8.0 below is resolved in the local 0.8.1
+candidate, without an audit ignore. The full product graph passes strict RustSec
+audit; all 155 Rust, six JavaScript and 11 packaging checks pass. Preserved
+upstream expansion vectors, independent old/new OPAQUE wire tests and the Hax
+macro check also pass. See [the scoped dependency review](docs/dependency-overrides.md).
+Final hosted CI, frozen VM replay and authenticated release artifacts are still
+required; this source update alone is not a published release. Older hold and
+checkpoint entries below are retained dated history.
+
 ## Release Gate Blocked (2026-10-27)
 
 This is a tested software candidate, not a security-qualified production release.

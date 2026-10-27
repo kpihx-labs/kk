@@ -1,6 +1,6 @@
 [package]
 name = "kk"
-version = "0.8.0"
+version = "0.8.1"
 edition = "2024"
 description = "Local-first communication primitives between trusted devices"
 repository = "https://github.com/kpihx-labs/kk"
@@ -61,3 +61,15 @@ rustix = { version = "1.1.5", features = ["event", "fs", "net", "pipe", "process
 
 [dev-dependencies]
 tower = { version = "0.5.3", features = ["util"] }
+
+[patch.crates-io]
+age = { path = "third_party/overrides/age-0.12.1" }
+age-core = { path = "third_party/overrides/age-core-0.12.0" }
+openmls_basic_credential = { path = "third_party/overrides/openmls_basic_credential-0.6.0" }
+openmls_libcrux_crypto = { path = "third_party/overrides/openmls_libcrux_crypto-0.4.0" }
+openmls_traits = { path = "third_party/overrides/openmls_traits-0.6.0" }
+i18n-config = { path = "third_party/overrides/i18n-config-0.4.8" }
+hax-lib-macros = { path = "third_party/overrides/hax-lib-macros-0.3.7" }
+opaque-ke = { path = "third_party/overrides/opaque-ke-4.0.1" }
+voprf = { path = "third_party/overrides/voprf-0.5.0" }
+elliptic-curve = { path = "third_party/overrides/elliptic-curve-xmd" }
