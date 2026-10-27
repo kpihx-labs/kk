@@ -1,5 +1,22 @@
 # Verifiable Distribution
 
+## Current Security Hold (2026-10-27)
+
+The current source is a candidate with unresolved dependency advisories. Its
+functional tests and signed provenance do not establish security qualification.
+The release workflow requires the separate unsuppressed dependency audit before
+signing or publishing a release. No release tag is created during this hold.
+Details and the isolated remediation experiment are recorded in
+`security-review.md` (SR-004).
+
+The system's `gh 2.46.0` lacks attestation verification. The candidate verification
+was exercised with a temporary, checksum-checked `gh 2.103.3`, without changing
+the installed CLI. A verifier must support `gh attestation verify`. In addition
+to `--repo`, enforce `--signer-workflow kpihx-labs/kk/.github/workflows/check.yml`,
+the expected `--source-ref` and `--source-digest`, and
+`--deny-self-hosted-runners`. The tested manual candidate uses its exact branch
+and commit; it is not presented as a signed final version tag.
+
 Release archives are generated only from clean committed source and an exact
 qualified target. The package version and contract version live in Cargo metadata.
 No profile, private identity, browser bootstrap, test state or agent context belongs

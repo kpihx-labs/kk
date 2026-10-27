@@ -1,5 +1,22 @@
 # Pending Work
 
+## Release Blocker (2026-10-27)
+
+Publication is blocked by the unsuppressed RustSec result, not by a missing
+functional command. The current product graph still has four crypto advisories
+and two maintenance warnings; see SR-004 in `docs/security-review.md`. No version
+tag is created, and the release job now depends on the strict audit job.
+
+The pinned-source experiment under ignored `target/dependency-probe` compiles
+after also selecting the matching upstream `openmls_traits` snapshot. The default
+storage mode remains synchronous; no product storage migration has been applied.
+The experiment removes the three Libcrux advisories and basic-toml warning, but
+still has crypto-bigint 0.5.5 through OPAQUE/VOPRF and proc-macro-error2 through
+conditional Hax tooling. It is not promoted into `Cargo.toml` or `Cargo.lock`.
+Next work is a reviewed dependency remediation, not an audit ignore, followed by
+qualified rebuild/replay and final publication. Native Windows/macOS and physical
+capture/portal qualification remain separate uncompleted platform gates.
+
 Current 0.8.0 freeze (2026-10-26): all 25 public room/copy and 66 baseline scenarios
 pass on the final binary, followed by actual native private-display decode under
 limited bandwidth with simultaneous verified file and acknowledged text. The

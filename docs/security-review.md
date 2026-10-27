@@ -31,6 +31,12 @@ through OPAQUE/VOPRF and proc-macro-error2. Its first compile also exposes a
 credential/traits snapshot mismatch in the synchronous/asynchronous storage
 adapter. This probe is ignored experiment state, not a product dependency change.
 
+Follow-up: selecting the matching upstream traits package resolves that compile
+mismatch. Its `async` feature is off by default, so this experiment retains the
+synchronous storage contract without local cryptographic modifications. The
+probe's raw audit still fails on crypto-bigint and proc-macro-error2. Candidate
+dependency promotion and release publication therefore remain blocked.
+
 ## Release Archive Boundary (2026-10-27)
 
 ### SR-003: Extended TAR Metadata Preceded Member Resource Checks
