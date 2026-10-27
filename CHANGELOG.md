@@ -3,13 +3,14 @@
 This records changes, not live delivery status. See [TODO.md](TODO.md) for the
 current state and Git history for detailed implementation checkpoints.
 
-## 0.8.2 - Corrected Delivery Candidate
+## 0.8.2 - 2026-10-27
 
 - Replace accumulated work diaries with concise, schematic current guides.
 - Align command examples, wire formats, feature claims and platform limits.
 - Add documentation checks for links, tables, source-owned wire names and examples.
 - Use `main` as the operator-selected primary branch; retain existing tags.
-- Prepare corrected-source artifacts instead of replacing the signed 0.8.1 draft.
+- Publish corrected-source artifacts after exact-byte qualification, instead of
+  replacing the signed 0.8.1 draft; install the authenticated executable.
 
 ## 0.8.1 - Superseded Draft, Not Published
 

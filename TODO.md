@@ -7,22 +7,12 @@ Evidence: [verification record](docs/progress.md).
 
 | Item | Actual state |
 | --- | --- |
-| Candidate | `0.8.2`, with corrected documentation and source manifest |
+| Release | `0.8.2`, published on [GitHub](https://github.com/kpihx-labs/kk/releases/tag/v0.8.2) and [GitLab](https://gitlab.com/kpihx-labs/kk/-/releases/v0.8.2) |
 | Previous draft | Signed `v0.8.1` at `fa6a29f`; retained, **not publicly released** |
-| Software | Previous runtime qualified; current candidate checks/CI must pass |
-| VM evidence | Earlier binaries passed; no digest is transferred to the new artifact |
-| Current work | Delivery resumed after operator-requested documentation/branch corrections |
+| Software | Product, docs, audit, SDK and both hosted CI platforms pass |
+| Final executable | Exact signed x86_64 bytes pass 25 public, 66 baseline and native contention scenarios |
+| Installation | Authenticated release executable installed; managed `0.8.0` retained |
 | Branch name | `main` locally and by default on GitHub/GitLab; commits/tags retained |
-
-## Before Publication
-
-- [ ] Commit and qualify the corrected candidate on `main`.
-- [ ] Build signed `0.8.2` assets without changing `v0.8.1` or its draft.
-- [ ] Replay the exact signed draft executable on owned guests and verify cleanup.
-- [ ] Verify final archive manifests, tag/workflow attestations and offline rebuild.
-- [ ] Publish the same verified draft assets, without rebuilding them.
-- [ ] Install the authenticated artifact; retain the managed previous version.
-- [ ] Record final release URL, digest and qualification evidence.
 
 ## Not Qualified
 
@@ -32,6 +22,6 @@ Evidence: [verification record](docs/progress.md).
 | Physical media/Wayland portal | Explicitly consented hardware and portal lifecycle tests |
 | Physical networks | Wi-Fi/AP isolation, sustained load and traversal evidence |
 
-These are not silently closed by Linux compilation, virtual displays or a mobile
-layout fixture. Public promotion requires the corrected source and exact final
-artifact gates; the old draft is not a substitute for that qualification.
+These remain outside this Linux delivery. They are not silently closed by a
+compilation, virtual display or mobile layout fixture. Exact digests, CI and lab
+report references are kept in the verification record, not duplicated here.
