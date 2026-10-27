@@ -207,6 +207,7 @@ impl Factory {
             .room_files
             .read()
             .map_err(|_| Error::Protocol)?
+            .active
             .clone()
             .ok_or(Error::Denied)?;
         let _permit = shared
@@ -254,17 +255,24 @@ impl Factory {
                 }
                 _ => return Err(Error::Protocol),
             }
-            let receipt = files::stream::receive_with_async(
+            let receipt = files::stream::receive_with_publication(
                 &peer,
                 recv,
                 send,
-                || handle.authorize_file(peer.clone(), true, config::DEFAULT_TIMEOUT),
+                || async {
+                    super::file::current_inbox(shared, &inbox)?;
+                    handle
+                        .authorize_file(peer.clone(), true, config::DEFAULT_TIMEOUT)
+                        .await?;
+                    super::file::current_inbox(shared, &inbox)
+                },
                 |info| {
                     if info.sha256 != hash {
                         return Err(Error::Authentication);
                     }
                     inbox.choose(&peer, info)
                 },
+                inbox.clone(),
             )
             .await?;
             inbox.complete(&receipt);

@@ -19,6 +19,9 @@ use tokio::{
 use zeroize::Zeroize;
 
 const DEADLINE: Duration = Duration::from_secs(90);
+// Reserved local control commands are tiny and sent immediately on connect.
+// Stalled pre-command readers must not hold admission for the data timeout.
+const CONTROL_HANDSHAKE: Duration = Duration::from_millis(250);
 
 async fn cancelled(external: &mut Option<watch::Receiver<bool>>) -> Result<()> {
     loop {
@@ -57,6 +60,11 @@ pub enum Command {
         peer: raft::PeerId,
     },
     Status,
+    FileReception {
+        inbox: Option<PathBuf>,
+        max_bytes: u64,
+        budget: u64,
+    },
     Stop,
     Text {
         text: String,
@@ -173,9 +181,20 @@ pub async fn request(profile: &Path, name: &str, command: &Command) -> Result<Re
     }
     let directory = directory(profile, name)?;
     let deadline = command.deadline();
-    let event: ReplyEvent = ipc::exchange(&directory, command, deadline + Duration::from_secs(5))
-        .await?
-        .ok_or(Error::Node("no active room; run kk room serve"))?;
+    let control = directory.join("ctl");
+    let reserved = if is_control(command) && control.try_exists()? {
+        ipc::exchange(&control, command, deadline + Duration::from_secs(5)).await?
+    } else {
+        None
+    };
+    // Older foreground owners have no reserved endpoint. Absence may fall back;
+    // an unsafe or unavailable reserved endpoint must never be silently bypassed.
+    let event: ReplyEvent = match reserved {
+        Some(event) => event,
+        None => ipc::exchange(&directory, command, deadline + Duration::from_secs(5))
+            .await?
+            .ok_or(Error::Node("no active room; run kk room serve"))?,
+    };
     match event {
         ReplyEvent::Completed(reply) => Ok(reply),
         _ => Err(Error::Protocol),
@@ -245,10 +264,19 @@ async fn dispatch(
                 json!({"room": raft::PeerId(status.room), "owner": status.owner, "epoch": status.epoch,
                 "active": status.active, "running": status.running, "busy": status.busy, "members": status.members,
                 "freshness": "local-durable-cache", "leader_hint": control.current_leader().await, "media": control.media_status()?,
-                "voters": control.control_membership().membership().voter_ids().collect::<Vec<_>>(), "address": control.local_addr()?}),
+                 "files": {"accepted": control.files_enabled()?},
+                 "voters": control.control_membership().membership().voter_ids().collect::<Vec<_>>(), "address": control.local_addr()?}),
             )
         }
         Command::Stop => Ok(json!({"stopping": true})),
+        Command::FileReception {
+            inbox,
+            max_bytes,
+            budget,
+        } => {
+            let accepted = control.configure_files(inbox.clone(), *max_bytes, *budget)?;
+            Ok(json!({"accepted": accepted}))
+        }
         Command::FileShare { source, audience } => {
             let info = control.share_file(source, audience.clone()).await?;
             Ok(
@@ -399,8 +427,45 @@ async fn dispatch(
     }
 }
 
+fn is_control(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Status
+            | Command::Stop
+            | Command::FileUnshare { .. }
+            | Command::FileReception { inbox: None, .. }
+    )
+}
+
+fn operation_lane(
+    command: &Command,
+    work: &Arc<tokio::sync::Semaphore>,
+    invitations: &Arc<tokio::sync::Semaphore>,
+) -> Result<Option<tokio::sync::OwnedSemaphorePermit>> {
+    if is_control(command) {
+        return Ok(None);
+    }
+    match command {
+        Command::Invite(_) => invitations
+            .clone()
+            .try_acquire_owned()
+            .map(Some)
+            .map_err(|_| Error::Node("another room invitation is active")),
+        _ => work
+            .clone()
+            .try_acquire_owned()
+            .map(Some)
+            .map_err(|_| Error::Node("room operation lane is full")),
+    }
+}
+
+struct Incoming {
+    stream: UnixStream,
+    control_only: bool,
+}
+
 async fn connection(
-    mut stream: UnixStream,
+    incoming: Incoming,
     handle: Handle,
     control: Arc<ControlNode>,
     identity: Arc<Identity>,
@@ -408,10 +473,21 @@ async fn connection(
     work: Arc<tokio::sync::Semaphore>,
     invitations: Arc<tokio::sync::Semaphore>,
 ) -> Result<()> {
-    let command: Command =
-        tokio::time::timeout(crate::config::DEFAULT_TIMEOUT, ipc::read(&mut stream))
-            .await
-            .map_err(|_| Error::Timeout)??;
+    let Incoming {
+        mut stream,
+        control_only,
+    } = incoming;
+    let handshake = if control_only {
+        CONTROL_HANDSHAKE
+    } else {
+        crate::config::DEFAULT_TIMEOUT
+    };
+    let command: Command = tokio::time::timeout(handshake, ipc::read(&mut stream))
+        .await
+        .map_err(|_| Error::Timeout)??;
+    if control_only && !is_control(&command) {
+        return Err(Error::Denied);
+    }
     match &command {
         Command::MediaPublish { kind, peers } => {
             return super::media::publish(stream, control, *kind, peers.clone()).await;
@@ -423,18 +499,7 @@ async fn connection(
     }
     let stream = Arc::new(Mutex::new(stream));
     let operation = async {
-        let _lane = match command {
-            Command::Status | Command::Stop | Command::FileUnshare { .. } => None,
-            Command::Invite(_) => Some(
-                invitations
-                    .try_acquire_owned()
-                    .map_err(|_| Error::Node("another room invitation is active"))?,
-            ),
-            _ => Some(
-                work.try_acquire_owned()
-                    .map_err(|_| Error::Node("room operation lane is full"))?,
-            ),
-        };
+        let _lane = operation_lane(&command, &work, &invitations)?;
         dispatch(&command, &stream, &handle, &control, &identity).await
     };
     let deadline = command.deadline();
@@ -478,6 +543,9 @@ async fn run(
     listener: ipc::Listener,
     options: Options,
 ) -> Result<()> {
+    let control_directory = directory.join("ctl");
+    crate::profile::private_directory(&control_directory, true)?;
+    let control_listener = ipc::Listener::bind(&control_directory).await?;
     let (handle, actor, mut events) = Actor::new(room);
     let task = tokio::task::spawn_local(actor.run());
     let registered = control.register_room(handle.clone()).await;
@@ -516,6 +584,7 @@ async fn run(
         Ok::<(), Error>(())
     });
     let mut connections = JoinSet::new();
+    let mut controls = JoinSet::new();
     let work = Arc::new(tokio::sync::Semaphore::new(4));
     let invitations = Arc::new(tokio::sync::Semaphore::new(1));
     let (stop, mut stopped) = watch::channel(false);
@@ -544,8 +613,19 @@ async fn run(
                         None => {},
                     }
                 },
+                completed = controls.join_next(), if !controls.is_empty() => {
+                    match completed {
+                        Some(Ok(Ok(()))) => {},
+                        Some(Ok(Err(error))) => eprintln!("Room local control failed: {error}"),
+                        Some(Err(error)) => return Err(Error::Io(std::io::Error::other(error))),
+                        None => {},
+                    }
+                },
+                accepted = control_listener.accept(), if controls.len() < 4 => {
+                    controls.spawn_local(connection(Incoming { stream: accepted?, control_only: true }, handle.clone(), control.clone(), identity.clone(), stop.clone(), work.clone(), invitations.clone()));
+                },
                 accepted = listener.accept(), if connections.len() < 32 => {
-                    connections.spawn_local(connection(accepted?, handle.clone(), control.clone(), identity.clone(), stop.clone(), work.clone(), invitations.clone()));
+                    connections.spawn_local(connection(Incoming { stream: accepted?, control_only: false }, handle.clone(), control.clone(), identity.clone(), stop.clone(), work.clone(), invitations.clone()));
                 },
             }
         }
@@ -553,6 +633,8 @@ async fn run(
     }.await;
     connections.abort_all();
     while connections.join_next().await.is_some() {}
+    controls.abort_all();
+    while controls.join_next().await.is_some() {}
     let unregistered = control.unregister_room();
     let stopped = handle.shutdown(DEADLINE).await;
     if stopped.is_err() {
@@ -673,4 +755,31 @@ where
         service,
     )
     .await
+}
+
+#[cfg(test)]
+mod lane_tests {
+    use super::*;
+
+    #[test]
+    fn withdrawal_bypasses_saturated_work_and_invitation_lanes() {
+        let work = Arc::new(tokio::sync::Semaphore::new(4));
+        let invitations = Arc::new(tokio::sync::Semaphore::new(1));
+        let _busy = work.clone().try_acquire_many_owned(4).unwrap();
+        let _invitation = invitations.clone().try_acquire_owned().unwrap();
+        let mut command = Command::FileReception {
+            inbox: None,
+            max_bytes: 1,
+            budget: 1,
+        };
+        assert!(
+            operation_lane(&command, &work, &invitations)
+                .unwrap()
+                .is_none()
+        );
+        if let Command::FileReception { inbox, .. } = &mut command {
+            *inbox = Some(PathBuf::from("inbox"));
+        }
+        assert!(operation_lane(&command, &work, &invitations).is_err());
+    }
 }

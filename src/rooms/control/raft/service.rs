@@ -161,6 +161,19 @@ impl ControlNode {
     ) -> Result<()> {
         self.network.enable_files(directory, max_bytes, budget)
     }
+
+    pub fn configure_files(
+        &self,
+        directory: Option<std::path::PathBuf>,
+        max_bytes: u64,
+        budget: u64,
+    ) -> Result<bool> {
+        self.network.configure_files(directory, max_bytes, budget)
+    }
+
+    pub fn files_enabled(&self) -> Result<bool> {
+        self.network.files_enabled()
+    }
     pub async fn subscribe_media(
         &self,
         peer: PeerId,

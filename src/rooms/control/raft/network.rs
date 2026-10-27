@@ -62,7 +62,7 @@ struct Shared {
     slots: Mutex<BTreeMap<PeerId, Slot>>,
     room_port: RwLock<Option<crate::rooms::runtime::Handle>>,
     room_data: Arc<Semaphore>,
-    room_files: RwLock<Option<Arc<crate::files::Inbox>>>,
+    room_files: RwLock<file::Consent>,
     file_shares: RwLock<replica::Registry>,
     file_data: Arc<Semaphore>,
     writes: Mutex<()>,
@@ -73,9 +73,26 @@ struct Shared {
     stopping: AtomicBool,
     bootstrap_controllers: std::collections::BTreeSet<PeerId>,
 }
-#[derive(Clone)]
 pub struct Factory {
     shared: Arc<Shared>,
+    // The original bound handle owns the stop boundary. Raft, scope and request
+    // clones borrow it and must not revoke consent when a temporary clone drops.
+    owner: bool,
+}
+impl Clone for Factory {
+    fn clone(&self) -> Self {
+        Self {
+            shared: self.shared.clone(),
+            owner: false,
+        }
+    }
+}
+impl Drop for Factory {
+    fn drop(&mut self) {
+        if self.owner {
+            self.close();
+        }
+    }
 }
 pub(super) struct ScopeWitness(Weak<Shared>);
 impl ScopeWitness {
@@ -279,6 +296,7 @@ async fn node_intent_local(
     }
     let factory = Factory {
         shared: shared.clone(),
+        owner: false,
     };
     let scope = match machine.transport_scope().await {
         Ok(scope) => scope,
@@ -612,7 +630,7 @@ impl Factory {
             slots: Mutex::new(BTreeMap::new()),
             room_port: RwLock::new(None),
             room_data: Arc::new(Semaphore::new(config::ROOM_DATA_RPCS)),
-            room_files: RwLock::new(None),
+            room_files: RwLock::new(file::Consent::default()),
             file_shares: RwLock::new(replica::Registry::default()),
             file_data: Arc::new(Semaphore::new(config::NODE_MAX_FILES)),
             writes: Mutex::new(()),
@@ -625,6 +643,7 @@ impl Factory {
         Ok((
             Self {
                 shared: shared.clone(),
+                owner: true,
             },
             Server { shared },
         ))
@@ -634,11 +653,13 @@ impl Factory {
     }
     pub(super) fn fail_closed(&self) {
         self.shared.stopping.store(true, Ordering::SeqCst);
+        self.revoke_files();
         self.shared.endpoint.close(1u32.into(), b"");
     }
     pub(super) fn close(&self) {
-        self.shared.media.close();
         self.shared.stopping.store(true, Ordering::SeqCst);
+        self.revoke_files();
+        self.shared.media.close();
         self.shared.endpoint.close(0u32.into(), b"");
     }
     pub(super) fn driver_owner(&self) -> transport::DriverOwner {
@@ -673,12 +694,18 @@ impl Factory {
     }
     pub fn unregister_room(&self) -> Result<()> {
         self.shared.media.invalidate_sessions();
-        self.shared
-            .room_port
-            .write()
-            .map_err(|_| Error::Protocol)?
-            .take();
-        Ok(())
+        let result = match self.shared.room_port.write() {
+            Ok(mut port) => {
+                port.take();
+                Ok(())
+            }
+            Err(poison) => {
+                poison.into_inner().take();
+                Err(Error::Protocol)
+            }
+        };
+        self.revoke_files();
+        result
     }
     pub async fn room_text(
         &self,
@@ -1083,6 +1110,12 @@ impl RaftNetwork<TypeConfig> for Client {
 
 impl Drop for Server {
     fn drop(&mut self) {
+        self.shared.stopping.store(true, Ordering::SeqCst);
+        self.shared
+            .room_files
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .revoke();
         self.shared.endpoint.close(0u32.into(), b"");
     }
 }

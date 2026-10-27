@@ -13,6 +13,19 @@ use tokio::{
 
 use crate::{Error, Result};
 
+struct CancelPublication(std::sync::Arc<std::sync::Mutex<bool>>);
+
+impl Drop for CancelPublication {
+    fn drop(&mut self) {
+        // Dropping an async waiter cannot cancel spawn_blocking. Share a gate
+        // with the rename instead, and recover poison to revoke infallibly.
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = false;
+    }
+}
+
 pub(super) struct Store {
     directory: OwnedFd,
     output: OsString,
@@ -127,9 +140,37 @@ impl Store {
         })
     }
 
-    pub async fn commit(&mut self) -> Result<()> {
+    pub async fn commit(self) -> Result<()> {
+        self.file.sync_all().await?;
+        self.commit_with_publication(()).await
+    }
+
+    // The stream has already flushed, synced and verified the staged file.
+    // Only the no-replace rename belongs inside the consent gate; fsync and
+    // metadata cleanup must not make synchronous withdrawal wait on durability.
+    pub async fn commit_with_publication(
+        mut self,
+        publication: impl super::stream::Publication,
+    ) -> Result<()> {
+        let live = std::sync::Arc::new(std::sync::Mutex::new(true));
+        let _cancel = CancelPublication(live.clone());
+        tokio::task::spawn_blocking(move || {
+            let was_complete = self.complete;
+            publication.publish(|| {
+                let active = live.lock().map_err(|_| Error::Protocol)?;
+                if !*active {
+                    return Err(Error::Cancelled);
+                }
+                self.publish()
+            })?;
+            self.finish_publication(!was_complete)
+        })
+        .await
+        .map_err(|_| Error::Node("file publication worker failed"))?
+    }
+
+    fn publish(&mut self) -> Result<()> {
         if !self.complete {
-            self.file.sync_all().await?;
             fs::renameat_with(
                 &self.directory,
                 &self.partial,
@@ -138,10 +179,17 @@ impl Store {
                 fs::RenameFlags::NOREPLACE,
             )
             .map_err(|_| Error::Destination("atomic no-replace publication failed"))?;
+            self.complete = true;
+        }
+        Ok(())
+    }
+
+    fn finish_publication(&self, newly_published: bool) -> Result<()> {
+        // An already-complete destination has no staging metadata to remove.
+        // Newly published files retain their metadata until the rename is durable.
+        if newly_published {
             fs::fsync(&self.directory)?;
             fs::unlinkat(&self.directory, &self.metadata, fs::AtFlags::empty())?;
-            fs::fsync(&self.directory)?;
-            self.complete = true;
         }
         fs::fsync(&self.directory)?;
         Ok(())

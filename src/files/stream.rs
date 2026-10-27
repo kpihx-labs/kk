@@ -9,6 +9,19 @@ use tokio::{
 };
 use zeroize::Zeroizing;
 
+/// Serialize the atomic publication step with the owner's revocation boundary.
+/// This runs on a blocking worker; implementations must not await or retain the
+/// publication closure. Preparation and durability work stay outside the gate.
+pub(crate) trait Publication: Send + 'static {
+    fn publish(self, rename: impl FnOnce() -> Result<()>) -> Result<()>;
+}
+
+impl Publication for () {
+    fn publish(self, rename: impl FnOnce() -> Result<()>) -> Result<()> {
+        rename()
+    }
+}
+
 pub(crate) async fn receive(
     peer: &Peer,
     policy: &ReceivePolicy,
@@ -38,10 +51,25 @@ pub(crate) async fn receive_with(
 
 pub(crate) async fn receive_with_async<F, Fut>(
     peer: &Peer,
+    request: quinn::RecvStream,
+    response: quinn::SendStream,
+    authorize: F,
+    choose: impl FnOnce(&FileInfo) -> Result<ReceivePolicy>,
+) -> Result<Receipt>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    receive_with_publication(peer, request, response, authorize, choose, ()).await
+}
+
+pub(crate) async fn receive_with_publication<F, Fut>(
+    peer: &Peer,
     mut request: quinn::RecvStream,
     mut response: quinn::SendStream,
     mut authorize: F,
     choose: impl FnOnce(&FileInfo) -> Result<ReceivePolicy>,
+    publication: impl Publication,
 ) -> Result<Receipt>
 where
     F: FnMut() -> Fut,
@@ -116,7 +144,13 @@ where
         return Err(Error::Integrity);
     }
     authorize().await?;
-    store.commit().await?;
+    #[cfg(target_os = "linux")]
+    store.commit_with_publication(publication).await?;
+    #[cfg(not(target_os = "linux"))]
+    let () = {
+        let _ = publication;
+        store.commit().await?
+    };
     response.write_all(&expected).await?;
     response.finish().map_err(|_| Error::Network)?;
     Ok(Receipt {

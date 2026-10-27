@@ -153,6 +153,67 @@ mod tests {
     use super::*;
     use quinn::Runtime;
     #[tokio::test]
+    async fn close_grace_can_expire_during_peer_drain_without_leaking_the_owned_socket() {
+        let directory = tempfile::tempdir().unwrap();
+        let identity = crate::Identity::create(&directory.path().join("owner")).unwrap();
+        let peer = identity.peer();
+        let server_config = crate::transport::server_config(
+            &identity,
+            std::slice::from_ref(&peer),
+            &[b"drain-test"],
+            crate::transport::Policy::Room,
+        )
+        .unwrap();
+        let (mut endpoint, owner) = server(server_config, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let address = endpoint.local_addr().unwrap();
+        endpoint.set_default_client_config(
+            crate::transport::client_config(
+                &identity,
+                &peer,
+                b"drain-test",
+                crate::transport::Policy::Room,
+            )
+            .unwrap(),
+        );
+        // An owned loopback sink receives the Initial but never replies. There
+        // is deliberately no RTT sample: Quinn's three-PTO close timer exceeds
+        // our best-effort grace even though application closure is immediate.
+        let sink = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let connecting = endpoint
+            .connect(sink.local_addr().unwrap(), "localhost")
+            .unwrap();
+        let mut packet = [0; 2048];
+        tokio::time::timeout(config::DEFAULT_TIMEOUT, sink.recv_from(&mut packet))
+            .await
+            .unwrap()
+            .unwrap();
+        endpoint.close(0u32.into(), b"");
+        assert!(matches!(
+            connecting.await,
+            Err(quinn::ConnectionError::LocallyClosed)
+        ));
+        assert!(
+            tokio::time::timeout(config::QUIC_SHUTDOWN_GRACE, endpoint.wait_idle())
+                .await
+                .is_err(),
+            "a silent peer's close timer should outlive the bounded grace"
+        );
+        assert!(owner.diagnostics().contains("connection.rs"));
+        // Distinguish ordinary protocol drain from a stuck driver: without
+        // cancellation, this same connection finishes on its finite PTO timer.
+        tokio::time::timeout(config::DEFAULT_TIMEOUT, endpoint.wait_idle())
+            .await
+            .unwrap();
+        assert!(!owner.diagnostics().contains("connection.rs"));
+        drop(endpoint);
+        owner.released().await.unwrap();
+        assert!(owner.diagnostics().is_empty());
+        assert!(
+            std::net::UdpSocket::bind(address).is_ok(),
+            "completed owned shutdown must release the socket despite peer drain"
+        );
+    }
+    #[tokio::test]
     async fn a_sealed_owner_drops_late_driver_resources_before_spawn_returns() {
         let owner = DriverOwner(Arc::new(Tasks::default()));
         let runtime = OwnedRuntime {
@@ -181,12 +242,21 @@ mod tests {
             runtime: quinn::TokioRuntime,
             owner: owner.clone(),
         };
-        runtime.spawn(Box::pin(std::future::pending()));
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let address = socket.local_addr().unwrap();
+        runtime.spawn(Box::pin(async move {
+            let _socket = socket;
+            std::future::pending::<()>().await;
+        }));
         assert_eq!(owner.0.children.lock().unwrap().len(), 1);
         assert!(owner.diagnostics().contains("lifetime.rs"));
         owner.terminate();
         owner.released().await.unwrap();
         assert!(owner.0.children.lock().unwrap().is_empty());
+        assert!(
+            std::net::UdpSocket::bind(address).is_ok(),
+            "release must join resource destruction, not just request cancellation"
+        );
         // A late spawn races shutdown but cannot escape its already closed owner.
         runtime.spawn(Box::pin(std::future::pending()));
         owner.released().await.unwrap();

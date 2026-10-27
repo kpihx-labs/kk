@@ -60,6 +60,14 @@ pub enum Command {
     },
     /// Cached durable state, explicitly not a fresh quorum observation
     Status { name: String },
+    /// Change incoming-file consent on the running room without restarting it
+    Receiving {
+        name: String,
+        #[command(flatten)]
+        receive: ReceiveArgs,
+        #[arg(long, conflicts_with = "accept_files")]
+        disable: bool,
+    },
     /// Gracefully stop the foreground room without deleting any state
     Stop { name: String },
     /// Broadcast positional text; '-' selects stdin, '-s' hides local input
@@ -234,6 +242,30 @@ pub(super) async fn run(command: Command, selected: Option<&Path>) -> Result<()>
         }
         Command::Status { name } => {
             report(local::request(&profile, &name, &local::Command::Status).await?)
+        }
+        Command::Receiving {
+            name,
+            receive,
+            disable,
+        } => {
+            if !receive.accept_files && !disable {
+                return Err(Error::Configuration(
+                    "choose --accept-files with --inbox, or --disable",
+                ));
+            }
+            let options = receive.options()?;
+            report(
+                local::request(
+                    &profile,
+                    &name,
+                    &local::Command::FileReception {
+                        inbox: options.inbox,
+                        max_bytes: options.max_bytes,
+                        budget: options.file_budget,
+                    },
+                )
+                .await?,
+            )
         }
         Command::Stop { name } => {
             report(local::request(&profile, &name, &local::Command::Stop).await?)
