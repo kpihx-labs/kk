@@ -34,6 +34,41 @@ contract/license, complete dependency notices and file/build manifests. The veri
 rejects unsafe members, changed/missing/extra files and bounded gzip/TAR overruns.
 Integrity checks alone do not authenticate an archive.
 
+Each currently supported Linux target also produces a reproducible `.zip` binary
+archive alongside `.tar.gz`. Both carry the same executable, notices and manifest;
+the per-target `.sha256` file covers both archive byte streams. ZIP uses sorted
+ordinary files, explicit Unix permissions and a UTC commit timestamp clamped to
+the ZIP date range. Reproducibility means identical inputs with the same packaging
+toolchain, not byte equality across different compression library versions.
+
+The existing `bundle --target ... --output ...` and `verify ARCHIVE [--sha256 ...]`
+commands are unchanged. `verify` accepts `.zip` as well as `.tar.gz`, checks without
+extracting, and applies the same manifest/digest gates. It rejects traversal,
+noncanonical paths, duplicate or case-colliding members, file/directory conflicts,
+links and unsafe file types. Compressed input, expanded data, member counts and
+manifest sizes are bounded in [release.py](../scripts/release.py). ZIP directory
+metadata is bounded before parsing; encryption, multipart and ZIP64 archives are
+not supported. Offline source remains `.tar.gz` and is not a binary-manifest
+archive. A new container format does not qualify a new operating system or CPU.
+
+Verification opens the input once with no-follow/nonblocking flags, validates the
+opened descriptor as an ordinary file, and reads a bounded immutable snapshot.
+Trusted-digest hashing, ZIP directory preflight and archive parsing all consume
+that same snapshot. Replacing the pathname or rewriting the file after hashing
+cannot substitute different bytes for parsing.
+
+```sh
+uv run --no-project scripts/release.py verify DOWNLOADED_BINARY_ARCHIVE.zip
+```
+
+The release workflow's provenance `subject-path` includes `target/dist/*.zip`
+alongside `target/dist/*.tar.gz`. Before public ZIP distribution, exact-byte
+replay must authenticate and verify the ZIP selected for installation. Current
+matrix uploads, provenance-artifact uploads and draft asset creation already use
+`target/dist/*`, which includes ZIP; keep that coverage when changing upload
+filters. Creating ZIP locally does not itself provide a CI attestation or replay
+evidence. Managed installation remains immutable and unchanged below.
+
 ## Authenticate Origin
 
 Use a `gh` version supporting attestation verification, with expected values from

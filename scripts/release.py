@@ -8,10 +8,14 @@ import json
 import os
 import platform
 import re
+import stat
+import struct
 import subprocess
 import tarfile
 import tempfile
+import time
 import tomllib
+import zipfile
 from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +23,23 @@ TARGETS = {"x86_64-unknown-linux-gnu": "linux-x86_64", "aarch64-unknown-linux-gn
 MAX_MEMBERS = 4096
 MAX_UNPACKED_BYTES = 256 * 1024 * 1024
 MAX_MANIFEST_BYTES = 4 * 1024 * 1024
+MAX_MEMBER_BYTES = 128 * 1024 * 1024
+MAX_PATH_BYTES = 4096
+MAX_PATH_DEPTH = 32
+
+
+def member_path(name):
+    # Bound component bookkeeping as well as payload allocation.
+    if (len(name) > MAX_PATH_BYTES or len(name.encode("utf-8")) > MAX_PATH_BYTES
+            or name.count("/") >= MAX_PATH_DEPTH):
+        raise ValueError("Oversized release member path")
+    parts = PurePosixPath(name)
+    if (not parts.parts or parts.is_absolute() or ".." in parts.parts
+            or parts.as_posix() != name or "\\" in name or ":" in name
+            or any(ord(char) < 32 or ord(char) == 127 for char in name)
+            or any(part.endswith((".", " ")) for part in parts.parts)):
+        raise ValueError("Unsafe release member")
+    return parts
 
 
 def command(*args):
@@ -31,40 +52,142 @@ def digest(data):
 
 def archive(path, root, files, epoch):
     """A new deterministic archive of explicit ordinary files, never links."""
+    for name in files:
+        member_path(root + "/" + name)
+        member_path(name)
+    if path.suffix == ".zip":
+        # ZIP timestamps are UTC, two-second resolution, and cannot precede 1980.
+        timestamp = time.gmtime(min(max(epoch, 315532800), 4354819198))[:6]
+        with zipfile.ZipFile(path, "x", compression=zipfile.ZIP_DEFLATED, allowZip64=False) as stream:
+            for name, (data, mode) in sorted(files.items()):
+                info = zipfile.ZipInfo(root + "/" + name, timestamp)
+                info.create_system = 3
+                info.external_attr = (stat.S_IFREG | mode) << 16
+                info.compress_type = zipfile.ZIP_DEFLATED
+                stream.writestr(info, data, compresslevel=9)
+        return
     with path.open("xb") as output, gzip.GzipFile(filename="", fileobj=output, mode="wb", mtime=epoch) as compressed, tarfile.open(fileobj=compressed, mode="w") as stream:
         for name, (data, mode) in sorted(files.items()):
-            relative = PurePosixPath(name)
-            if not relative.parts or relative.is_absolute() or ".." in relative.parts or relative.as_posix() != name:
-                raise ValueError("Unsafe release member")
             info = tarfile.TarInfo(root + "/" + name)
             info.size, info.mode, info.mtime = len(data), mode, epoch
             stream.addfile(info, io.BytesIO(data))
 
 
+def archive_snapshot(path):
+    """Open once, reject links/special files, and freeze bounded input bytes."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as error:
+        raise ValueError("Compressed release archive is non-ordinary or unavailable") from error
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_UNPACKED_BYTES:
+            raise ValueError("Compressed release archive is non-ordinary or oversized")
+        with os.fdopen(descriptor, "rb", closefd=False) as source:
+            snapshot = source.read(MAX_UNPACKED_BYTES + 1)
+    finally:
+        os.close(descriptor)
+    if len(snapshot) > MAX_UNPACKED_BYTES:
+        raise ValueError("Compressed release archive is oversized")
+    return snapshot
+
+
+def zip_directory(snapshot):
+    """Bound the central directory before ZipFile allocates its member objects."""
+    with io.BytesIO(snapshot) as source:
+        size = len(snapshot)
+        source.seek(max(0, size - 65557))
+        tail = source.read(65557)
+        end = tail.rfind(b"PK\x05\x06")
+        if end < 0 or len(tail) - end < 22:
+            raise ValueError("Missing ZIP directory")
+        _, disk, start_disk, count_disk, count, length, offset, comment = struct.unpack_from("<4s4H2LH", tail, end)
+        if (disk or start_disk or count != count_disk or count > MAX_MEMBERS
+                or length > MAX_MANIFEST_BYTES or offset + length != size - len(tail) + end
+                or end + 22 + comment != len(tail)):
+            raise ValueError("Ambiguous or oversized ZIP directory")
+        source.seek(offset)
+        directory = source.read(length)
+    position, actual = 0, 0
+    while position < length:
+        if position + 46 > length or directory[position:position + 4] != b"PK\x01\x02":
+            raise ValueError("Invalid ZIP directory")
+        name, extra, comment = struct.unpack_from("<3H", directory, position + 28)
+        position += 46 + name + extra + comment
+        actual += 1
+        if actual > MAX_MEMBERS or position > length:
+            raise ValueError("Oversized ZIP directory")
+    if actual != count:
+        raise ValueError("Inconsistent ZIP member count")
+
+
+def archive_entries(path, snapshot=None):
+    if snapshot is None:
+        snapshot = archive_snapshot(path)
+    entries, prefix, total, spellings = {}, None, 0, {}
+
+    def accept(name, size):
+        nonlocal prefix, total
+        parts = member_path(name)
+        if len(parts.parts) < 2:
+            raise ValueError("Archive contains an unsafe member")
+        if prefix is None:
+            prefix = parts.parts[0]
+        total += size
+        if (parts.parts[0] != prefix or name in entries or size < 0
+                or size > MAX_MEMBER_BYTES or total > MAX_UNPACKED_BYTES
+                or len(entries) >= MAX_MEMBERS
+                or (parts.name == "build-manifest.json" and size > MAX_MANIFEST_BYTES)):
+            raise ValueError("Ambiguous or oversized release member")
+        for index in range(1, len(parts.parts) + 1):
+            component = "/".join(parts.parts[:index])
+            folded = component.casefold()
+            if folded in spellings and spellings[folded] != component:
+                raise ValueError("Case collision in release members")
+            if index < len(parts.parts) and component in entries:
+                raise ValueError("Release file is also a directory")
+            spellings[folded] = component
+        if any(existing.startswith(name + "/") for existing in entries):
+            raise ValueError("Release file is also a directory")
+
+    if path.suffix == ".zip":
+        zip_directory(snapshot)
+        with zipfile.ZipFile(io.BytesIO(snapshot)) as stream:
+            for member in stream.infolist():
+                mode = member.external_attr >> 16
+                if (member.orig_filename != member.filename or member.is_dir()
+                        or stat.S_IFMT(mode) not in (0, stat.S_IFREG)
+                        or member.external_attr & 0x10 or mode & 0o7000
+                        or member.flag_bits & 1 or member.volume
+                        or member.extract_version >= 45
+                        or member.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)):
+                    raise ValueError("Archive contains a non-ordinary or unsafe member")
+                accept(member.filename, member.file_size)
+                with stream.open(member) as payload:
+                    data = payload.read(member.file_size + 1)
+                if len(data) != member.file_size:
+                    raise ValueError("ZIP member differs from its declared size")
+                entries[member.filename] = data
+    else:
+        # TAR parses extended headers before yielding members, so bound that input too.
+        with gzip.GzipFile(fileobj=io.BytesIO(snapshot), mode="rb") as compressed:
+            unpacked = compressed.read(MAX_UNPACKED_BYTES + 1)
+        if len(unpacked) > MAX_UNPACKED_BYTES:
+            raise ValueError("Unpacked release archive exceeds its resource budget")
+        with tarfile.open(fileobj=io.BytesIO(unpacked), mode="r:") as stream:
+            for member in stream:
+                if not member.isfile() or member.issparse() or member.mode & 0o7000:
+                    raise ValueError("Archive contains a non-ordinary or unsafe member")
+                accept(member.name, member.size)
+                entries[member.name] = stream.extractfile(member).read(member.size + 1)
+    return entries, prefix
+
+
 def verify(path, expected=None):
-    if not path.is_file() or path.stat().st_size > MAX_UNPACKED_BYTES:
-        raise ValueError("Compressed release archive is non-ordinary or oversized")
-    if expected is not None:
-        with path.open("rb") as compressed:
-            if hashlib.file_digest(compressed, "sha256").hexdigest() != expected:
-                raise ValueError("Archive does not match the expected trusted digest")
-    # TAR parses extended headers before yielding members, so bound that input too.
-    with gzip.open(path, "rb") as compressed:
-        unpacked = compressed.read(MAX_UNPACKED_BYTES + 1)
-    if len(unpacked) > MAX_UNPACKED_BYTES:
-        raise ValueError("Unpacked release archive exceeds its resource budget")
-    entries, prefix, total = {}, None, 0
-    with tarfile.open(fileobj=io.BytesIO(unpacked), mode="r:") as stream:
-        for member in stream:
-            parts = PurePosixPath(member.name)
-            if not member.isfile() or parts.is_absolute() or ".." in parts.parts or len(parts.parts) < 2 or parts.as_posix() != member.name:
-                raise ValueError("Archive contains a non-ordinary or unsafe member")
-            if prefix is None:
-                prefix = parts.parts[0]
-            total += member.size
-            if parts.parts[0] != prefix or member.name in entries or member.size > 128 * 1024 * 1024 or total > MAX_UNPACKED_BYTES or len(entries) >= MAX_MEMBERS or (parts.name == "build-manifest.json" and member.size > MAX_MANIFEST_BYTES):
-                raise ValueError("Ambiguous or oversized release member")
-            entries[member.name] = stream.extractfile(member).read()
+    snapshot = archive_snapshot(path)
+    if expected is not None and hashlib.file_digest(io.BytesIO(snapshot), "sha256").hexdigest() != expected:
+        raise ValueError("Archive does not match the expected trusted digest")
+    entries, prefix = archive_entries(path, snapshot)
     manifest_name = prefix + "/build-manifest.json" if prefix else ""
     if manifest_name not in entries:
         raise ValueError("Missing build manifest")
@@ -169,6 +292,9 @@ def bundle(target, destination):
     output = destination / (stem + ".tar.gz")
     archive(output, stem, files, epoch)
     verify(output)
+    zip_output = destination / (stem + ".zip")
+    archive(zip_output, stem, files, epoch)
+    verify(zip_output)
     manifest_path = destination / (stem + ".build.json")
     with manifest_path.open("xb") as record:
         record.write(files["build-manifest.json"][0])
@@ -196,9 +322,9 @@ def bundle(target, destination):
     archive(source, f"kk-v{version}-source", source_files, epoch)
     sums = destination / (stem + ".sha256")
     with sums.open("x") as record:
-        for path in [output, manifest_path, source]:
+        for path in [output, zip_output, manifest_path, source]:
             record.write(f"{digest(path.read_bytes())}  {path.name}\n")
-    print(json.dumps({"archive": str(output), "offline_source": str(source), "checksums": str(sums), "commit": commit}))
+    print(json.dumps({"archive": str(output), "zip_archive": str(zip_output), "offline_source": str(source), "checksums": str(sums), "commit": commit}))
 
 
 def collect(source, destination):

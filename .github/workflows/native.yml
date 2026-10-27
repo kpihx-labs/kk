@@ -1,0 +1,66 @@
+name: Native Foundation (Not Product Qualification)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  foundation:
+    name: Foundation / ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      TARGET: ${{ matrix.target }}
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1; same pin as check.yml
+        with:
+          persist-credentials: false
+      - name: Install the repository-pinned Rust toolchain
+        run: |
+          $pin = Select-String -Path rust-toolchain.toml -Pattern '^channel\s*=\s*"([^"]+)"$'
+          if ($null -eq $pin) { throw 'Missing repository Rust channel' }
+          $channel = $pin.Matches[0].Groups[1].Value
+          rustup toolchain install $channel --profile minimal --component rustfmt --component clippy --target $env:TARGET
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustc --version --verbose
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo --version
+      - name: Fetch locked dependencies for the native target
+        run: cargo fetch --locked --target $env:TARGET
+      - name: Build native binary and compile all test/example targets (not execution)
+        run: cargo build --locked --offline --target $env:TARGET --all-targets
+      - name: Lint native targets without warning suppression
+        run: cargo clippy --locked --offline --target $env:TARGET --all-targets -- -D warnings
+      - name: Minimum binary smoke (version, help, invalid argument)
+        run: cargo test --locked --offline --target $env:TARGET --test platform_foundation binary_smoke -- --nocapture
+      - name: Assert the native platform contract, including intentional refusals
+        run: cargo test --locked --offline --target $env:TARGET --test platform_foundation -- --nocapture
+      - name: Report scope even when a foundation gate fails
+        if: always()
+        run: |
+          @'
+          ## Native foundation only
+          Compilation/lint, minimum binary smoke and explicit platform-contract tests are the only gates in this lane. Read each step result; this summary is not a passing result.
+          Product integration suites and library unit suites are NOT executed here. See docs/platforms.md for the Linux/Unix gating inventory.
+          Windows protected storage/IPC and non-Linux atomic file publication are not qualified. Expected refusals are tested, not presented as working product features.
+          No release, installer, artifact upload, signing, physical capture or native product-support claim is made. This workflow is not a dependency of the existing release job.
+          '@ | Add-Content -Path $env:GITHUB_STEP_SUMMARY

@@ -24,6 +24,16 @@ fn study_clones_and_local_files_stay_out_of_the_package() {
     assert!(files.lines().any(|path| path == "LICENSE"));
     assert!(files.lines().any(|path| path == "CONTRACT.md"));
     assert!(files.lines().any(|path| path == "tests/test_docs.py"));
+    for required in [
+        "scripts/release.py",
+        "tests/test_release.py",
+        "docs/distribution.md",
+    ] {
+        assert!(
+            files.lines().any(|path| path == required),
+            "portable release tooling or evidence missing: {required}"
+        );
+    }
     for path in files.lines() {
         assert!(
             !path.starts_with("refs/")
