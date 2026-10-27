@@ -3,11 +3,12 @@ SHELL := /bin/sh
 GITHUB_SSH_COMMAND ?= ssh
 GITLAB_SSH_COMMAND ?= ssh
 
-.PHONY: help check ui-check packaging-check sdk-check hax-check bundle verify-bundle install tag-release publish-tag build fmt run push lab-check lab-test lab-crypto-test lab-control-test lab-room-test lab-enrollment-test lab-room-cli-test lab-native-media-test lab-stop
+.PHONY: help check docs-check ui-check packaging-check sdk-check hax-check bundle verify-bundle install tag-release publish-tag build fmt run push lab-check lab-test lab-crypto-test lab-control-test lab-room-test lab-enrollment-test lab-room-cli-test lab-native-media-test lab-stop
 
 help: ## Show available tasks
 	@printf '%s\n' \
 	  'make check           Format, lint, tests and documentation' \
+	  'make docs-check      Current guide links, tables, wire tokens and examples' \
 	  'make sdk-check       Upstream expansion vectors and independent OPAQUE interoperability' \
 	  'make hax-check       Explicit upstream-nightly macro check, not a formal proof' \
 	  'make build           Build the release CLI' \
@@ -36,6 +37,10 @@ check: ## Validate offline with local loopback network tests
 	RUSTDOCFLAGS="-D warnings" cargo doc --offline --locked --no-deps
 	$(MAKE) ui-check
 	$(MAKE) packaging-check
+	$(MAKE) docs-check
+
+docs-check: ## Pure-Python current documentation consistency checks; no network or VM mutation
+	uv run --no-project python -m unittest discover -s tests -p 'test_docs.py'
 
 packaging-check: ## Release integrity, archive safety and clean-source policy tests
 	uv run --no-project python -m unittest discover -s tests -p 'test_release.py'

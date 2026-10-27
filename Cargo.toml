@@ -1,13 +1,13 @@
 [package]
 name = "kk"
-version = "0.8.1"
+version = "0.8.2"
 edition = "2024"
 description = "Local-first communication primitives between trusted devices"
 repository = "https://github.com/kpihx-labs/kk"
 homepage = "https://github.com/kpihx-labs/kk"
 license = "BUSL-1.1"
 publish = false
-include = ["/src/**/*.rs", "/src/ui/assets/*", "/tests/**/*.rs", "/tests/*.mjs", "/tests/test_release.py", "/scripts/*.py", "/third_party/**", "/Makefile", "/rust-toolchain.toml", "/lab/control_node.rs", "/lab/room_fixture.rs", "/lab/scoped_pairing.rs", "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/README.md", "/CONTRACT.md", "/CHANGELOG.md", "/docs/*.md"]
+include = ["/src/**/*.rs", "/src/ui/assets/*", "/tests/**/*.rs", "/tests/*.mjs", "/tests/test_release.py", "/tests/test_docs.py", "/scripts/*.py", "/third_party/**", "/Makefile", "/rust-toolchain.toml", "/lab/control_node.rs", "/lab/room_fixture.rs", "/lab/scoped_pairing.rs", "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/README.md", "/CONTRACT.md", "/CHANGELOG.md", "/docs/*.md"]
 
 [package.metadata.kk]
 contract-version = "0.8.0"

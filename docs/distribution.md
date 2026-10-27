@@ -1,112 +1,72 @@
-# Verifiable Distribution
+# Build, Verify And Install
 
-## Exact Artifact Publication
+Current publication state lives only in [TODO.md](../TODO.md). Source version and
+resolved dependencies are owned by `Cargo.toml` and `Cargo.lock`.
 
-CI binaries are not assumed byte-identical across separate builds, even when
-runtime source is unchanged. Qualification of one binary digest is not silently
-transferred to another digest. The tag workflow therefore signs and uploads a
-draft release only, after its required checks succeed. It does not immediately
-make the final release assets public.
+## Release Path
 
-Authenticate the draft archives against the exact tag, source commit, workflow
-and hosted-runner policy. Verify their member manifests and checksums, then replay
-the exact draft executable on the owned isolated guests, including the public
-CLI and native contention gates. Publish that same draft without rebuilding or
-replacing its assets only after these checks and cleanup succeed:
-
-```sh
-gh release edit "$TAG" --draft=false --repo kpihx-labs/kk
+```text
+clean commit -> checks + strict audit + SDK + native architecture builds
+                                              |
+                                 signed draft archives
+                                              |
+                             authenticate + exact-byte VM replay
+                                              |
+                              publish same assets -> install
 ```
 
-The draft transition is an explicit authorized release step, not another operator
-approval gate. A failed artifact stays unpublished; source/tag history and old
-artifact bytes are never force-moved or overwritten to hide the failure.
+A tag is not a published release. Separate builds are not assumed byte-identical.
+The exact draft executable is qualified before promotion; assets are not rebuilt,
+silently replaced or force-retagged to hide a failure.
 
-## 0.8.1 Candidate Update
-
-The local dependency hold recorded below for 0.8.0 is resolved by the explicit
-overrides and qualification in `dependency-overrides.md`. All strict audit and
-local software/SDK checks pass. Source overrides and their original licenses are
-included in offline source; their unchanged primitive hashes are checked before
-notice/archive generation. The production graph and the historical reference
-test graph are separate. Final hosted and VM/artifact gates are still pending;
-no final release is asserted by these local results.
-
-## Current Security Hold (2026-10-27)
-
-The current source is a candidate with unresolved dependency advisories. Its
-functional tests and signed provenance do not establish security qualification.
-The release workflow requires the separate unsuppressed dependency audit before
-signing or publishing a release. No release tag is created during this hold.
-Details and the isolated remediation experiment are recorded in
-`security-review.md` (SR-004).
-
-The system's `gh 2.46.0` lacks attestation verification. The candidate verification
-was exercised with a temporary, checksum-checked `gh 2.103.3`, without changing
-the installed CLI. A verifier must support `gh attestation verify`. In addition
-to `--repo`, enforce `--signer-workflow kpihx-labs/kk/.github/workflows/check.yml`,
-the expected `--source-ref` and `--source-digest`, and
-`--deny-self-hosted-runners`. The tested manual candidate uses its exact branch
-and commit; it is not presented as a signed final version tag.
-
-Release archives are generated only from clean committed source and an exact
-qualified target. The package version and contract version live in Cargo metadata.
-No profile, private identity, browser bootstrap, test state or agent context belongs
-in an archive. Existing archive names are never silently overwritten.
+## Build And Check
 
 ```sh
 cargo fetch --locked
 make check
+make sdk-check
 make bundle TARGET=x86_64-unknown-linux-gnu
 make verify-bundle ARCHIVE=DOWNLOADED_BINARY_ARCHIVE.tar.gz
 ```
 
-Each binary archive contains the executable, public contract/license, locked
-dependency inventory, upstream notices and a build manifest. The verifier checks
-every ordinary file, rejects extra/missing members, traversal, duplicate members,
-links and archive resource overruns. SHA-256 checksums and a separate build record
-are published alongside it. Checksums establish integrity only when their source
-is independently trusted.
+Bundles require clean committed source. Binary archives contain the executable,
+contract/license, complete dependency notices and file/build manifests. The verifier
+rejects unsafe members, changed/missing/extra files and bounded gzip/TAR overruns.
+Integrity checks alone do not authenticate an archive.
 
-The tagged GitHub release job runs only after the required native Linux matrix and
-static lab jobs succeed. It generates keyless build-provenance attestations through
-the CI OIDC identity, includes the public verification bundle, and publishes no
-operator private signing key. Authenticate a downloaded archive against the exact
-repository/release workflow identity, not just a self-contained hash manifest:
+## Authenticate Origin
+
+Use a `gh` version supporting attestation verification, with expected values from
+the release/tag under review:
 
 ```sh
-gh attestation verify DOWNLOADED_BINARY_ARCHIVE.tar.gz --repo kpihx-labs/kk
+gh attestation verify "$ARCHIVE" --repo kpihx-labs/kk \
+  --signer-workflow kpihx-labs/kk/.github/workflows/check.yml \
+  --source-ref "refs/tags/$TAG" --source-digest "$COMMIT" \
+  --deny-self-hosted-runners
 ```
 
-Attestation availability is a CI result, not something a local script claims to
-have produced. Public source remains mirrored over the two SSH git remotes. A
-release is not reported complete until required workflows and published assets
-have actually been inspected.
+The workflow uses keyless CI provenance, not an exported operator signing key.
+After exact-artifact replay and cleanup, the authorized publication step promotes
+the same draft with `gh release edit "$TAG" --draft=false --repo kpihx-labs/kk`.
+That is not authorization to ignore an operator's explicit publication pause.
 
-## Offline Source And Notices
+## Offline Source And Installation
 
-The companion source archive includes all tracked source and every locked Cargo
-dependency, with a relative vendored-source Cargo configuration. After trusted
-archive authentication, Rust/C build tools and the pinned toolchain are still
-prerequisites; a Cargo registry connection is not required for the rebuild.
-
-`THIRD-PARTY.json` preserves declared license expressions. Missing packaged notices
-are copied without rewriting from upstream crate VCS revisions and recorded by
-repository, revision, git blob and SHA-256. REUSE license trees are preserved.
-The collector never replaces this project's BUSL license or upstream licenses.
-The full vendored sources accompany the notices; GStreamer remains an explicit
-system dependency, not an silently relicensed binary bundle.
-
-## Local Installation
+The authenticated source archive includes tracked source, explicit local overrides
+and vendored locked registry sources. Rust/C tools and the pinned toolchain remain
+prerequisites. The product can rebuild without registry access; historical SDK
+reference tests may still need their separate cache. Public upstream test vectors
+are not operator identities or runtime state.
 
 ```sh
 make install
-# Optional explicit destination:
+# Optional destination:
 make install PREFIX="$HOME/custom-prefix"
 ```
 
-This is a per-user, non-privileged application installation. It keeps each version's
-bytes immutable under the selected prefix, refuses to replace an unrelated `kk`,
-and updates only its own managed entry link. It creates no identity, service,
-firewall rule or shell alias. It is not a root-owned immutable security-appliance
-deployment; local account compromise remains outside the documented threat model.
+This builds/installs a per-user binary, retains immutable version directories and
+updates only its managed link. It refuses an unrelated `kk` and creates no identity,
+service, firewall rule or alias. It is not a root-owned security appliance.
+Licensing/provenance owners: [third-party sources](../third_party/README.md) and
+[overrides](dependency-overrides.md).

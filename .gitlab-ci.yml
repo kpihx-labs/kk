@@ -8,7 +8,7 @@ rust-foundation:
   script:
     - rustup component add rustfmt clippy
     - cargo fetch --locked
-    - cargo fmt --all -- --check
+    - cargo fmt --package kk -- --check
     - cargo clippy --locked --all-targets -- -D warnings
     - cargo test --locked --all-targets
     - cargo doc --locked --no-deps
@@ -31,5 +31,6 @@ release-integrity:
   image: ghcr.io/astral-sh/uv:0.10.3-python3.12-trixie-slim
   timeout: 5m
   script:
-    - uvx --from ruff==0.16.9 ruff check --target-version py311 scripts tests/test_release.py
+    - uvx --from ruff==0.16.9 ruff check --target-version py311 scripts tests/test_release.py tests/test_docs.py
     - uv run --no-project python -m unittest discover -s tests -p 'test_release.py'
+    - uv run --no-project python -m unittest discover -s tests -p 'test_docs.py'

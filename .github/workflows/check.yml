@@ -100,7 +100,7 @@ jobs:
       - name: Full local checks, not a VM or physical-device claim
         run: make check
       - name: Packaging tool lint
-        run: uvx --from ruff==0.16.9 ruff check --target-version py311 scripts tests/test_release.py
+        run: uvx --from ruff==0.16.9 ruff check --target-version py311 scripts tests/test_release.py tests/test_docs.py
       - name: Clean committed archives and offline vendored source
         if: github.event_name != 'pull_request'
         run: make bundle TARGET="$TARGET"

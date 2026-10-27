@@ -23,6 +23,7 @@ fn study_clones_and_local_files_stay_out_of_the_package() {
     let files = String::from_utf8(output.stdout).expect("UTF-8 package paths");
     assert!(files.lines().any(|path| path == "LICENSE"));
     assert!(files.lines().any(|path| path == "CONTRACT.md"));
+    assert!(files.lines().any(|path| path == "tests/test_docs.py"));
     for path in files.lines() {
         assert!(
             !path.starts_with("refs/")
