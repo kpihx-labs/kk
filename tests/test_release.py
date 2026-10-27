@@ -27,12 +27,31 @@ class ReleaseTests(unittest.TestCase):
                 release.check_override_sources()
 
     def test_local_dependency_overrides_are_not_omitted_from_notices(self):
-        expected = release.check_override_sources()
-        notices, _ = release.licenses()
-        actual = {item["name"] + "@" + item["version"]: item for item in notices}
-        for key in expected:
-            self.assertIn(key, actual)
-            self.assertEqual(actual[key]["override"], expected[key])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = root / "third_party/overrides"
+            dependency = base / "fixture"
+            dependency.mkdir(parents=True)
+            (dependency / "LICENSE").write_bytes(b"public fixture notice")
+            expected = {"fixture@1.0.0": {"changes": ["test source override"]}}
+            manifest = base / "sources.json"
+            manifest.write_text(json.dumps({"packages": expected, "unchanged_primitives": {}}))
+            metadata = {"resolve": {"root": "root"}, "packages": [
+                {"id": "root", "name": "root", "version": "1.0.0", "source": None},
+                {"id": "fixture", "name": "fixture", "version": "1.0.0", "source": None,
+                 "license": "MIT", "manifest_path": str(dependency / "Cargo.toml")},
+            ]}
+            with mock.patch.object(release, "ROOT", root), mock.patch.object(
+                release, "command", return_value=json.dumps(metadata),
+            ):
+                notices, files = release.licenses()
+                self.assertEqual(len(notices), 1)
+                self.assertEqual(notices[0]["name"], "fixture")
+                self.assertEqual(notices[0]["override"], expected["fixture@1.0.0"])
+                self.assertEqual(files[notices[0]["notices"][0]][0], b"public fixture notice")
+                manifest.write_text(json.dumps({"packages": {}, "unchanged_primitives": {}}))
+                with self.assertRaisesRegex(ValueError, "Unrecorded local dependency"):
+                    release.licenses()
 
     def test_installation_keeps_foreign_cli_and_prior_version_bytes_intact(self):
         with tempfile.TemporaryDirectory() as directory:

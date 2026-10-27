@@ -93,6 +93,14 @@ using the existing private store. No private files or keys are displayed, copied
 or regenerated. This is a concrete prior-state recovery check, not a universal
 storage-format or physical-device qualification claim.
 
+GitLab follow-up: its Python-only integrity image revealed that the new local
+notice regression test accidentally invoked Cargo. The unit now supplies
+controlled root/local-package metadata and checks both inclusion of the local
+license and refusal of an undeclared local origin. All 11 tests pass in the exact
+UV/Python image with networking disabled and the repository mounted read-only.
+The real 485-package inventory remains an actual Cargo/archive gate, not a mock
+or a claimed VM result; it still reports no missing dependency notice.
+
 Follow upstream advisories for the recorded components, review source updates
 explicitly and retain original notices. Do not edit copied primitive files and
 continue claiming byte identity. Any primitive change, additional suite or feature
