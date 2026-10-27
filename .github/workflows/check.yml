@@ -23,6 +23,8 @@ jobs:
           persist-credentials: false
       - name: Pinned audit tool
         run: cargo install --locked --version 0.22.2 cargo-audit
+      - name: Populate the locked dependency index before offline audit
+        run: cargo fetch --locked
       - name: Current advisory database revision
         run: git --no-pager -C target/security-advisories show -s --format='%H %cI'
       - name: Refuse vulnerabilities and maintenance warnings without suppression

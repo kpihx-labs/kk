@@ -1,5 +1,16 @@
 # Post-Integration Boundary Review
 
+## Fresh Runner Audit Bootstrap (2026-10-27)
+
+CI run `40423939230` passes both Linux architectures and refuses release, but its
+audit log also contains missing-index errors while checking yanked packages.
+Installing the audit tool alone does not populate the product's entire registry
+index, and `--no-fetch` deliberately prevents the auditor from filling it.
+The job now runs `cargo fetch --locked` first. Reproduction with a new empty
+`CARGO_HOME` fetches all 474 dependencies and then reports exactly the four crypto
+advisories and two maintenance warnings, with no missing-index errors. The yanked
+check, `--no-fetch` and `--deny warnings` remain enabled; no advisory is suppressed.
+
 ## SR-004: Dependency Audit Blocks Publication (2026-10-27)
 
 `cargo-audit 0.22.2`, with advisory database revision
