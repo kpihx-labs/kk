@@ -8,6 +8,52 @@ use std::{
 };
 
 #[test]
+fn initialization_failure_closes_sqlite_before_releasing_the_owner_lease() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("private");
+    let mut lease =
+        super::super::lease::Lease::open(&path, "private.sqlite3", true, 1024 * 1024).unwrap();
+    let inherited = lease.file().try_clone().unwrap();
+    let database = lease.path().to_owned();
+    let connection = Connection::open(&database).unwrap();
+    connection.execute_batch("CREATE TABLE sentinel(value); PRAGMA user_version=99; BEGIN EXCLUSIVE; INSERT INTO sentinel VALUES(1);").unwrap();
+    let closed_first = Arc::new(AtomicBool::new(false));
+    let observed = closed_first.clone();
+    lease.observe_release(move || {
+        let check = || -> rusqlite::Result<()> {
+            let probe = Connection::open(&database)?;
+            probe.busy_timeout(std::time::Duration::ZERO)?;
+            probe.execute_batch("BEGIN EXCLUSIVE; ROLLBACK")
+        };
+        observed.store(check().is_ok(), Ordering::SeqCst);
+    });
+    assert!(Provider::initialize(connection, Some(lease), None, false).is_err());
+    assert!(
+        closed_first.load(Ordering::SeqCst),
+        "SQLite remained open at lease release"
+    );
+    let reopened =
+        super::super::lease::Lease::open(&path, "private.sqlite3", false, 1024 * 1024).unwrap();
+    drop(inherited);
+    assert!(
+        super::super::lease::Lease::open(&path, "private.sqlite3", false, 1024 * 1024).is_err()
+    );
+    drop(reopened);
+    let probe = Connection::open(path.join("private.sqlite3")).unwrap();
+    let count: u64 = probe
+        .query_row("SELECT COUNT(*) FROM sentinel", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        count, 0,
+        "failed initialization did not roll back its private writes"
+    );
+}
+
+#[test]
 fn official_key_store_and_metadata_commit_and_reopen_together() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("room");

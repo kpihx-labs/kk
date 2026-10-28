@@ -41,11 +41,12 @@ struct Message {
     text: Zeroizing<String>,
     sensitive: bool,
     outgoing: bool,
+    reference: Option<crate::rooms::group::StableReference>,
 }
 impl Message {
     fn view(&self) -> Value {
         json!({"id": self.id, "room": self.room, "sender": self.sender, "sensitive": self.sensitive, "outgoing": self.outgoing,
-            "bytes": self.text.len(), "text": if self.sensitive { None } else { Some(self.text.as_str()) }})
+            "reference": self.reference, "bytes": self.text.len(), "text": if self.sensitive { None } else { Some(self.text.as_str()) }})
     }
 }
 struct Operation {

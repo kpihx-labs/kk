@@ -215,10 +215,14 @@ async fn follower_inviter_forwards_signed_learner_intent_and_cold_scope_recovers
                 .send_room_text(b_id, &wire, Duration::from_secs(5))
                 .await
                 .unwrap();
-            let Event::Text(text) = tokio::time::timeout(Duration::from_secs(2), b_events.recv())
-                .await
-                .unwrap()
-                .unwrap();
+            let Event::ReferencedText { text, .. } =
+                tokio::time::timeout(Duration::from_secs(2), b_events.recv())
+                    .await
+                    .unwrap()
+                    .unwrap()
+            else {
+                panic!("missing authenticated reference")
+            };
             assert_eq!(
                 text.content.text(),
                 "new peer reaches the nonleader inviter"
@@ -310,7 +314,9 @@ async fn follower_inviter_forwards_signed_learner_intent_and_cold_scope_recovers
                 .send_room_text(b_id, &wire, Duration::from_secs(5))
                 .await
                 .unwrap();
-            let Event::Text(text) = events.recv().await.unwrap();
+            let Event::ReferencedText { text, .. } = events.recv().await.unwrap() else {
+                panic!("missing authenticated reference")
+            };
             assert_eq!(
                 text.content.text(),
                 "cold scoped pin is not a global contact"

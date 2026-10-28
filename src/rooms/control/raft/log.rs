@@ -12,7 +12,6 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     fmt::Debug,
-    fs::File,
     ops::{Bound, RangeBounds},
     path::Path,
     sync::{Arc, Mutex},
@@ -24,7 +23,7 @@ pub(super) type Internal<T> = std::result::Result<T, Box<StorageError<PeerId>>>;
 pub(super) struct Database {
     pub connection: Connection,
     poisoned: bool,
-    _lease: File,
+    _lease: lease::Lease,
     // Last field: notify only AFTER SQLite and its exclusive lease are dropped.
     _released: Released,
 }
@@ -98,7 +97,7 @@ impl LogStore {
             inner: Arc::new(Mutex::new(Database {
                 connection,
                 poisoned: false,
-                _lease: lease.into_file(),
+                _lease: lease,
                 _released: Released(released),
             })),
             released: receiver,

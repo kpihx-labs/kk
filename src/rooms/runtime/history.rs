@@ -271,16 +271,44 @@ impl Room {
             }
             let mut page = Page {
                 rows: vec![],
-                next_after: result.next_after,
-                has_more: result.has_more,
+                next_after: search.after_id,
+                has_more: true,
                 withheld: 0,
             };
-            for row in result.rows {
+            let count = result.rows.len();
+            for (index, row) in result.rows.into_iter().enumerate() {
+                let previous_cursor = page.next_after;
+                let previous_withheld = page.withheld;
+                page.next_after = row.record.id;
+                page.has_more = index + 1 < count || result.has_more;
                 match self.history_row(&after, &row) {
                     Ok(()) => page.rows.push(row),
                     Err(Error::Denied | Error::Revoked) => page.withheld += 1,
                     Err(error) => return Err(error),
                 }
+                // Budget the complete runtime frame, not only the Group frame.
+                // A deferred authorized row must remain behind the cursor.
+                if page_size(&page)? > search.response_bytes {
+                    if page.withheld == previous_withheld {
+                        page.rows.pop();
+                    }
+                    page.withheld = previous_withheld;
+                    page.next_after = previous_cursor;
+                    page.has_more = true;
+                    if previous_cursor == search.after_id
+                        || page_size(&page)? > search.response_bytes
+                    {
+                        return Err(Error::Limit {
+                            resource: "history response",
+                            max: search.response_bytes,
+                        });
+                    }
+                    break;
+                }
+            }
+            if count == 0 {
+                page.next_after = result.next_after;
+                page.has_more = result.has_more;
             }
             // No async boundary between final per-author/local-veto check and return.
             for row in &page.rows {

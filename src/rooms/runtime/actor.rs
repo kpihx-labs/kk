@@ -44,7 +44,12 @@ impl Status {
 /// Plaintext is memory-only and uses ReceivedText's sensitive-output policy.
 /// No Debug implementation or automatic history writer is installed here.
 pub enum Event {
+    /// Legacy producer payload. Authenticated actor receives use ReferencedText.
     Text(Text),
+    ReferencedText {
+        text: Text,
+        reference: crate::rooms::group::StableReference,
+    },
 }
 
 /// Ciphertext and its exact epoch audience, captured in one actor operation.
@@ -174,6 +179,10 @@ impl Drop for CancelOnDrop {
         }
     }
 }
+/// Bounded actor commands. Cancellation/timeout after a private commit has an
+/// uncertain outcome: it withholds the result, not a rollback of durable state.
+/// Refresh authorized status before explicitly retrying a mutation. Priority
+/// control admission cannot preempt active synchronous crypto/filesystem work.
 #[derive(Clone)]
 pub struct Handle {
     sender: mpsc::Sender<Request>,
@@ -625,7 +634,10 @@ impl Actor {
                         .await
                     {
                         Ok((text, reference)) if !reply.is_closed() && Instant::now() < expires => {
-                            permit.send(Event::Text(text));
+                            permit.send(Event::ReferencedText {
+                                text,
+                                reference: reference.clone(),
+                            });
                             Ok(reference)
                         }
                         Ok(_) => Err(Error::Cancelled),
@@ -669,9 +681,13 @@ impl Actor {
                 // Reserve before decrypting; a full/closed UI cannot consume
                 // a ratchet and then silently discard the resulting event.
                 let result = match self.events.try_reserve() {
-                    Ok(permit) => match self.room.decrypt_text(&peer, &wire, deadline).await {
-                        Ok(text) if !reply.is_closed() && Instant::now() < expires => {
-                            permit.send(Event::Text(text));
+                    Ok(permit) => match self
+                        .room
+                        .decrypt_text_referenced(&peer, &wire, deadline)
+                        .await
+                    {
+                        Ok((text, reference)) if !reply.is_closed() && Instant::now() < expires => {
+                            permit.send(Event::ReferencedText { text, reference });
                             Ok(())
                         }
                         Ok(_) => Err(Error::Cancelled),

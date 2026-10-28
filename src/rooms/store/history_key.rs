@@ -16,7 +16,9 @@ impl HistoryKey {
     }
 }
 
+#[cfg(unix)]
 const NAME: &str = "history.agekey";
+#[cfg(unix)]
 const LIMIT: usize = 512;
 // Counts every directory entry, including dot entries and unrelated room files.
 // Exhaustion is ambiguous state, never permission to generate another identity.
@@ -26,6 +28,7 @@ const INITIALIZE_SCAN_ENTRIES: usize = 64;
 fn recovery_required() -> Error {
     Error::Destination("history key initialization is ambiguous; explicit recovery required")
 }
+#[cfg(unix)]
 fn invalid() -> Error {
     Error::Destination("history key or directory is missing, unsafe or mismatched")
 }
@@ -46,7 +49,9 @@ use std::{
 pub(crate) struct HistoryKeyAnchor {
     #[cfg(unix)]
     chain: Vec<(OsString, File)>,
+    #[cfg(unix)]
     owner: [u8; 32],
+    #[cfg(unix)]
     room: [u8; 32],
 }
 
@@ -353,6 +358,7 @@ impl HistoryKeyAnchor {
         }
     }
 
+    #[cfg(unix)]
     fn header(&self) -> String {
         format!(
             "# K&K history key v1\n# profile: {}\n# room: {}\n",
@@ -362,6 +368,7 @@ impl HistoryKeyAnchor {
     }
 }
 
+#[cfg(unix)]
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write;
     let mut text = String::with_capacity(bytes.len() * 2);

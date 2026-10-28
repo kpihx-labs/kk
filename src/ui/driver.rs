@@ -36,6 +36,10 @@ impl Role {
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "kebab-case", deny_unknown_fields)]
 pub(super) enum Action {
+    History {
+        name: String,
+        command: HistoryAction,
+    },
     #[serde(skip)]
     Transfer(super::files::Transfer),
     Copies {
@@ -131,6 +135,88 @@ pub(super) enum Action {
     },
     Shutdown,
 }
+
+/// Path-free browser commands. The actor remains the only key/store owner.
+#[derive(Deserialize)]
+#[serde(tag = "operation", rename_all = "kebab-case", deny_unknown_fields)]
+pub(super) enum HistoryAction {
+    Status {},
+    Refresh {},
+    Enable {
+        confirm: bool,
+    },
+    Disable {},
+    Open {},
+    Clear {
+        confirm: bool,
+    },
+    Recover {
+        expected_recipient: String,
+        confirm: bool,
+    },
+    Search {
+        text: String,
+        after_id: u64,
+        limit: usize,
+    },
+}
+impl HistoryAction {
+    fn command(self) -> Result<Command> {
+        use crate::rooms::{runtime::history::Search, store::history as store};
+        Ok(match self {
+            Self::Status {} => Command::HistoryStatus {},
+            Self::Refresh {} => Command::HistoryRefresh {},
+            Self::Enable { confirm: true } => Command::HistoryEnable {
+                policy: store::Policy::default(),
+            },
+            Self::Disable {} => Command::HistoryDisable {},
+            Self::Open {} => Command::HistoryOpen {},
+            Self::Clear { confirm: true } => Command::HistoryClear {},
+            Self::Recover {
+                expected_recipient,
+                confirm: true,
+            } => {
+                if expected_recipient.len() > 128
+                    || expected_recipient
+                        .parse::<age::x25519::Recipient>()
+                        .is_err()
+                {
+                    return Err(Error::Configuration(
+                        "expected recipient must be a public age recipient",
+                    ));
+                }
+                Command::HistoryRecover {
+                    expected_recipient,
+                    policy: store::Policy::default(),
+                }
+            }
+            Self::Search {
+                text,
+                after_id,
+                limit,
+            } => {
+                let query = Search {
+                    text,
+                    after_id,
+                    limit,
+                    response_bytes: store::MAX_RESPONSE_BYTES,
+                };
+                query.validate()?;
+                Command::HistorySearch {
+                    text: query.text.clone(),
+                    after_id,
+                    limit,
+                    response_bytes: query.response_bytes,
+                }
+            }
+            _ => {
+                return Err(Error::Configuration(
+                    "history action requires explicit confirmation",
+                ));
+            }
+        })
+    }
+}
 pub(super) struct Request {
     pub action: Action,
     pub reply: oneshot::Sender<Result<Value>>,
@@ -174,6 +260,7 @@ fn message(
     text: &str,
     sensitive: bool,
     outgoing: bool,
+    reference: Option<crate::rooms::group::StableReference>,
 ) -> Result<u64> {
     let mut data = app
         .0
@@ -188,6 +275,7 @@ fn message(
         text: Zeroizing::new(text.to_owned()),
         sensitive,
         outgoing,
+        reference,
     });
     while data.messages.len() > config::UI_HISTORY_LIMIT {
         data.messages.pop_front();
@@ -248,7 +336,8 @@ async fn monitor(
                 }
             },
             event = events.recv(), if open => match event {
-                Some(Event::Text(text)) => { if let Err(error) = message(&app, &name, text.sender, text.content.text(), text.content.sensitive, false) { break Err(error); } },
+                Some(Event::Text(text)) => { if let Err(error) = message(&app, &name, text.sender, text.content.text(), text.content.sensitive, false, None) { break Err(error); } },
+                Some(Event::ReferencedText { text, reference }) => { if let Err(error) = message(&app, &name, text.sender, text.content.text(), text.content.sensitive, false, Some(reference)) { break Err(error); } },
                 None => open = false,
             },
         }
@@ -356,6 +445,26 @@ pub(super) async fn run(app: App, mut requests: mpsc::Receiver<Request>) -> Resu
             request = requests.recv() => match request { Some(request) => request, None => break },
         };
         let action = match request.action {
+            Action::History { name, command } => {
+                if transfers.len() >= config::UI_MAX_TRANSFERS {
+                    let _ = request.reply.send(Err(Error::Node(
+                        "UI operation slots are busy; retry explicitly",
+                    )));
+                    continue;
+                }
+                let current = app.clone();
+                transfers.spawn_local(async move {
+                    let result = async {
+                        let command = command.command()?;
+                        let reply = local::request(&current.0.profile, &name, &command).await?;
+                        reply.check()?;
+                        Ok(reply.result)
+                    }
+                    .await;
+                    let _ = request.reply.send(result);
+                });
+                continue;
+            }
             Action::Copies { name, command } => {
                 let current = app.clone();
                 transfers.spawn_local(async move {
@@ -374,6 +483,7 @@ pub(super) async fn run(app: App, mut requests: mpsc::Receiver<Request>) -> Resu
         };
         let result: Result<Value> = async {
             match action {
+                Action::History { .. } => unreachable!("history runs in the bounded local actor lane"),
                 Action::Transfer(_) => unreachable!("owned transfers run in their bounded task lane"),
                 Action::Copies { .. } => unreachable!("owned copy operations run in their bounded task lane"),
                 Action::Init => Ok(json!({"identity": crate::profile::identity(&app.0.profile, true)?.peer().fingerprint()})),
@@ -434,7 +544,8 @@ pub(super) async fn run(app: App, mut requests: mpsc::Receiver<Request>) -> Resu
                     let text = Zeroizing::new(text);
                     let reply = local::request(&app.0.profile, &name, &Command::Text { text: text.to_string(), sensitive }).await?;
                     let peer = Peer::load(&app.0.profile.join("identity/certificate.der"))?;
-                    let id = message(&app, &name, peer.fingerprint(), &text, sensitive, true)?;
+                    let reference = reply.result.get("reference").cloned().map(serde_json::from_value).transpose().map_err(|_| Error::Protocol)?;
+                    let id = message(&app, &name, peer.fingerprint(), &text, sensitive, true, reference)?;
                     Ok(json!({"message": id, "delivery": reply}))
                 },
                 Action::Controllers { name, peers } => {
@@ -593,7 +704,7 @@ pub(super) async fn snapshot(app: &App) -> Result<Value> {
         "invitation_ready": operation.issuing && operation.state == "waiting" && valid.contains(id), "error": operation.error})).collect();
     Ok(
         json!({"version": crate::VERSION, "identity": identity, "settings": crate::profile::Settings::load(&app.0.profile)?, "rooms": rooms, "messages": data.messages.iter().map(Message::view).collect::<Vec<_>>(),
-        "operations": operations, "phases": data.phases, "history": "bounded-memory-only", "files": {"max_bytes": config::DEFAULT_FILE_LIMIT}, "media": {"width": config::MEDIA_VIDEO_WIDTH, "height": config::MEDIA_VIDEO_HEIGHT, "fps": config::MEDIA_VIDEO_FPS,
+        "operations": operations, "phases": data.phases, "history": "explicit-opt-in-local-encrypted", "files": {"max_bytes": config::DEFAULT_FILE_LIMIT}, "media": {"width": config::MEDIA_VIDEO_WIDTH, "height": config::MEDIA_VIDEO_HEIGHT, "fps": config::MEDIA_VIDEO_FPS,
         "packet_bytes": config::MEDIA_PACKET_BYTES, "frame_bytes": config::MEDIA_ENCODED_FRAME_BYTES, "datagram_buffer_bytes": config::MEDIA_DATAGRAM_BUFFER_BYTES, "packet_age_ms": config::MEDIA_PACKET_MAX_AGE.as_millis(), "audio_bitrate": config::MEDIA_AUDIO_BITRATE,
         "max_tracks": config::MEDIA_MAX_STREAMS, "max_subscriptions": config::MEDIA_MAX_STREAMS, "max_publications": config::MEDIA_MAX_PUBLICATIONS, "source_kinds": config::MEDIA_SOURCE_KINDS, "max_users": config::MEDIA_MAX_USERS}}),
     )

@@ -1,5 +1,6 @@
 #![cfg(unix)]
 //! Actual CLI processes over loopback. This is not a cross-VM evidence claim.
+mod support;
 use std::{
     io::{BufRead, BufReader},
     net::{SocketAddr, UdpSocket},
@@ -20,7 +21,7 @@ fn address() -> String {
 #[test]
 fn cancelled_status_observations_are_not_failed_room_operations() {
     use std::io::Write;
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let profile = root.path().join("observer");
     call(&profile, &["init"]);
     call(&profile, &["room", "create", "team", "--bind", &address()]);
@@ -50,7 +51,7 @@ fn cancelled_status_observations_are_not_failed_room_operations() {
 
 #[test]
 fn consent_withdrawal_and_status_bypass_saturated_ordinary_ipc_connections() {
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let profile = root.path().join("saturation");
     let inbox = root.path().join("inbox");
     call(&profile, &["init"]);
@@ -187,7 +188,7 @@ fn call(profile: &Path, args: &[&str]) -> String {
 
 #[test]
 fn rooms_have_an_actual_cli_enrollment_broadcast_and_cold_resume() {
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let alice = root.path().join("alice");
     let bob = root.path().join("bob");
     let carol = root.path().join("carol");
@@ -773,7 +774,7 @@ fn rooms_have_an_actual_cli_enrollment_broadcast_and_cold_resume() {
 
 #[test]
 fn room_names_missing_identity_and_existing_state_fail_without_replacement() {
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let profile = root.path().join("profile");
     call(&profile, &["init"]);
     for name in ["../outside", "", "Team", "a/b"] {

@@ -1,6 +1,7 @@
 #![cfg(unix)]
 //! Kill the actual recipient CLI after replicated admission but BEFORE its stage
 //! reply/private activation. Recovery must use its original keys and saved scope.
+mod support;
 use kk::{
     Identity,
     contacts::Registry,
@@ -53,7 +54,7 @@ async fn command(profile: &Path, args: &[&str]) -> String {
 async fn killed_cli_recovers_committed_enrollment_without_recreating_identity_or_mls_keys() {
     tokio::task::LocalSet::new()
         .run_until(async {
-            let root = tempfile::tempdir().unwrap();
+            let root = support::private_root();
             let profile_b = root.path().join("recipient");
             command(&profile_b, &["init"]).await;
             let b = kk::profile::identity(&profile_b, false).unwrap();
@@ -233,7 +234,9 @@ async fn killed_cli_recovers_committed_enrollment_without_recreating_identity_or
                 .await
                 .unwrap()
                 .unwrap();
-            let Event::Text(text) = event;
+            let Event::ReferencedText { text, .. } = event else {
+                panic!("missing authenticated reference")
+            };
             assert_eq!(text.content.text(), "recovered without key reset");
             command(&profile_b, &["room", "stop", "team"]).await;
             assert!(recovered.wait().await.unwrap().success());

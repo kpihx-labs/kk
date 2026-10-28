@@ -7,6 +7,17 @@ use axum::{
 };
 use tower::ServiceExt;
 
+#[path = "history_tests.rs"]
+mod history_tests;
+
+fn private_test_root() -> tempfile::TempDir {
+    use std::os::unix::fs::PermissionsExt;
+    tempfile::Builder::new()
+        .permissions(std::fs::Permissions::from_mode(0o700))
+        .tempdir()
+        .unwrap()
+}
+
 struct Device {
     app: App,
     token: Zeroizing<String>,
@@ -161,7 +172,7 @@ fn address() -> String {
 fn ui_profiles_are_isolated_and_selection_does_not_move_the_running_identity() {
     const CHILD: &str = "KK_UI_PROFILE_TEST_CHILD";
     if std::env::var_os(CHILD).is_none() {
-        let root = tempfile::tempdir().unwrap();
+        let root = private_test_root();
         let result = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "ui::tests::ui_profiles_are_isolated_and_selection_does_not_move_the_running_identity", "--nocapture"])
             .env(CHILD, "1")
@@ -225,7 +236,7 @@ fn ui_profiles_are_isolated_and_selection_does_not_move_the_running_identity() {
 async fn ui_requires_private_session_exact_host_and_same_origin_without_port_leaking_cookies() {
     tokio::task::LocalSet::new()
         .run_until(async {
-            let root = tempfile::tempdir().unwrap();
+            let root = private_test_root();
             let device = Device::new(root.path().join("profile"), 12345).await;
             let state = device.state().await;
             assert_eq!(state["media"]["max_tracks"], config::MEDIA_MAX_STREAMS);
@@ -353,7 +364,7 @@ async fn ui_requires_private_session_exact_host_and_same_origin_without_port_lea
 #[tokio::test(flavor = "current_thread")]
 async fn ui_http_pairs_independent_devices_owns_foreground_rooms_and_redacts_sensitive_events() {
     tokio::task::LocalSet::new().run_until(async {
-        let root = tempfile::tempdir().unwrap();
+        let root = private_test_root();
         let a = Device::new(root.path().join("a"), 12345).await;
         let b = Device::new(root.path().join("b"), 12346).await;
         a.action(json!({"action": "init"})).await;

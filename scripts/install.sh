@@ -1,5 +1,5 @@
 #!/bin/sh
-# Explicitly trusted native helper adapter, never an archive extractor.
+# Verified raw-helper bootstrap, never an archive extractor.
 set -eu
 
 fail() { printf '%s\n' "kk installer: $*" >&2; exit 1; }
@@ -7,9 +7,9 @@ usage() {
     printf '%s\n' \
         'Usage: sh install.sh --version VERSION --commit COMMIT [--prefix ABSOLUTE_PATH]' \
         '                     [--archive ABSOLUTE_PATH [--bundle ABSOLUTE_PATH]]' \
-        '                     --helper ABSOLUTE_ALREADY_TRUSTED_KK [--rollback]' \
-        'Requires separately installed gh (attestation), ldconfig, and curl for downloads.' \
-        'Without --helper, installation is BLOCKED before any effects.' \
+        '                     [--helper ABSOLUTE_ALREADY_TRUSTED_KK] [--rollback]' \
+        'Requires separately installed capable gh, curl, jq, sha256sum, timeout, and native ldconfig.' \
+        'Without --helper, Linux downloads and verifies the exact release helper AND notices.' \
         'The helper owns download, gh verification, bounded validation and activation.' \
         'Local archives must pass the same provenance/content gates. Profiles are untouched.'
 }
@@ -77,10 +77,100 @@ case "$system" in
     MINGW*|MSYS*|CYGWIN*|Windows*) fail 'native Windows release is not shipped; refusing installation' ;;
     *) fail "no qualified release for operating system: $system" ;;
 esac
-case "$machine" in x86_64|aarch64|arm64) ;; *) fail "no qualified release for architecture: $machine" ;; esac
+case "$machine" in
+    x86_64) target=linux-x86_64 ;;
+    aarch64|arm64) target=linux-aarch64 ;;
+    *) fail "no qualified release for architecture: $machine" ;;
+esac
 command -v gh >/dev/null 2>&1 || fail 'install gh with attestation verification support separately; no automatic dependency install'
-if [ -z "$archive$rollback" ]; then
+if [ -z "$helper" ] || [ -z "$archive$rollback" ]; then
     command -v curl >/dev/null 2>&1 || fail 'install curl separately; no automatic dependency install'
+fi
+
+if [ -z "$helper" ]; then
+    [ -z "$rollback" ] || fail '--rollback requires an explicitly trusted --helper'
+    command -v timeout >/dev/null 2>&1 || fail 'install timeout separately; no automatic dependency install'
+    command -v jq >/dev/null 2>&1 || fail 'install jq separately; no automatic dependency install'
+    command -v sha256sum >/dev/null 2>&1 || fail 'install sha256sum separately; no automatic dependency install'
+    # Retained private distribution, not a managed installation or a profile. No cleanup
+    # races: callers may inspect/retain the companion even if installation later fails.
+    umask 077
+    work=$(mktemp -d "${TMPDIR:-/tmp}/kk-bootstrap.XXXXXXXXXX") || fail 'cannot create private distribution directory'
+    printf '%s\n' "kk bootstrap distribution retained at: $work" >&2
+    unset GH_DEBUG
+    export GH_HOST=github.com
+    (ulimit -f 256; timeout -k 5 30 gh attestation verify --help > "$work/gh-help") || fail 'gh attestation capability check failed'
+    for flag in --repo --signer-workflow --source-ref --source-digest --deny-self-hosted-runners; do
+        grep -F -q -- "$flag" "$work/gh-help" || fail "gh lacks required policy flag: $flag"
+    done
+    helper_name="kk-v$version-$target-bootstrap.bin"
+    notices_name="kk-v$version-$target-bootstrap-notices.json"
+    # Validate the whole authority, not a hostname suffix. No URL or signed query
+    # is logged. Relative Location values are resolved by curl, never evaluated.
+    allowed_url() {
+        [ "${#1}" -le 8192 ] || return 1
+        case "$1" in *[!\ -~]*) return 1 ;; esac
+        case "$1" in
+            https://github.com/*|https://release-assets.githubusercontent.com/*|https://objects.githubusercontent.com/*) return 0 ;;
+            *) return 1 ;;
+        esac
+    }
+    for asset in "$helper_name" "$notices_name"; do
+        url="https://github.com/kpihx-labs/kk/releases/download/v$version/$asset"
+        hops=0
+        while :; do
+            allowed_url "$url" || fail 'refused bootstrap redirect authority or URL'
+            # No --location: authorize the next resolved URL BEFORE any connection.
+            # Body and metadata have OS ceilings as well as post-download limits.
+            (ulimit -f 131072; timeout -k 5 125 curl --disable --silent \
+                --max-redirs 0 --proto '=https' --proto-redir '=https' \
+                --connect-timeout 15 --max-time 120 --max-filesize 134217728 \
+                --output "$work/$asset" --write-out '%{http_code}\n%{redirect_url}\n' \
+                "$url" > "$work/response") || fail "download failed: $asset"
+            metadata_size=$(wc -c < "$work/response") || fail 'cannot measure response metadata'
+            [ "$metadata_size" -le 8192 ] || fail 'oversized redirect metadata'
+            {
+                IFS= read -r status || fail 'invalid response status'
+                IFS= read -r next_url || fail 'invalid response redirect'
+                if IFS= read -r extra || [ -n "$extra" ]; then fail 'extra response metadata'; fi
+            } < "$work/response"
+            case "$status" in
+                200) [ -z "$next_url" ] || fail 'unexpected final redirect'; break ;;
+                301|302|303|307|308)
+                    [ "$hops" -lt 5 ] || fail 'too many bootstrap redirects'
+                    allowed_url "$next_url" || fail 'refused bootstrap redirect authority or URL'
+                    url=$next_url
+                    hops=$((hops + 1)) ;;
+                *) fail 'unexpected bootstrap HTTP status' ;;
+            esac
+        done
+        size=$(wc -c < "$work/$asset") || fail 'cannot measure download'
+        [ "$size" -gt 0 ] && [ "$size" -le 134217728 ] || fail 'empty or oversized bootstrap asset'
+        timeout -k 5 120 gh attestation verify "$work/$asset" --repo kpihx-labs/kk \
+            --signer-workflow kpihx-labs/kk/.github/workflows/check.yml \
+            --source-ref "refs/tags/v$version" --source-digest "$commit" \
+            --deny-self-hosted-runners || fail "provenance verification failed: $asset"
+    done
+    # Authenticating two subjects independently does not bind their bytes together.
+    # Parse only the authenticated record, then match every release selector.
+    helper="$work/$helper_name"
+    architecture=${target#linux-}
+    helper_digest=$(sha256sum < "$helper") || fail 'cannot hash helper'
+    helper_digest=${helper_digest%% *}
+    # jq variables are deliberately interpreted by jq, not the shell.
+    # shellcheck disable=SC2016
+    (ulimit -f 256; timeout -k 5 30 jq -e -s \
+        --arg version "$version" --arg commit "$commit" \
+        --arg target "$architecture-unknown-linux-gnu" --arg arch "$architecture" \
+        --arg helper "$helper_name" --arg notices "$notices_name" --arg sha "$helper_digest" '
+        length == 1 and (.[0] | .format == 1 and .version == $version and
+        .commit == $commit and .target == $target and .platform == "linux" and
+        .architecture == $arch and .executable_format == "elf" and .suffix == ".bin" and
+        .notices_asset == $notices and .helper.asset == $helper and .helper.sha256 == $sha)
+        ' "$work/$notices_name" > "$work/binding-result") || fail 'authenticated bootstrap companion binding mismatch'
+    # Both subjects and their association must authenticate BEFORE chmod/execution.
+    chmod 500 "$helper" || fail 'cannot enable verified helper'
+    printf '%s\n' "Verified bound notice inventory: $work/$notices_name" >&2
 fi
 
 if [ -n "$helper" ]; then
@@ -95,11 +185,3 @@ if [ -n "$helper" ]; then
     if [ -n "$bundle" ]; then set -- "$@" --bundle "$bundle"; fi
     exec "$helper" "$@"
 fi
-
-printf '%s\n' \
-    "kk installer: BLOCKED for $system/$machine, requested v$version at $commit." \
-    'A bounded native helper is required to read the release manifest, freeze archive bytes,' \
-    'verify GitHub provenance with gh, validate every member, and atomically activate.' \
-    'Pass --helper ABSOLUTE_ALREADY_TRUSTED_KK. No helper is implicitly trusted.' \
-    'Nothing was downloaded, extracted, installed, deleted, or changed.' >&2
-exit 3

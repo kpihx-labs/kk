@@ -144,6 +144,319 @@ fn search(after_id: u64, limit: usize) -> history::Search {
 }
 
 #[tokio::test]
+async fn incoming_event_references_survive_restart_and_distinguish_equal_bodies() {
+    let mut fixture = Fixture::new(true).await;
+    let (remote, mut sender) = fixture.member().await;
+    fixture
+        .room
+        .history_enable_file(history::Policy::default(), DEADLINE)
+        .await
+        .unwrap();
+    let (handle, mut actor, mut events) = Actor::new(fixture.room);
+    let mut references = Vec::new();
+    let mut wires = Vec::new();
+    for referenced in [false, true] {
+        let wire = sender.encrypt_text("same body", false).unwrap();
+        wires.push(wire.clone());
+        if referenced {
+            let (reply, received) = oneshot::channel();
+            actor
+                .execute(
+                    Command::AcceptReferenced {
+                        peer: remote.peer(),
+                        wire,
+                        reply,
+                    },
+                    Instant::now() + DEADLINE,
+                )
+                .await;
+            references.push(received.await.unwrap().unwrap());
+        } else {
+            let (reply, received) = oneshot::channel();
+            actor
+                .execute(
+                    Command::Accept {
+                        peer: remote.peer(),
+                        wire,
+                        reply,
+                    },
+                    Instant::now() + DEADLINE,
+                )
+                .await;
+            received.await.unwrap().unwrap();
+        }
+        let Event::ReferencedText { text, reference } = events.try_recv().unwrap() else {
+            panic!("missing authenticated reference")
+        };
+        assert_eq!(text.content.text(), "same body");
+        if referenced {
+            assert_eq!(references.last().unwrap(), &reference);
+        } else {
+            references.push(reference);
+        }
+    }
+    assert_ne!(references[0], references[1]);
+    let wire = sender.encrypt_text("sensitive live only", true).unwrap();
+    let (reply, received) = oneshot::channel();
+    actor
+        .execute(
+            Command::AcceptReferenced {
+                peer: remote.peer(),
+                wire,
+                reply,
+            },
+            Instant::now() + DEADLINE,
+        )
+        .await;
+    let sensitive_reference = received.await.unwrap().unwrap();
+    let Event::ReferencedText { text, reference } = events.try_recv().unwrap() else {
+        panic!("missing authenticated sensitive reference")
+    };
+    assert!(text.content.sensitive);
+    assert_eq!(text.content.text(), "sensitive live only");
+    assert_eq!(reference, sensitive_reference);
+    drop(text);
+    let anchor = actor
+        .room
+        .root_bundle()
+        .verify(&fixture.identity.peer())
+        .unwrap();
+    drop(actor);
+    drop(handle);
+    let crypto = CryptoMember::open_private(
+        &fixture.identity,
+        &anchor,
+        &fixture.directory.path().join("private"),
+    )
+    .unwrap();
+    fixture.room = Room::new(
+        fixture.identity.clone(),
+        fixture.control.clone(),
+        Group::restore(crypto).unwrap(),
+        Registry::open(fixture.directory.path().join("profile")).unwrap(),
+    )
+    .unwrap();
+    fixture
+        .room
+        .configure_history_directory(fixture.directory.path().join("private"))
+        .unwrap();
+    fixture.room.history_open_file(DEADLINE).await.unwrap();
+    let page = fixture
+        .room
+        .history_search(search(0, 32), DEADLINE)
+        .await
+        .unwrap();
+    assert_eq!(page.rows.len(), 2);
+    assert!(
+        page.rows
+            .iter()
+            .all(|row| row.reference != sensitive_reference)
+    );
+    for (row, reference) in page.rows.iter().zip(&references) {
+        assert_eq!(&row.reference, reference);
+        assert_eq!(row.record.body, "same body");
+    }
+    let (handle, mut actor, mut events) = Actor::new(fixture.room);
+    for wire in wires {
+        let (reply, received) = oneshot::channel();
+        actor
+            .execute(
+                Command::AcceptReferenced {
+                    peer: remote.peer(),
+                    wire,
+                    reply,
+                },
+                Instant::now() + DEADLINE,
+            )
+            .await;
+        assert!(received.await.unwrap().is_err());
+        assert!(events.try_recv().is_err());
+    }
+    assert_eq!(
+        actor
+            .room
+            .history_search(search(0, 32), DEADLINE)
+            .await
+            .unwrap()
+            .rows
+            .len(),
+        2
+    );
+    fixture.room = actor.room;
+    drop(handle);
+    drop(sender);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn final_escaped_json_budget_returns_prefix_without_skipping_authorized_rows() {
+    let mut fixture = Fixture::new(true).await;
+    fixture
+        .room
+        .history_enable_file(history::Policy::default(), DEADLINE)
+        .await
+        .unwrap();
+    for body in ["\"\\\n\t".repeat(100), "\"\\\n\t".repeat(100)] {
+        fixture
+            .room
+            .encrypt_text(&body, false, DEADLINE)
+            .await
+            .unwrap();
+    }
+    let full = fixture
+        .room
+        .history_search(search(0, 32), DEADLINE)
+        .await
+        .unwrap();
+    let full_size = serde_json::to_vec(&full).unwrap().len();
+    // The Group frame fits here, but the runtime's additive withheld field does not.
+    let budget = full_size - 1;
+    let mut query = search(0, 32);
+    query.response_bytes = budget;
+    let first = fixture.room.history_search(query, DEADLINE).await.unwrap();
+    assert_eq!(first.rows.len(), 1);
+    assert!(first.has_more);
+    assert_eq!(first.next_after, first.rows[0].record.id);
+    assert!(serde_json::to_vec(&first).unwrap().len() <= budget);
+    let mut query = search(first.next_after, 32);
+    query.response_bytes = budget;
+    let last = fixture.room.history_search(query, DEADLINE).await.unwrap();
+    assert_eq!(last.rows.len(), 1);
+    assert!(!last.has_more);
+    assert_eq!(first.rows[0].reference, full.rows[0].reference);
+    assert_eq!(last.rows[0].reference, full.rows[1].reference);
+    assert!(serde_json::to_vec(&last).unwrap().len() <= budget);
+    let mut tiny = search(0, 32);
+    tiny.response_bytes = 1;
+    assert!(fixture.room.history_search(tiny, DEADLINE).await.is_err());
+    fixture.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn author_removed_after_authenticated_processing_emits_no_live_event() {
+    let mut fixture = Fixture::new(true).await;
+    let (remote, mut sender) = fixture.member().await;
+    fixture
+        .room
+        .history_enable_file(history::Policy::default(), DEADLINE)
+        .await
+        .unwrap();
+    let wire = sender
+        .encrypt_text("processed before author removal", false)
+        .unwrap();
+    let proposal = fixture
+        .room
+        .prepare_departure(&remote.peer(), DEADLINE)
+        .await
+        .unwrap();
+    let control = fixture.control.clone();
+    let (entered, active) = oneshot::channel();
+    let (release, paused) = std::sync::mpsc::channel();
+    history::AFTER_PRIVATE_OPERATION.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(move || {
+            entered.send(()).unwrap();
+            paused.recv_timeout(DEADLINE).unwrap();
+        }));
+    });
+    let removal = tokio::spawn(async move {
+        active.await.unwrap();
+        assert!(
+            control
+                .submit_public(proposal, DEADLINE)
+                .await
+                .unwrap()
+                .accepted
+        );
+        release.send(()).unwrap();
+    });
+    let (handle, mut actor, mut events) = Actor::new(fixture.room);
+    let (reply, received) = oneshot::channel();
+    actor
+        .execute(
+            Command::AcceptReferenced {
+                peer: remote.peer(),
+                wire,
+                reply,
+            },
+            Instant::now() + DEADLINE,
+        )
+        .await;
+    assert!(matches!(
+        received.await.unwrap(),
+        Err(Error::Denied | Error::Revoked)
+    ));
+    assert!(events.try_recv().is_err());
+    removal.await.unwrap();
+    let page = actor
+        .room
+        .history_search(search(0, 32), DEADLINE)
+        .await
+        .unwrap();
+    assert!(page.rows.is_empty());
+    assert_eq!(page.withheld, 1); // Committed processed fact remains, disclosure does not.
+    fixture.room = actor.room;
+    drop(handle);
+    drop(sender);
+    fixture.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn active_synchronous_history_work_is_not_preempted_by_control_or_timeout() {
+    let mut fixture = Fixture::new(true).await;
+    fixture
+        .room
+        .history_enable_file(history::Policy::default(), DEADLINE)
+        .await
+        .unwrap();
+    fixture
+        .room
+        .encrypt_text("bounded active work", false, DEADLINE)
+        .await
+        .unwrap();
+    let (entered, active) = oneshot::channel();
+    let (release, paused) = std::sync::mpsc::channel();
+    history::AFTER_PRIVATE_OPERATION.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(move || {
+            entered.send(()).unwrap();
+            paused.recv_timeout(DEADLINE).unwrap();
+        }));
+    });
+    let (handle, actor, _events) = Actor::new(fixture.room);
+    let observer = handle.clone();
+    let observed = tokio::spawn(async move {
+        active.await.unwrap();
+        assert!(observer.status(DEADLINE).await.unwrap().busy);
+        // Cached reads can run on another worker, but control cannot interrupt
+        // synchronous work already selected on the owning actor thread.
+        assert!(
+            observer
+                .history_status(Duration::from_millis(30))
+                .await
+                .is_ok()
+        );
+        assert!(matches!(
+            observer.shutdown(Duration::from_millis(30)).await,
+            Err(Error::Timeout)
+        ));
+        release.send(()).unwrap();
+    });
+    let room = tokio::task::LocalSet::new()
+        .run_until(async {
+            let running = tokio::task::spawn_local(actor.run());
+            handle
+                .history_search(search(0, 32), DEADLINE)
+                .await
+                .unwrap();
+            observed.await.unwrap();
+            handle.shutdown(DEADLINE).await.unwrap();
+            running.await.unwrap()
+        })
+        .await;
+    drop(handle);
+    Fixture { room, ..fixture }.close().await;
+}
+
+#[tokio::test]
 async fn file_capture_sensitive_exclusion_stable_pages_and_disable_clear() {
     let mut fixture = Fixture::new(true).await;
     fixture
@@ -338,7 +651,10 @@ async fn queue_reservation_precedes_ratchet_and_failed_capture_returns_no_event(
         )
         .await;
     assert!(received.await.unwrap().is_ok());
-    assert!(matches!(events.try_recv().unwrap(), Event::Text(_)));
+    assert!(matches!(
+        events.try_recv().unwrap(),
+        Event::ReferencedText { .. }
+    ));
     fixture.room = actor.room;
     drop(handle);
     drop(sender);

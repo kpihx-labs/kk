@@ -4,8 +4,8 @@
 | --- | --- | --- |
 | Linux x86_64 | Host/isolated Fedora and Mint; CLI, storage, rooms, copies and native virtual-display tests | Physical radio/devices or an independently audited deployment |
 | Linux aarch64 | Native hosted CI runs the product checks and builds archives | A local ARM VM or physical capture test |
-| Windows native | New hosted foundation workflow added, not yet executed; protected storage explicitly refused by code | No full-feature Windows archive or product qualification |
-| macOS native | Hosted foundation and bounded storage tests added, not yet executed; protected atomic publication now has a code path | No macOS runtime pass or full-product support until actual hosted evidence; no physical capture claim |
+| Windows native | Earlier snapshot foundation passed; latest corrected source requires fresh hosted results; protected storage remains refused | No full-feature Windows archive or product qualification |
+| macOS native | Earlier runs found compile/stdio blockers; corrected storage, IPC and history-key selections require fresh hosted execution | No full-product support or physical capture claim from compilation or a partial run |
 | WSL2 | Not an executed qualification | Not native Windows support |
 | Mobile browser | Narrow-screen light/dark layout fixture | No physical phone, keyboard or mobile-backend claim |
 
@@ -23,11 +23,11 @@ It uses the existing checkout action pin and reads the Rust channel from
 version. The [hosted runner labels](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
 identify native hosts, not Linux cross-compilation.
 
-**Execution status: this new workflow has not run.** Local Linux checks of
-[`platform_foundation.rs`](../tests/platform_foundation.rs) cannot establish
-Windows or macOS results. Record actual hosted job results before changing this
-statement. A hosted compiler, dependency, lint or linker failure is a foundation
-blocker, not permission to skip the failed step or claim product support.
+**Execution status is source-bound.** Earlier Windows foundation passes do not
+qualify the changed tree; earlier macOS runs stopped at compile/stdio blockers.
+Current selected steps need fresh hosted results. Local Linux checks cannot
+establish Windows/macOS behavior. Compiler, lint, runtime or linker failures are
+blockers, not permission to skip a step or claim product support.
 
 | Gate | What it establishes if it passes | What it does not establish |
 | --- | --- | --- |
@@ -35,8 +35,8 @@ blocker, not permission to skip the failed step or claim product support.
 | Offline locked all-target Clippy, warnings denied | Native target lint acceptance, without suppression | Runtime safety or platform qualification |
 | Explicit binary smoke | Actual native executable runs `--version`, `--help`, and refuses an unknown argument with exit 2 | Initialized profiles, networking, UI or media |
 | Offline locked foundation tests | Public digest parsing; Unix protected identity and inspection, or exact non-Unix refusals; Linux/macOS publication or unsupported-target refusal | Full integration/unit suites, cross-device interoperability or physical devices |
-| macOS-only file and envelope integration tests | Native binary-payload/empty/chunk-boundary transfers, verified-prefix resume, nonclobber, unsafe path/link/permission refusal and existing envelope regressions | Cross-device exchange, crypto redesign or data migration |
-| macOS-only selected library tests | `files::` staging/wire checks; `rooms::control::raft::service::tests::consent` and `rooms::control::raft::network::file::tests` publication, revocation, cancellation and grant-lock regressions | Unselected library suites, native UI/IPC, lifecycle or capture qualification |
+| macOS-only selected integrations | File/envelope transfers and nonclobber; `ipc_long_paths` real contact/room/HTTP paths; `history_keys` protected binding/recovery regressions | Cross-device exchange, crypto redesign or complete product qualification |
+| macOS-only selected library tests | `files::`, shared IPC ownership/recovery, room reservations, publication consent/revocation/cancellation and grant-lock regressions | Unselected library suites, complete foreground lifecycle, native UI or capture qualification |
 
 There are no uploads, installers, release calls, signing credentials or write
 permissions in this lane. It does not change the existing release job's gates.
@@ -46,17 +46,17 @@ the present contract, never successful product operations.
 
 ### Existing Test Gating Inventory
 
-The native lane deliberately selects the tests above, not `cargo test` without
-a target selection. Windows runs only `platform_foundation`. All-target
-build/lint still compile applicable code.
-The following is an inventory of existing integration test guards, not a claim
-that every Unix-gated suite is runnable on macOS:
+The native lane selects the tests above, not unfiltered `cargo test`. Windows
+runs only `platform_foundation`; all-target build/lint still compile applicable
+code. Guards below do not imply that every Unix suite is qualified on macOS:
 
 | Existing Rust integration suites | Source guard | Native foundation execution |
 | --- | --- | --- |
 | `envelope`, `files` | Whole file `cfg(any(target_os = "linux", target_os = "macos"))` | Selected on both macOS architectures, results pending; excluded on Windows |
 | `cli_profiles`, `enrollment`, `enrollment_forwarding`, `node`, `pairing`, `pairing_cli`, `room_pairing`, `sensitive`, `voters` | Whole file `cfg(target_os = "linux")` | Not run; empty targets on Windows/macOS |
-| `enrollment_recovery`, `identity`, `network`, `room_cli`, `room_crash`, `rooms`, `stdio_socket` | Whole file `cfg(unix)` | Not run; excluded on Windows, compiled but not executed on macOS |
+| `enrollment_recovery`, `identity`, `network`, `room_cli`, `room_crash`, `rooms` | Whole file `cfg(unix)` | Not run; excluded on Windows, compiled but not executed on macOS |
+| `ipc_long_paths`, `history_keys` | IPC whole-file `cfg(unix)`; key tests use Linux/Apple module guards | Selected on both macOS architectures; fresh results required |
+| `stdio_pipe`, `stdio_socket`, `stdio_worker`, `stdio_terminal` | Platform-specific source guards | Selected applicable tests on macOS; native PTY/worker outcomes are separate from compilation |
 | `cli` | Mixed: Unix-only inspection, identity, two-process message exchange and SIGINT cases; remaining cases unguarded | Not run; minimum smoke lives in the dedicated foundation target |
 | `packaging` | No platform guard | Compiled, not run; package inventory is not native product qualification |
 
@@ -73,7 +73,7 @@ evidence to other operating systems.
 | Platform | Explicit current contract and work still needed |
 | --- | --- |
 | Windows | `profile::private_directory`, identity create/load, file-source inspection and bounded foreground output return `UnsupportedPlatform`. Protected storage/ACLs, IPC, foreground lifecycle and UI need native implementations and integration qualification; Unix-only node/UI modules are absent. Exact inspected safe-API gaps and native acceptance gates: [Windows storage](windows-storage.md). |
-| macOS | Unix identity permissions, file inspection and protected atomic publication have code paths. Selected native storage and publication-gate tests are required on both hosted architectures and have not yet run. Room/file/enrollment scenarios are not qualified merely by their Unix guards. Native IPC, lifecycle, capture and end-to-end behavior still need OS testing. |
+| macOS | Unix identity, protected storage and shared IPC have code paths. Current selected tests must pass on both architectures; prior incomplete runs do not qualify them. Unselected enrollment, complete lifecycle, capture, UI and end-to-end scenarios still need OS evidence. |
 | Both | No native installer, exact-artifact replay, two-device exchange, physical media or full-product support is established by this workflow. Native media process code outside Linux lacks the Linux `prlimit`/`setpriv` parent-death wrapper; compilation is not equivalent lifecycle evidence. |
 
 ## Atomic Publication Filesystem And Durability Scope

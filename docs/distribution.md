@@ -6,13 +6,7 @@ resolved dependencies are owned by `Cargo.toml` and `Cargo.lock`.
 ## Release Path
 
 ```text
-clean commit -> checks + strict audit + SDK + native architecture builds
-                                              |
-                                 signed draft archives
-                                              |
-                             authenticate + exact-byte VM replay
-                                              |
-                              publish same assets -> install
+clean commit -> checks/audit/SDK/native builds -> signed draft -> authenticate/exact-byte VM replay -> publish same assets -> install
 ```
 
 A tag is not a published release. Separate builds are not assumed byte-identical.
@@ -30,7 +24,7 @@ make verify-bundle ARCHIVE=DOWNLOADED_BINARY_ARCHIVE.tar.gz
 ```
 
 Bundles require clean committed source. Binary archives contain the executable,
-contract/license, complete dependency notices and file/build manifests. The verifier
+contract/license, collected dependency notices and file/build manifests. The verifier
 rejects unsafe members, changed/missing/extra files and bounded gzip/TAR overruns.
 Integrity checks alone do not authenticate an archive.
 
@@ -68,6 +62,25 @@ matrix uploads, provenance-artifact uploads and draft asset creation already use
 `target/dist/*`, which includes ZIP; keep that coverage when changing upload
 filters. Creating ZIP locally does not itself provide a CI attestation or replay
 evidence. Managed installation remains immutable and unchanged below.
+
+`bundle` additionally emits two companion assets per qualified Linux target:
+`kk-vVERSION-linux-ARCH-bootstrap.bin` and
+`kk-vVERSION-linux-ARCH-bootstrap-notices.json` (`ARCH`: `x86_64`, `aarch64`).
+The executable is byte-identical to archived `kk`, never stripped or rebuilt here.
+The JSON retains collected upstream texts/inventory and same-version build metadata,
+explicit platform/architecture/executable format, helper filename and SHA-256.
+Both are checksummed; `bundle` returns `bootstrap_helper`/`bootstrap_notices` plus
+`bootstrap_entrypoints`: exact reviewed `scripts/install.sh` and `scripts/install.ps1` bytes,
+staged as `install.sh`/`install.ps1` and checksummed. CI must attest/upload all four assets:
+`target/dist/*-bootstrap.bin`, `target/dist/*-bootstrap-notices.json`, `target/dist/install.sh`,
+`target/dist/install.ps1`. The bootstrap binds authenticated JSON selectors/name/SHA-256 before exec.
+Root package licenses AND curated nested notices are unioned/deduplicated; empty texts fail.
+All author text is retained, not filtered; inventory is not independent legal-completeness review.
+`bundle` regenerates every expected asset privately before exclusive full-file links; NOT atomic.
+All existing expected members must match exact bytes, including manifests/selectors and checksums.
+On link failure prior members and complete stages remain; rerun the same `bundle` command with
+identical inputs to fill missing members without replacing matching archives. Foreign bytes or
+links fail closed, stages never auto-deleted. Publication still needs all gates and exact-byte replay.
 
 ## Authenticate Origin
 

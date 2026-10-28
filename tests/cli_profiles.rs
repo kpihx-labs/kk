@@ -1,4 +1,5 @@
 #![cfg(target_os = "linux")]
+mod support;
 
 use serde_json::Value;
 use std::{
@@ -26,7 +27,7 @@ fn success(root: &Path, args: &[&str]) -> Value {
 
 #[test]
 fn fresh_status_and_inventory_are_useful_without_creating_state() {
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let status = success(root.path(), &["status", "--json"]);
     assert_eq!(status["node"]["state"], "offline");
     assert_eq!(status["profile"]["identity"], "not_initialized");
@@ -46,7 +47,7 @@ fn fresh_status_and_inventory_are_useful_without_creating_state() {
 
 #[test]
 fn named_profiles_select_rename_and_unregister_without_deleting_identity() {
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let created = success(
         root.path(),
         &["profile", "create", "alice", "--name", "Alice"],
@@ -147,7 +148,7 @@ fn named_profiles_select_rename_and_unregister_without_deleting_identity() {
 
 #[test]
 fn explicit_path_status_is_noncreating_and_corrupt_metadata_is_preserved() {
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let absent = root.path().join("absent");
     let status = success(
         root.path(),
@@ -186,7 +187,7 @@ fn explicit_path_status_is_noncreating_and_corrupt_metadata_is_preserved() {
 
 #[test]
 fn offline_room_inventory_uses_public_metadata_without_loading_the_private_key() {
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let created = success(
         root.path(),
         &["profile", "create", "alice", "--name", "Alice"],
@@ -265,7 +266,7 @@ fn offline_room_inventory_uses_public_metadata_without_loading_the_private_key()
 
 #[test]
 fn catalog_mutations_refuse_invalid_existing_state_without_creating_identity() {
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     success(
         root.path(),
         &["profile", "create", "alice", "--name", "Alice"],

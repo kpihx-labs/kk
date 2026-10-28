@@ -9,7 +9,7 @@ help: ## Show available tasks
 	@printf '%s\n' \
 	  'make check           Format, lint, tests and documentation' \
 	  'make docs-check      Current guide links, tables, wire tokens and examples' \
-	  'make fixture-check   Offline static-layout generator and guard regressions' \
+	  'make fixture-check   Offline layout and opaque-input safety regressions' \
 	  'make workflow-check  Pinned workflow syntax/lint gate (Go tool required)' \
 	  'make sdk-check       Upstream expansion vectors and independent OPAQUE interoperability' \
 	  'make hax-check       Explicit upstream-nightly macro check, not a formal proof' \
@@ -50,8 +50,8 @@ packaging-check: ## Release integrity, archive safety and clean-source policy te
 	uv run --no-project python -m unittest discover -s tests -p 'test_release.py'
 	uv run --no-project python -m unittest discover -s tests -p 'test_installers.py'
 
-fixture-check: ## Static layout payload generation and safety guards; no browser execution
-	uv run --no-project python -m unittest discover -s tests -p 'test_layout_fixture.py'
+fixture-check: ## Layout and opaque-input safety guards; no browser execution
+	uv run --no-project python -m unittest discover -s tests -p 'test_*fixture.py'
 
 workflow-check: ## Pinned actionlint validation; separate from the offline product check
 	go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/*.yml
@@ -93,7 +93,7 @@ ui-check: ## Offline browser-adapter syntax and standard RTP unit tests
 	node --check src/ui/assets/media.js
 	node --check src/ui/assets/rtp.js
 	node --check src/ui/assets/audio-worklet.js
-	node --test tests/ui_rtp.mjs tests/ui_client.mjs tests/ui_workflows.cjs tests/ui_media.mjs tests/ui_layout.cjs
+	node --test tests/ui_rtp.mjs tests/ui_client.mjs tests/ui_workflows.cjs tests/ui_media.mjs tests/ui_layout.cjs tests/ui_history.mjs
 
 build: ## Build the release CLI
 	cargo build --offline --locked --release

@@ -18,7 +18,7 @@ Usage: pwsh -File install.ps1 -Version VERSION -Commit COMMIT [-Prefix ABSOLUTE_
                             -Helper ABSOLUTE_ALREADY_TRUSTED_KK [-Rollback]
 Native Windows artifacts are not shipped; Windows installation is refused.
 Linux PowerShell can invoke an explicitly trusted helper. No hidden dependency install.
-Without -Helper, installation is BLOCKED. See docs/installers.md.
+Without -Helper, this PowerShell adapter is BLOCKED; Linux users can use install.sh.
 '@
     exit 0
 }
@@ -56,7 +56,7 @@ try {
     # No Windows target exists in release.py. A ZIP container does not qualify Windows.
     [Console]::Error.WriteLine("kk installer: BLOCKED on $Platform/$Architecture.")
     [Console]::Error.WriteLine('Native Windows releases are not shipped; no qualified PowerShell installation path exists.')
-    [Console]::Error.WriteLine('Linux requires -Helper ABSOLUTE_ALREADY_TRUSTED_KK; other hosts remain unavailable. See docs/installers.md.')
+    [Console]::Error.WriteLine('Linux: use install.sh for verified bootstrap, or -Helper ABSOLUTE_ALREADY_TRUSTED_KK. See docs/installers.md.')
     [Console]::Error.WriteLine('Nothing was downloaded, extracted, installed, deleted, or changed.')
     exit 3
 } catch {

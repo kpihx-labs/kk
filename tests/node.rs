@@ -1,4 +1,5 @@
 #![cfg(target_os = "linux")]
+mod support;
 
 use kk::{
     contacts::{Contact, Permissions, Registry},
@@ -17,7 +18,7 @@ struct Lab {
 }
 impl Lab {
     async fn new() -> Self {
-        let root = tempfile::tempdir().unwrap();
+        let root = support::private_root();
         let profiles: Vec<_> = (0..3)
             .map(|index| root.path().join(format!("node-{index}")))
             .collect();

@@ -149,7 +149,16 @@ fn room_path(profile: &Path, name: &str, create_parent: bool) -> Result<PathBuf>
 
 /// Lock the directory inode, not a replaceable pathname or an enrollment file.
 /// Every local lifecycle writer holds this lease until its writes have stopped.
-fn lease(directory: &Path) -> Result<std::fs::File> {
+struct ReservationLease(std::fs::File);
+impl Drop for ReservationLease {
+    fn drop(&mut self) {
+        if let Err(error) = rustix::fs::flock(&self.0, rustix::fs::FlockOperation::Unlock) {
+            eprintln!("room reservation unlock failed: {error}");
+        }
+    }
+}
+
+fn lease(directory: &Path) -> Result<ReservationLease> {
     use rustix::fs::{self, Mode, OFlags};
     profile::private_directory(directory, false)?;
     let lease = std::fs::File::from(fs::open(
@@ -163,11 +172,12 @@ fn lease(directory: &Path) -> Result<std::fs::File> {
     }
     fs::flock(&lease, fs::FlockOperation::NonBlockingLockExclusive)
         .map_err(|_| Error::Node("room reservation already has an active owner"))?;
-    Ok(lease)
+    Ok(ReservationLease(lease))
 }
 
 /// No manifest, draft, private, control, admission, temporary or unknown data
-/// can be adopted. These are the only artifacts an unstarted join can leave.
+/// can be adopted. These are the only artifacts an unstarted join or a creator
+/// that failed before its first durable root publication can leave.
 fn pre_enrollment(directory: &Path) -> Result<()> {
     for entry in std::fs::read_dir(directory)? {
         let entry = entry?;
@@ -194,7 +204,7 @@ fn reserve(
     name: &str,
     listen: SocketAddr,
     retry: bool,
-) -> Result<(PathBuf, std::fs::File)> {
+) -> Result<(PathBuf, ReservationLease)> {
     if listen.port() == 0 || listen.ip().is_unspecified() || listen.ip().is_multicast() {
         return Err(Error::Configuration(
             "rooms require an explicit reachable IP and nonzero port",
@@ -418,7 +428,10 @@ pub async fn create(
     let identity = Arc::new(profile::identity(profile, false)?);
     let root = RootBundle::create(&identity, title)?;
     let anchor = root.verify(&identity.peer())?;
-    let (directory, _lease) = reserve(profile, name, listen, false)?;
+    // A failed IPC bind can leave only a runtime lock before root publication.
+    // Reuse that reservation under the same exclusive lease and strict scan as
+    // join retries; any durable or unknown entry still forbids creation.
+    let (directory, _lease) = reserve(profile, name, listen, true)?;
     // Also exclude foreground owners using the existing IPC ownership lock.
     let _listener = crate::node::ipc::Listener::bind(&directory).await?;
     save_public(
@@ -488,6 +501,78 @@ mod reservation_tests {
     }
 
     #[tokio::test]
+    async fn create_retries_only_runtime_reservations_without_replacing_state() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let profile = profile();
+                let fingerprint = profile::identity(profile.path(), true)
+                    .unwrap()
+                    .peer()
+                    .fingerprint();
+                let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+                let listen = socket.local_addr().unwrap();
+                drop(socket);
+                let (directory, owner) =
+                    reserve(profile.path(), "retry-create", listen, true).unwrap();
+                let listener = crate::node::ipc::Listener::bind(&directory).await.unwrap();
+                let inode = std::fs::metadata(directory.join("node.lock"))
+                    .unwrap()
+                    .ino();
+                assert!(
+                    create(profile.path(), "retry-create", "Study", listen)
+                        .await
+                        .is_err()
+                );
+                drop(owner);
+                assert!(
+                    create(profile.path(), "retry-create", "Study", listen)
+                        .await
+                        .is_err()
+                );
+                drop(listener);
+                create(profile.path(), "retry-create", "Study", listen)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    std::fs::metadata(directory.join("node.lock"))
+                        .unwrap()
+                        .ino(),
+                    inode
+                );
+                let root = std::fs::read(directory.join("root.json")).unwrap();
+                assert!(
+                    create(profile.path(), "retry-create", "Replacement", listen)
+                        .await
+                        .is_err()
+                );
+                assert_eq!(std::fs::read(directory.join("root.json")).unwrap(), root);
+                assert_eq!(
+                    profile::identity(profile.path(), false)
+                        .unwrap()
+                        .peer()
+                        .fingerprint(),
+                    fingerprint
+                );
+
+                let (partial, owner) =
+                    reserve(profile.path(), "partial-create", listen, true).unwrap();
+                std::fs::write(partial.join("root.json"), b"retained incomplete root").unwrap();
+                drop(owner);
+                assert!(
+                    create(profile.path(), "partial-create", "Study", listen)
+                        .await
+                        .is_err()
+                );
+                assert_eq!(
+                    std::fs::read(partial.join("root.json")).unwrap(),
+                    b"retained incomplete root"
+                );
+                assert_eq!(std::fs::read_dir(partial).unwrap().count(), 1);
+            })
+            .await;
+    }
+
+    #[tokio::test]
     async fn runtime_only_retry_is_exclusive_and_preserves_the_lock_inode() {
         let profile = profile();
         let listen = "127.0.0.1:12345".parse().unwrap();
@@ -498,10 +583,13 @@ mod reservation_tests {
             .ino();
         assert!(reserve(profile.path(), "retry", listen, true).is_err());
         assert!(reserve(profile.path(), "retry", listen, false).is_err());
+        let inherited = owner.0.try_clone().unwrap();
         drop(owner);
         // An older foreground process may hold only the IPC lock.
         let (_, owner) = reserve(profile.path(), "retry", listen, true).unwrap();
         assert!(crate::node::ipc::Listener::bind(&directory).await.is_err());
+        drop(inherited);
+        assert!(reserve(profile.path(), "retry", listen, true).is_err());
         drop(listener);
         drop(owner);
         let (_, _owner) = reserve(profile.path(), "retry", listen, true).unwrap();

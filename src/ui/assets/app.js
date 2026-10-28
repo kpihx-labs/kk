@@ -7,6 +7,8 @@ let current = null, selected = sessionStorage.getItem("kk-room") || "", refreshi
 let shownRoom = "", rendered = new Map(), revealed = new Map(), toastTimer;
 let fileConsentPending = false;
 let operationView = "";
+let historyView = null;
+let modalRevision = 0;
 let joinDraft = {name:"", bind:"", role:"participant"};
 const joinDrafts = new Map();
 const dismissedOperations = new Set();
@@ -17,7 +19,7 @@ async function api(path, body) {
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const response = await fetch(path, { method: body === undefined ? "GET" : "POST", headers, body: body === undefined ? undefined : JSON.stringify(body), cache: "no-store" });
   if (response.status === 401 || response.status === 403) {
-    token = ""; sessionStorage.removeItem("kk-session"); mediaControl?.stopAll(); joinDrafts.clear(); joinDraft = {name:"", bind:"", role:"participant"}; $("dialog").close(); $("dialog-content").replaceChildren();
+    token = ""; sessionStorage.removeItem("kk-session"); mediaControl?.stopAll(); historyView = null; joinDrafts.clear(); joinDraft = {name:"", bind:"", role:"participant"}; $("dialog").close(); $("dialog-content").replaceChildren();
     const message = "This private session expired or the local service restarted. Relaunch kk ui and use its new private browser launch.";
     $("gate-text").textContent = message; $("gate").hidden = false; $("workspace").hidden = true;
     throw new Error(message);
@@ -41,7 +43,7 @@ function nicknameDialog(target, peer) {
   modal("Local member nickname", [el("p", "dialog-note", "This nickname is LOCAL ONLY. It is not a verified remote profile name, is not announced to the member, and does not change trust or permissions."), el("code", "fingerprint", peer), name], "Save nickname", async data => { const value = data.get("display_name").trim(); await act({action:"member-label", name:target.name, member:peer, display_name:value || null}); });
 }
 function closeSidebar() { $("sidebar").classList.remove("open"); $("sidebar").removeAttribute("role"); $("sidebar").removeAttribute("aria-modal"); $("sidebar-backdrop").hidden = true; $("menu").setAttribute("aria-expanded", "false"); const main = $("workspace")?.querySelector("main"); if (main) main.inert = false; }
-function select(name) { if (selected !== name) { mediaControl?.stopAll(); $("copy-panel").hidden = true; $("copies").replaceChildren(); } selected = name; sessionStorage.setItem("kk-room", name); const wasOpen = $("sidebar").classList.contains("open"); closeSidebar(); if (wasOpen) $("menu").focus(); render(); }
+function select(name) { if (selected !== name) { mediaControl?.stopAll(); historyView = null; $("dialog").close(); $("dialog-content").replaceChildren(); $("copy-panel").hidden = true; $("copies").replaceChildren(); } selected = name; sessionStorage.setItem("kk-room", name); const wasOpen = $("sidebar").classList.contains("open"); closeSidebar(); if (wasOpen) $("menu").focus(); render(); }
 function field(label, name, type = "text", value = "", note) {
   const wrapper = el("label", "field", label); const input = el(type === "textarea" ? "textarea" : "input"); input.name = name;
   if (type !== "textarea") input.type = type; if (value) input.value = value;
@@ -49,9 +51,11 @@ function field(label, name, type = "text", value = "", note) {
 }
 function roleField(value = "participant") { const wrapper = el("label", "field", "Accepted data role"); const input = el("select"); input.name = "role"; for (const role of ["participant", "reader", "inviter", "moderator"]) { const option = el("option", "", role); option.value = role; input.append(option); } input.value = value; wrapper.append(input); return wrapper; }
 function modal(title, controls, submit, handler) {
+  const revision = ++modalRevision, active = () => revision === modalRevision && $("dialog").open;
   $("dialog-title").textContent = title; $("dialog-content").replaceChildren(...controls); $("dialog-error").textContent = ""; $("dialog-submit").textContent = submit;
+  $("dialog-submit").disabled = false;
   $("dialog-form").onsubmit = async (event) => { event.preventDefault(); const button = $("dialog-submit"); button.disabled = true;
-    try { await handler(new FormData(event.currentTarget)); $("dialog").close(); } catch (error) { $("dialog-error").textContent = error.message; } finally { button.disabled = false; }
+    try { const result = await handler(new FormData(event.currentTarget)); if (active() && result !== false) $("dialog").close(); } catch (error) { if (active()) $("dialog-error").textContent = error.message; } finally { if (revision === modalRevision) button.disabled = false; }
   }; $("dialog").showModal();
 }
 function createDialog() {
@@ -140,6 +144,92 @@ function findCopiesDialog() {
     $("copy-panel").hidden = false;
   });
 }
+
+// Only this authenticated tuple identifies a publication. A UI sequence, author
+// label or equal body is never evidence that a live event is a stored row.
+function referenceKey(reference) {
+  const bytes = value => Array.isArray(value) && value.length === 32 && value.every(byte => Number.isInteger(byte) && byte >= 0 && byte <= 255);
+  if (!reference || !bytes(reference.room) || !bytes(reference.member) || !bytes(reference.wire_sha256) || !Number.isSafeInteger(reference.epoch) || reference.epoch < 0 || !["OutgoingPrepared", "IncomingProcessed"].includes(reference.event)) return null;
+  return JSON.stringify([reference.room, reference.member, reference.epoch, reference.event, reference.wire_sha256]);
+}
+function historyEntries(rows, live) {
+  const entries = new Map();
+  for (const row of rows) {
+    const key = referenceKey(row.reference), record = row.record;
+    if (!key || !record || record.event !== row.reference.event || record.epoch !== row.reference.epoch || JSON.stringify(record.wire_sha256) !== JSON.stringify(row.reference.wire_sha256) || typeof record.body !== "string") throw new Error("Invalid authenticated history reference; records not displayed.");
+    entries.set(key, {key, text:record.body, reference:row.reference, stored:true, sender:row.reference.member.map(byte => byte.toString(16).padStart(2, "0")).join(""), sensitive:false});
+  }
+  for (const message of live) {
+    const key = referenceKey(message.reference);
+    if (key && entries.has(key)) continue;
+    entries.set(key || "live:" + message.id, {...message, key:key || "live:" + message.id, stored:false});
+  }
+  return [...entries.values()];
+}
+function historyStateText(summary) {
+  if (summary === "Off") return "OFF / not enrolled. No automatic archive.";
+  const enrolled = summary?.Enrolled;
+  if (!enrolled) return "UNKNOWN / refresh public status. Unknown is not empty history.";
+  return (enrolled.enabled ? "CAPTURE ON" : "CAPTURE OFF") + (enrolled.unlocked ? " / existing key unlocked" : " / LOCKED: key unavailable, not empty history") + ". Cached public metadata, not a verified row count or current quorum.";
+}
+async function historyRequest(name, command) {
+  const response = await api("/api/action", {action:"history", name, command});
+  return response.result;
+}
+function renderHistoryEntries(view) {
+  if (historyView !== view || !view.list.isConnected) return;
+  const live = (current?.messages || []).filter(message => message.room === view.name);
+  const entries = historyEntries(view.rows, live);
+  view.list.replaceChildren(...entries.map(entry => {
+    const item = el("article", "history-record"), event = referenceKey(entry.reference) ? entry.reference.event : null;
+    const fact = event === "OutgoingPrepared" ? "Outgoing prepared / outcome uncertain" : event === "IncomingProcessed" ? "Incoming processed" : "Live only / authenticated stable reference unavailable";
+    item.append(el("small", "muted", memberName(room(), entry.sender) + " / " + fact + (entry.stored ? " / local encrypted record" : " / bounded memory")), el("div", "message-body", entry.sensitive ? "Sensitive / excluded from stored history; reveal only in live chat." : entry.text));
+    return item;
+  }));
+  if (!entries.length) view.list.append(el("p", "muted", view.searched ? "No disclosable records on this page." : "Submit a search to read stored records. Live messages are shown separately until an authenticated reference is available."));
+}
+function historyDialog() {
+  const target = room(); if (!target?.status) { toast("Start the room before using its local history actor."); return; }
+  const name = target.name, status = el("p", "dialog-note", "Status not requested yet."), notice = el("p", "muted", "Off by default. Enrollment captures future non-sensitive text only. These are local encrypted records, not delivery or human read receipts. No files, media or old-message import."), controls = el("div", "history-controls");
+  const query = field("Literal Unicode substring (blank lists a page)", "history-query"); query.querySelector("input").maxLength = 256;
+  const paging = el("p", "muted", "Stored history has not been queried."), list = el("div", "history-records"), next = el("button", "outline compact", "Next stored page"); next.type = "button"; next.disabled = true;
+  const view = {name, rows:[], query:"", cursor:0, searched:false, list, pending:false}; historyView = view;
+  const alive = () => historyView === view && selected === name && token;
+  const report = error => { if (alive()) { status.textContent = "Unavailable / outcome uncertain. No empty-history claim. Refresh status before retrying a mutation. " + error.message; next.disabled = true; } };
+  const button = (label, handler) => { const node = el("button", "outline compact", label); node.type = "button"; node.onclick = async () => { if (view.pending) return; view.pending = true; node.disabled = true; try { await handler(); } catch(error) { report(error); } finally { view.pending = false; node.disabled = false; } }; controls.append(node); return node; };
+  const getStatus = async operation => { const summary = await historyRequest(name, {operation}); if (alive()) status.textContent = historyStateText(summary); };
+  button("Refresh current status", () => getStatus("refresh"));
+  const mutation = (operation, explanation, label, extra = []) => {
+    modal(label, [el("p", "dialog-note", explanation + " A timeout or lost reply may occur after commit. Refresh status and inspect records before explicitly retrying."), ...extra], label, async data => {
+      const command = {operation, confirm:true}; if (operation === "recover") command.expected_recipient = data.get("expected-recipient").trim();
+      await historyRequest(name, command); if (alive()) historyDialog(); return false;
+    });
+  };
+  button("Enable future capture", async () => mutation("enable", "Explicitly enroll or re-enable this profile's history key. Capture future non-sensitive text only; do not import previous chat. Existing orphan keys require separate public-recipient recovery.", "Enable local capture"));
+  button("Disable capture", async () => { await historyRequest(name, {operation:"disable"}); await getStatus("status"); });
+  button("Unlock existing key", async () => { await historyRequest(name, {operation:"open"}); await getStatus("status"); });
+  button("Clear stored records", async () => mutation("clear", "Delete retained encrypted history records for this profile and room? This cannot be undone. The enrolled key, room state and live in-memory messages remain. A timeout may occur after deletion commits.", "Confirm clear records"));
+  button("Recover orphan key", async () => { const expected = field("Expected PUBLIC age recipient", "expected-recipient", "text", "", "Obtain independently from trusted enrollment metadata. Never enter a private key or a filesystem path."); expected.querySelector("input").required = true; expected.querySelector("input").maxLength = 128; mutation("recover", "Explicit orphan recovery requires capture off and the exact expected public recipient. This cannot replace an enrolled recipient or repair a missing key.", "Confirm orphan recovery", [expected]); });
+  const page = async after => {
+    if (view.pending) return;
+    view.pending = true; next.disabled = true;
+    try {
+      const result = await historyRequest(name, {operation:"search", text:view.query, after_id:after, limit:20});
+      if (!alive()) return;
+      if (!Array.isArray(result.rows) || !Number.isSafeInteger(result.next_after) || result.next_after < after || typeof result.has_more !== "boolean" || !Number.isSafeInteger(result.withheld) || result.withheld < 0 || (result.has_more && result.next_after <= after)) throw new Error("Invalid bounded page response.");
+      historyEntries(result.rows, []); view.rows = result.rows; view.cursor = result.next_after; view.searched = true;
+      paging.textContent = result.rows.length + " stored records / " + result.withheld + " withheld on this page / cursor " + result.next_after + (result.has_more ? " / more available" : " / end of scan") + ". Live-only entries below do not affect this cursor.";
+      renderHistoryEntries(view); next.disabled = !result.has_more;
+    } catch(error) { if (alive()) { view.rows = []; list.replaceChildren(); report(error); } }
+    finally { view.pending = false; }
+  };
+  next.onclick = () => page(view.cursor);
+  modal("Local encrypted history / " + (target.title || name), [notice, status, controls, query, paging, next, list], "Search stored records", async data => { view.query = data.get("history-query"); await page(0); });
+  // Search is an in-panel operation, not a dialog dismissal.
+  $("dialog-form").onsubmit = async event => { event.preventDefault(); if (view.pending) return; view.query = query.querySelector("input").value; await page(0); };
+  renderHistoryEntries(view);
+  getStatus("status").catch(report);
+}
 function render() {
   if (!current) return;
   applyAppearance(current.settings.appearance);
@@ -153,7 +243,7 @@ function render() {
     const namesError = target.presentation_error || target.status?.profile_names_error;
     $("room-title").textContent = target.title || target.name; $("room-id").textContent = target.id || "Unavailable"; $("room-problem").textContent = target.problem || (namesError ? "Member names unavailable: " + namesError : ""); $("room-problem").hidden = !target.problem && !namesError;
     $("room-state").textContent = target.status ? "FOREGROUND / ONLINE" : (current.phases[target.name]?.state || "OFFLINE").toUpperCase();
-    $("start").hidden = Boolean(target.status); $("stop").hidden = !target.status; $("invite").disabled = !target.status; $("controllers").disabled = !target.status; $("find-copies").disabled = !target.status; $("share-media").disabled = !target.status || !mediaControl; $("receive-media").disabled = !target.status || !mediaControl;
+    $("start").hidden = Boolean(target.status); $("stop").hidden = !target.status; $("room-history").disabled = !target.status; $("invite").disabled = !target.status; $("controllers").disabled = !target.status; $("find-copies").disabled = !target.status; $("share-media").disabled = !target.status || !mediaControl; $("receive-media").disabled = !target.status || !mediaControl;
     $("text").disabled = !target.status; $("send").disabled = !target.status; $("attach").disabled = !target.status; $("allow-files").disabled = fileConsentPending;
     if (target.status?.files && !fileConsentPending) $("allow-files").checked = target.status.files.accepted;
     $("quorum").textContent = target.status ? target.status.members.length + " MEMBERS / " + target.status.voters.length + " VOTERS / EPOCH " + target.status.epoch : "PERSISTENT KEYS / NO BACKGROUND SERVICE";
@@ -164,7 +254,7 @@ function render() {
     mediaControl?.refreshLabels();
     if (shownRoom !== selected) { shownRoom = selected; rendered.clear(); revealed.clear(); $("messages").replaceChildren(); $("files").replaceChildren(); }
     const messages = current.messages.filter((message) => message.room === selected);
-    if (!messages.length && !$("messages").querySelector(".empty-message")) { const empty = el("div", "empty-message"); empty.append(el("span", "line-art"), el("h2", "", "A direct conversation."), el("p", "", "Messages are kept only in this workspace's bounded memory.")); $("messages").append(empty); }
+    if (!messages.length && !$("messages").querySelector(".empty-message")) { const empty = el("div", "empty-message"); empty.append(el("span", "line-art"), el("h2", "", "A direct conversation."), el("p", "", "Live messages use bounded memory. Room actions / Local history opens the optional encrypted archive.")); $("messages").append(empty); }
     for (const message of messages) {
       if (rendered.has(message.id)) { const meta = rendered.get(message.id).querySelector(".message-meta"); meta.textContent = (message.outgoing ? memberName(target, target.status?.owner) : memberName(target, message.sender)) + (message.sensitive ? " / SENSITIVE" : " / ENCRYPTED"); continue; }
       $("messages").querySelector(".empty-message")?.remove(); const item = el("article", "message" + (message.outgoing ? " outgoing" : ""));
@@ -176,6 +266,7 @@ function render() {
     const retained = new Set(messages.map((message) => message.id)); for (const [id, node] of rendered) if (!retained.has(id)) { node.remove(); rendered.delete(id); revealed.delete(id); }
   }
   renderOperations();
+  if (historyView) renderHistoryEntries(historyView);
 }
 function renderOperations() {
   const operationIds = new Set(current.operations.map((operation) => operation.id));
@@ -298,6 +389,8 @@ $("dialog-close").onclick = () => $("dialog").close();
 $("create").onclick = $("create-empty").onclick = createDialog; $("join").onclick = $("join-empty").onclick = joinDialog;
 $("invite").onclick = inviteDialog; $("controllers").onclick = controllersDialog; $("address").onclick = addressDialog;
 $("find-copies").onclick = findCopiesDialog; $("close-copies").onclick = () => { $("copy-panel").hidden = true; $("copies").replaceChildren(); };
+$("room-history").onclick = historyDialog;
+$("dialog").addEventListener?.("close", () => { if ($("dialog").open) return; modalRevision++; historyView = null; $("dialog-form").onsubmit = null; for (const input of $("dialog-content").querySelectorAll("input, textarea")) input.value = ""; $("dialog-content").replaceChildren(); });
 $("initialize").onclick = async () => { try { await act({ action: "init" }); } catch (error) { toast(error.message); } };
 $("start").onclick = async () => { try { await act({ action: "serve", name: selected, accept_files: $("allow-files").checked }); } catch (error) { toast(error.message); } };
 $("stop").onclick = async () => { try { await act({ action: "stop", name: selected }); } catch (error) { toast(error.message); } };

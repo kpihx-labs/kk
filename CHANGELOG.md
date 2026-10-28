@@ -29,6 +29,24 @@ current state and Git history for detailed implementation checkpoints.
   screen/window/tab hints, actual-surface reporting and explicit device choices.
 - Permit safe pre-enrollment reservation retry without replacing partial identity
   or room state; distinguish human invitation waiting from ordinary RPC deadlines.
+- Extend the history foundation with transactional capture, explicit room-key
+  enrollment and authorized runtime/CLI/UI controls. Stable authenticated live
+  references distinguish equal bodies and survive private-state restart.
+- Stage and authenticate bound bootstrap helpers and notice inventories; recover
+  incomplete multi-file bundles only with matching expected bytes.
+- Add long-profile Unix IPC recovery and allow a failed room creator to retry a
+  runtime-only reservation under its original locks, never partial durable state.
+- Integrate the history foundation into authorized runtime capture, path-free
+  CLI/UI controls, literal search and restart-stable authenticated live references.
+  Explicit confirmation gates enrollment, clear and orphan recovery; sensitive
+  content remains excluded. Cancellation after commit can have an uncertain outcome.
+- Bind long Unix IPC paths to a short private runtime namespace; retain legacy
+  short-path interoperability and reject unsafe ownership or ambiguous bindings.
+- Retry room creation only before durable root publication when an exclusively
+  leased reservation contains nothing except verified runtime artifacts.
+- Stage authenticated bootstrap helpers and notice companions, validate their
+  association before execution and recover identical multi-file bundle retries
+  without overwriting already published bytes; publication is not atomic as a set.
 
 ## 0.8.2 - 2026-10-27
 

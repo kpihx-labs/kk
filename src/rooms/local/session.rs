@@ -665,7 +665,9 @@ async fn run(
                     .map_err(|_| Error::Node("room foreground event consumer closed"))?;
                 continue;
             }
-            let Event::Text(text) = event;
+            let text = match event {
+                Event::Text(text) | Event::ReferencedText { text, .. } => text,
+            };
             let line = if text.content.sensitive && !options.reveal {
                 format!(
                     "ROOM TEXT {} [sensitive, {} bytes]",

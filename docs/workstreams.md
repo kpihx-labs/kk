@@ -106,3 +106,13 @@ maps code read-only; `pragmatic-checker` has edit/bash denied and reviews only.
 Never assign implementation to a checker. Archive mistaken/finished peers after
 recording results. Each executor has disjoint files; main reviews diffs and runs
 integration gates before accepting work. No worker commits or publishes alone.
+
+## After-reboot Integration
+
+Current owners and IDs are recorded in [peers](peers.md): the IPC implementation
+has returned to Main for independent review; the bootstrap executor owns only
+`scripts/release.py` and `tests/test_release.py`; the GUI executor owns the two
+foreground UI panes and `reboot-ui-qualification.md`. Main owns all remaining
+integration and checks. The old `/tmp` QA data and pane IDs above are historical,
+not the current test environment. The fresh root is
+`target/qa-after-reboot-20261028`; its long paths must work without relocation.

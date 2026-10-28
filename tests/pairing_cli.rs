@@ -1,4 +1,5 @@
 #![cfg(target_os = "linux")]
+mod support;
 
 use std::{
     io::{BufRead, BufReader},
@@ -7,7 +8,7 @@ use std::{
 
 #[test]
 fn two_cli_processes_pair_without_manual_certificate_files_then_enforce_revocation() {
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let pa = root.path().join("a");
     let pb = root.path().join("b");
     let invite = pa.join("invite.json");

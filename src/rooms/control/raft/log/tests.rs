@@ -10,6 +10,33 @@ fn blank(index: u64) -> Entry<TypeConfig> {
     }
 }
 
+#[test]
+fn final_public_owner_releases_before_notification_despite_an_inherited_descriptor() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("public-control");
+    let store = LogStore::create(&path).unwrap();
+    let inherited = store
+        .inner
+        .lock()
+        .unwrap()
+        ._lease
+        .file()
+        .try_clone()
+        .unwrap();
+    let retained_owner = store.clone();
+    let released = store.released();
+    drop(store);
+    assert!(!*released.borrow());
+    assert!(LogStore::open(&path).is_err());
+    drop(retained_owner);
+    assert!(*released.borrow());
+    let reopened = LogStore::open(&path).unwrap();
+    drop(inherited);
+    assert!(LogStore::open(&path).is_err());
+    drop(reopened);
+    assert!(LogStore::open(&path).is_ok());
+}
+
 #[tokio::test]
 async fn public_vote_log_commit_compaction_and_ranges_reopen_durably() {
     let directory = tempfile::tempdir().unwrap();

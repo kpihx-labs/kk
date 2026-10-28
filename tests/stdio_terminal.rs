@@ -107,18 +107,34 @@ for mode in (sys.argv[2],):
         assert termios.tcgetattr(slave) == original, mode + ': attributes changed'
         phase('attributes restored; releasing stdin')
         os.write(master, b'exit\n')
-        phase('stdin released; waiting for exit')
+        phase('stdin released; draining release echo')
+        # Echo is restored above, so the release line produces terminal output.
+        # Darwin's session-leader exit drains the controlling terminal (XNU
+        # exit1 -> ttywait) before revoking it. A fixture that never reads its
+        # master deadlocks that exit even though every SDK worker has joined.
+        # Keep stderr full: only consume this separate, owned PTY's echo.
+        echoed = b''
+        while not echoed.endswith(b'exit\r\n') and not echoed.endswith(b'exit\n'):
+            chunk = os.read(master, 1024)
+            assert chunk, (mode, 'PTY closed before release echo', echoed)
+            echoed += chunk
+            assert len(echoed) <= 4096, (mode, 'unexpected terminal output', echoed)
+        phase('release echo drained; waiting for exit')
         remaining, _ = child.communicate(timeout=5)
         output += remaining
         assert child.returncode == 0, (mode, child.returncode, output)
         assert b'runtime joined' in output, (mode, output)
     finally:
         signal.alarm(0)
+        # Also unblock Darwin's terminal drain when an assertion/deadline fails
+        # before the normal echo read. Never wait on a session leader while
+        # retaining an unread master that can hold its exit in ttywait.
+        os.close(master)
         if child.poll() is None:
             child.kill()
             child.wait(timeout=5)
         phase('child reaped')
-        for fd in (master, slave, read, write):
+        for fd in (slave, read, write):
             os.close(fd)
 print('owned PTY ' + mode + ': cancellation, attributes and runtime exit passed')
 "#,

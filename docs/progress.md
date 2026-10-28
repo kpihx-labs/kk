@@ -71,6 +71,19 @@ artifact qualification. Current ownership and remaining gates: [workstreams](wor
 | Name consent/revision | Per-poll disclosure gates and 45 profile tests returned; UI API rejects stale ABA revisions without changing bytes; pending/failed conflict refresh now uses a direct successful state read; 38 JS tests pass after that correction |
 | Responsive rendering | Two real Edge profiles: compact rail persists; chat grows from 192 to 337px at 881x786, composer visible and no horizontal overflow; narrow/short viewports not yet qualified |
 | Remaining review findings | Stdio descriptor inheritance, blocked hidden-input notice and borrowed Apple socket-option mutation assigned for correction; metadata filesystem latency/path-authority bounds also under review; these prevent a final acceptance claim |
+| After-reboot packaging retry | Main independently ran 33 release tests, including public bundle retries at all nine publication boundaries; mocked build inputs, not real artifact provenance |
+| After-reboot adapters | Main ran 46 JS, 27 installer tests plus one explicit PowerShell skip, five docs tests and pinned workflow lint successfully |
+| After-reboot native media | Main explicitly ran all four ignored native media tests successfully; synthetic codecs, owned virtual display and child lifetime only, no physical capture |
+| IPC review rejection | Initial long-path functional tests pass, but independent review found pathname races, interrupted binding initialization and lock-entry replacement gaps; corrective source work is active |
+| Concurrent-source check limitation | Main invoked the complete product check while IPC corrective edits were ongoing: default tests passed, but later doc compilation saw intermediate dead-code warnings. This is not accepted as a stable final snapshot gate; rerun after ownership handoff |
+| Corrected IPC and create retry | Main reviewed the corrective handoff, bounded interrupted-stage enumeration and passed 11 IPC tests plus the isolated umask child, three real IPC/HTTP integrations, five reservation tests and all-target Clippy with warnings denied |
+| Persisted QA permission blocker | Actual workspace, repository and target ancestors are 0775. Strict IPC refuses group-writable non-sticky ancestors; no permissions were changed or policy relaxed. Explicit approval is requested for a nonrecursive removal of group-write on those three directories before GUI continuation |
+| SDK replay | Main reran six upstream XMD/XOF vectors and six independent cross-role OPAQUE positive/negative cases successfully |
+| Permission blocker resolved | Operator approved and Main applied only nonrecursive group-write removal on the workspace/repository/target ancestors: each is now 0755. No profile relocation or relaxed IPC policy |
+| Logical ownership and publication | IPC and reservation guards explicitly unlock despite retained descriptions; binding publication uses no-replace rename. Main passed 14 IPC cases plus isolated umask child and five reservation cases; native replay remains separate |
+| UI lifecycle correction | A queued old dialog close erased replacement controls in real Edge. Modal revisions now fence stale close/results and retire private controls/handlers; 48 JS and 17 fixture guard tests pass |
+| Fresh Edge pairing/history | Unchanged long-profile paths create and pair after matching SAS. Both show two members/epoch one. Equal Reboot QA bodies yield two distinct references and two stored/rendered matches; sensitive text is hidden and excluded. See after-reboot evidence for remaining gates |
+| Profile fixture timing | One complete run exceeded its unchanged 40-second metadata fixture bound. Phase diagnostics were added; focused and later complete runs passed. No root cause or timing guarantee is claimed from reruns |
 
 The first intermediate check caught test-module placement; it was fixed, not
 suppressed. A real-service test run emitted a bounded-close-grace diagnostic;

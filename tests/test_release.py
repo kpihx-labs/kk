@@ -343,6 +343,9 @@ class ReleaseTests(unittest.TestCase):
                 (root / "Cargo.toml").write_text('[package]\nversion = "0.8.0"\n')
                 for name in ("README.md", "LICENSE", "CONTRACT.md", "Cargo.lock"):
                     (root / name).write_bytes(b"fixture " + name.encode())
+                (root / "scripts").mkdir()
+                for name in ("install.sh", "install.ps1"):
+                    (root / "scripts" / name).write_bytes((release.ROOT / "scripts" / name).read_bytes())
 
                 def command(*args, binary=binary):
                     return {
@@ -376,10 +379,361 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(tar_entries, release.archive_entries(Path(report["zip_archive"])))
                 self.assertIn(stem + "/licenses/fixture/LICENSE", tar_entries[0])
                 sums = (destination / (stem + ".sha256")).read_text().splitlines()
-                self.assertEqual(len(sums), 4)
+                self.assertEqual(len(sums), 8)
+                self.assertEqual([Path(path).name for path in report["bootstrap_entrypoints"]],
+                                 ["install.sh", "install.ps1"])
+                for path in report["bootstrap_entrypoints"]:
+                    self.assertEqual(Path(path).read_bytes(), (root / "scripts" / Path(path).name).read_bytes())
+                helper = Path(report["bootstrap_helper"])
+                companion = Path(report["bootstrap_notices"])
+                self.assertEqual(helper.name, stem + "-bootstrap.bin")
+                self.assertEqual(companion.name, stem + "-bootstrap-notices.json")
+                self.assertEqual(helper.read_bytes(), binary.read_bytes())
+                record = json.loads(companion.read_bytes())
+                self.assertEqual(record["target"], target)
+                self.assertEqual(record["format"], 1)
+                self.assertEqual(record["executable_format"], "elf")
+                self.assertEqual(record["helper"], {"asset": helper.name, "sha256": release.digest(binary.read_bytes())})
+                self.assertEqual(record["files"]["licenses/fixture/LICENSE"], "fixture notice")
+                self.assertEqual(record["files"]["LICENSE"], "fixture LICENSE")
+                self.assertEqual(json.loads(record["files"]["THIRD-PARTY.json"])[0]["name"], "fixture")
+                self.assertEqual({name: text.encode("utf-8") for name, text in record["files"].items()},
+                                 {name.removeprefix(stem + "/"): data for name, data in tar_entries[0].items()
+                                  if name != stem + "/kk"})
                 for line in sums:
                     checksum, name = line.split("  ")
                     self.assertEqual(checksum, release.digest((destination / name).read_bytes()))
+
+    @contextlib.contextmanager
+    def bundle_fixture(self):
+        # Actual deterministic archive bytes with MOCKED build/vendor/source inputs.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = "x86_64-unknown-linux-gnu"
+            binary = root / "target" / target / "release/kk"
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"fixture executable")
+            (root / "Cargo.toml").write_text('[package]\nversion = "0.8.0"\n')
+            for name in ("README.md", "LICENSE", "CONTRACT.md", "Cargo.lock"):
+                (root / name).write_bytes(b"fixture " + name.encode())
+            (root / "scripts").mkdir()
+            for name in ("install.sh", "install.ps1"):
+                (root / "scripts" / name).write_bytes(b"fixture reviewed " + name.encode())
+            commands = {
+                ("git", "status", "--porcelain"): "",
+                ("git", "show", "-s", "--format=%ct", "HEAD"): "1",
+                ("git", "rev-parse", "HEAD"): "a" * 40,
+                ("readelf", "--version-info", str(binary)): "GLIBC_2.17",
+                ("rustc", "--version"): "fixture rustc",
+                ("ldd", "--version"): "fixture libc",
+            }
+            with (
+                mock.patch.object(release, "ROOT", root),
+                mock.patch.object(release, "command", side_effect=lambda *args: commands[args]),
+                mock.patch.object(release, "licenses", side_effect=lambda: (
+                    [{"name": "fixture", "notices": ["licenses/fixture/LICENSE"]}],
+                    {"licenses/fixture/LICENSE": (b"Exact upstream author notice\n", 0o644)},
+                )),
+                mock.patch.object(release.subprocess, "run"),
+                mock.patch.object(release.subprocess, "check_output", return_value=b"README.md\0"),
+                mock.patch.dict(release.os.environ, {}, clear=True),
+            ):
+                yield target, root / "dist", commands
+
+    def test_public_bundle_retry_recovers_every_publication_boundary(self):
+        # Includes both archive links, helper/notices, entrypoints, source and sums.
+        for failure_index in range(9):
+            with self.subTest(failure_index=failure_index), self.bundle_fixture() as (target, destination, _):
+                original_link = release.os.link
+                attempted = []
+
+                def fail_publication(source, path):
+                    if path.parent == destination:
+                        attempted.append(path.name)
+                        if len(attempted) == failure_index + 1:
+                            raise OSError("injected public bundle interruption")
+                    original_link(source, path)
+
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    with mock.patch.object(release.os, "link", side_effect=fail_publication), self.assertRaisesRegex(
+                        RuntimeError, "Bundle publication incomplete.*identical inputs",
+                    ):
+                        release.bundle(target, destination)
+                    self.assertEqual(output.getvalue(), "")
+                    prior = {path.name: (path.read_bytes(), path.stat().st_ino, path.stat().st_mtime_ns)
+                             for path in destination.iterdir() if path.is_file()}
+                    self.assertEqual(len(prior), failure_index)
+                    release.bundle(target, destination)
+                    report = json.loads(output.getvalue())
+                for name, before in prior.items():
+                    path = destination / name
+                    self.assertEqual((path.read_bytes(), path.stat().st_ino, path.stat().st_mtime_ns), before)
+                sums = dict(line.split("  ")[::-1] for line in Path(report["checksums"]).read_text().splitlines())
+                self.assertEqual(len(sums), 8)
+                self.assertEqual({path.name for path in destination.iterdir() if path.is_file()},
+                                 set(sums) | {Path(report["checksums"]).name})
+                for name, checksum in sums.items():
+                    self.assertEqual(release.digest((destination / name).read_bytes()), checksum)
+                for key in ("archive", "zip_archive"):
+                    path = Path(report[key])
+                    self.assertTrue(release.verify(path, sums[path.name])["ok"])
+                    with self.assertRaisesRegex(ValueError, "trusted digest"):
+                        release.verify(path, "0" * 64)
+                record = json.loads(Path(report["bootstrap_notices"]).read_bytes())
+                self.assertEqual(record["helper"]["sha256"], sums[Path(report["bootstrap_helper"]).name])
+                entries, prefix = release.archive_entries(Path(report["archive"]))
+                self.assertEqual({name: text.encode("utf-8") for name, text in record["files"].items()},
+                                 {name.removeprefix(prefix + "/"): data for name, data in entries.items()
+                                  if name != prefix + "/kk"})
+                self.assertEqual(record["files"]["licenses/fixture/LICENSE"], "Exact upstream author notice\n")
+
+    def test_public_bundle_retry_after_private_bootstrap_failure(self):
+        for failure in ("write", "link"):
+            with self.subTest(failure=failure), self.bundle_fixture() as (target, destination, _):
+                original_open, original_link = Path.open, release.os.link
+
+                def fail_notice_write(path, *args, **kwargs):
+                    if path.name.endswith("-bootstrap-notices.json") and args == ("xb",):
+                        raise OSError("injected private notice write failure")
+                    return original_open(path, *args, **kwargs)
+
+                def fail_notice_link(source, path):
+                    if path.name.endswith("-bootstrap-notices.json"):
+                        raise OSError("injected private notice link failure")
+                    original_link(source, path)
+
+                patch = (mock.patch.object(Path, "open", fail_notice_write) if failure == "write"
+                         else mock.patch.object(release.os, "link", side_effect=fail_notice_link))
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    with patch, self.assertRaisesRegex(RuntimeError, "stage retained"):
+                        release.bundle(target, destination)
+                    self.assertEqual(output.getvalue(), "")
+                    self.assertFalse(any(path.is_file() for path in destination.iterdir()))
+                    retained = list(destination.glob(".kk-bundle-*"))
+                    self.assertEqual(len(retained), 1)
+                    release.bundle(target, destination)
+                    report = json.loads(output.getvalue())
+                self.assertTrue(retained[0].is_dir())
+                self.assertTrue(release.verify(Path(report["archive"]))["ok"])
+                self.assertEqual(len([path for path in destination.iterdir() if path.is_file()]), 9)
+
+    def test_bundle_retry_recovers_second_bootstrap_link_failure_without_replacing_archives(self):
+        with self.bundle_fixture() as (target, destination, _):
+            original_link = release.os.link
+
+            def fail_second_bootstrap(source, path):
+                if path.parent == destination and path.name.endswith("-bootstrap-notices.json"):
+                    raise OSError("injected second public bootstrap link failure")
+                original_link(source, path)
+
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                with mock.patch.object(release.os, "link", side_effect=fail_second_bootstrap), self.assertRaisesRegex(
+                    RuntimeError, "Bundle publication incomplete.*rerun the same bundle command",
+                ):
+                    release.bundle(target, destination)
+                self.assertEqual(output.getvalue(), "")
+                prior = {path.name: (path.read_bytes(), path.stat()) for path in destination.iterdir() if path.is_file()}
+                self.assertEqual(len(prior), 4)  # TAR, ZIP, build manifest, helper.
+                self.assertTrue(any(name.endswith(".tar.gz") for name in prior))
+                self.assertTrue(any(name.endswith(".zip") for name in prior))
+                release.bundle(target, destination)
+                report = json.loads(output.getvalue())
+            for name, (data, before) in prior.items():
+                path = destination / name
+                self.assertEqual(path.read_bytes(), data)
+                self.assertEqual((path.stat().st_ino, path.stat().st_mtime_ns), (before.st_ino, before.st_mtime_ns))
+            self.assertTrue(Path(report["bootstrap_notices"]).is_file())
+            self.assertEqual(json.loads(Path(report["bootstrap_notices"]).read_bytes())["commit"], "a" * 40)
+            for line in Path(report["checksums"]).read_text().splitlines():
+                checksum, name = line.split("  ")
+                self.assertEqual(release.digest((destination / name).read_bytes()), checksum)
+            complete = {path.name: (path.read_bytes(), path.stat().st_ino) for path in destination.iterdir() if path.is_file()}
+            with contextlib.redirect_stdout(io.StringIO()):
+                release.bundle(target, destination)
+            self.assertEqual(complete, {path.name: (path.read_bytes(), path.stat().st_ino)
+                                        for path in destination.iterdir() if path.is_file()})
+
+    def test_bundle_retry_preflights_every_existing_member_and_refuses_foreign_links(self):
+        with self.bundle_fixture() as (target, baseline, _):
+            with contextlib.redirect_stdout(io.StringIO()):
+                release.bundle(target, baseline)
+            expected = {path.name: path.read_bytes() for path in baseline.iterdir() if path.is_file()}
+            self.assertEqual(len(expected), 9)
+            companion = next(name for name in expected if name.endswith("-bootstrap-notices.json"))
+            for index, name in enumerate(expected):
+                for link in (False, True):
+                    with self.subTest(member=name, foreign_link=link):
+                        destination = baseline.parent / f"conflict-{index}-{link}"
+                        destination.mkdir()
+                        for member, data in expected.items():
+                            if member == name or member == companion:
+                                continue
+                            (destination / member).write_bytes(data)
+                        foreign = destination / name
+                        if link:
+                            foreign.symlink_to(baseline / name)  # Even equal bytes must not authorize links.
+                        else:
+                            foreign.write_bytes(b"foreign conflicting bytes")
+                        before = {path.name: (path.is_symlink(), path.lstat().st_ino) for path in destination.iterdir()}
+                        with contextlib.redirect_stdout(io.StringIO()) as output, self.assertRaisesRegex(
+                            FileExistsError, "Different or unsafe release asset",
+                        ):
+                            release.bundle(target, destination)
+                        self.assertEqual(output.getvalue(), "")
+                        self.assertEqual(before, {path.name: (path.is_symlink(), path.lstat().st_ino)
+                                                  for path in destination.iterdir() if not path.is_dir()})
+                        if not link:
+                            self.assertEqual(foreign.read_bytes(), b"foreign conflicting bytes")
+
+    def test_bundle_retry_refuses_changed_commit_selector_before_filling_missing_pair(self):
+        with self.bundle_fixture() as (target, destination, commands):
+            original_link = release.os.link
+
+            def fail_second_bootstrap(source, path):
+                if path.parent == destination and path.name.endswith("-bootstrap-notices.json"):
+                    raise OSError("injected second public bootstrap link failure")
+                original_link(source, path)
+
+            with mock.patch.object(release.os, "link", side_effect=fail_second_bootstrap), self.assertRaises(RuntimeError):
+                release.bundle(target, destination)
+            prior = {path.name: path.read_bytes() for path in destination.iterdir() if path.is_file()}
+            commands[("git", "rev-parse", "HEAD")] = "b" * 40
+            with self.assertRaises(FileExistsError), contextlib.redirect_stdout(io.StringIO()) as output:
+                release.bundle(target, destination)
+            self.assertEqual(output.getvalue(), "")
+            self.assertEqual(prior, {path.name: path.read_bytes() for path in destination.iterdir() if path.is_file()})
+            self.assertFalse(list(destination.glob("*-bootstrap-notices.json")))
+
+    def test_bootstrap_missing_notices_and_existing_assets_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory)
+            files = {"kk": (b"fixture", 0o755), "LICENSE": (b"fixture license", 0o644),
+                     "THIRD-PARTY.json": (b'[{"notices": []}]', 0o644)}
+            args = ("x86_64-unknown-linux-gnu", "0.8.0", "a" * 40, files, destination)
+            with self.assertRaisesRegex(ValueError, "upstream notice inventory"):
+                release.bootstrap_assets(*args)
+            self.assertEqual(list(destination.iterdir()), [])
+            files["THIRD-PARTY.json"] = (b'[]', 0o644)
+            with mock.patch.object(release, "MAX_MEMBER_BYTES", 1), self.assertRaisesRegex(ValueError, "Oversized"):
+                release.bootstrap_assets(*args)
+            self.assertEqual(list(destination.iterdir()), [])
+            paths = release.bootstrap_assets(*args)
+            original = [path.read_bytes() for path in paths]
+            self.assertEqual(release.bootstrap_assets(*args), paths)
+            self.assertEqual([path.read_bytes() for path in paths], original)
+            paths[1].write_bytes(b"foreign version bytes")
+            with self.assertRaises(FileExistsError):
+                release.bootstrap_assets(*args)
+            self.assertEqual(paths[1].read_bytes(), b"foreign version bytes")
+            files["LICENSE"] = (b'\xff', 0o644)
+            with self.assertRaises(UnicodeDecodeError):
+                release.bootstrap_assets(*args)
+            del files["LICENSE"]
+            with self.assertRaisesRegex(ValueError, "project license"):
+                release.bootstrap_assets(*args)
+
+    def test_notice_union_retains_top_license_and_curated_nested_author_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dependency = root / "package"
+            dependency.mkdir()
+            (dependency / "LICENSE").write_bytes(b"Top license, exact author text\n")
+            nested = root / "third_party/collected/nested-NOTICE"
+            nested.parent.mkdir(parents=True)
+            author_text = b"Nested notice, objectionable author retained verbatim\n"
+            nested.write_bytes(author_text)
+            relative = "collected/nested-NOTICE"
+            (root / "third_party/notices.json").write_text(json.dumps({
+                "packages": {"fixture@1": [relative, relative]},
+                "sources": {relative: {"sha256": release.digest(author_text)}},
+            }))
+            metadata = {"resolve": {"root": "root"}, "packages": [
+                {"id": "fixture", "name": "fixture", "version": "1", "source": "registry",
+                 "license": "MIT", "manifest_path": str(dependency / "Cargo.toml")},
+            ]}
+            with mock.patch.object(release, "ROOT", root), mock.patch.object(
+                release, "check_override_sources", return_value={},
+            ), mock.patch.object(release, "command", return_value=json.dumps(metadata)):
+                notices, files = release.licenses()
+                self.assertEqual(notices[0]["notices"], ["licenses/fixture-1/LICENSE", relative])
+                self.assertEqual(files[relative][0], author_text)
+                self.assertEqual(files["licenses/fixture-1/LICENSE"][0], (dependency / "LICENSE").read_bytes())
+                nested.write_bytes(b" \n")
+                with self.assertRaisesRegex(ValueError, "Empty collected notice"):
+                    release.licenses()
+                nested.write_bytes(author_text)
+                (dependency / "LICENSE").write_bytes(b"")
+                with self.assertRaisesRegex(ValueError, "Empty dependency notice"):
+                    release.licenses()
+
+    def test_bootstrap_empty_declared_notice_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            files = {"kk": (b"fixture", 0o755), "LICENSE": (b"license", 0o644),
+                     "THIRD-PARTY.json": (b'[{"notices": ["NOTICE"]}]', 0o644),
+                     "NOTICE": (b" \n", 0o644)}
+            with self.assertRaisesRegex(ValueError, "empty upstream notices"):
+                release.bootstrap_assets("x86_64-unknown-linux-gnu", "0.8.0", "a" * 40, files, Path(directory))
+
+    def test_second_pair_publication_failure_retains_stage_and_recovers_idempotently(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory)
+            files = {"kk": (b"fixture", 0o755), "LICENSE": (b"license", 0o644),
+                     "THIRD-PARTY.json": (b'[]', 0o644)}
+            args = ("x86_64-unknown-linux-gnu", "0.8.0", "a" * 40, files, destination)
+            original_link = release.os.link
+            calls = []
+
+            def fail_second(source, target):
+                calls.append(target)
+                if len(calls) == 2:
+                    raise OSError("injected second publication failure")
+                original_link(source, target)
+
+            with mock.patch.object(release.os, "link", side_effect=fail_second), self.assertRaisesRegex(
+                RuntimeError, "Partial release asset publication; complete stage retained",
+            ):
+                release.bootstrap_assets(*args)
+            self.assertEqual(calls[0].read_bytes(), b"fixture")
+            self.assertFalse(calls[1].exists())
+            stages = list(destination.glob(".kk-assets-*"))
+            self.assertEqual(len(stages), 1)
+            self.assertEqual(len(list(stages[0].iterdir())), 2)
+            paths = release.bootstrap_assets(*args)
+            self.assertEqual([path.read_bytes() for path in paths],
+                             [(stages[0] / path.name).read_bytes() for path in paths])
+            self.assertEqual(release.bootstrap_assets(*args), paths)
+
+    def test_entrypoint_immutable_collision_policy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory)
+            assets = {"install.sh": b"reviewed shell", "install.ps1": b"reviewed powershell"}
+            paths = release.publish_assets(assets, destination)
+            self.assertEqual(release.publish_assets(assets, destination), paths)
+            with self.assertRaises(FileExistsError):
+                release.publish_assets({**assets, "install.sh": b"different"}, destination)
+            self.assertEqual(paths[0].read_bytes(), assets["install.sh"])
+
+    def test_second_staged_write_failure_never_publishes_partial_pair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory)
+            assets = {"helper.bin": b"helper", "notices.json": b"notices"}
+            original_open = Path.open
+
+            def fail_second(path, *args, **kwargs):
+                if path.name == "notices.json" and args == ("xb",):
+                    raise OSError("injected second write failure")
+                return original_open(path, *args, **kwargs)
+
+            with mock.patch.object(Path, "open", fail_second), self.assertRaisesRegex(
+                RuntimeError, "Incomplete private release stage retained.*no publication attempted",
+            ):
+                release.publish_assets(assets, destination)
+            self.assertFalse((destination / "helper.bin").exists())
+            self.assertFalse((destination / "notices.json").exists())
+            stage = next(destination.glob(".kk-assets-*"))
+            self.assertEqual((stage / "helper.bin").read_bytes(), b"helper")
+            paths = release.publish_assets(assets, destination)
+            self.assertEqual([path.read_bytes() for path in paths], list(assets.values()))
 
     def test_zip_crc_and_manifest_inventory_remain_required(self):
         with tempfile.TemporaryDirectory() as directory:

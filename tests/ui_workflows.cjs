@@ -4,6 +4,52 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 const source = fs.readFileSync(__dirname + "/../src/ui/assets/app.js", "utf8");
 
+function modalHarness() {
+  const elements = Object.fromEntries(["dialog-title", "dialog-content", "dialog-error", "dialog-submit", "dialog-form"].map(id => [id, {children:[], replaceChildren(...children) { this.children = children; }, querySelectorAll() { return this.children.filter(child => typeof child === "object" && child !== null && "value" in child); }}]));
+  const events = [];
+  elements.dialog = {open:false, showModal() { this.open = true; }, close() { this.open = false; events.push(this.onclose); }, addEventListener(_event, handler) { this.onclose = handler; }};
+  const context = vm.createContext({$: id => elements[id], modalRevision:0, historyView:{}, FormData:class {}});
+  vm.runInContext(source.slice(source.indexOf("function modal("), source.indexOf("function createDialog(")), context);
+  const start = source.indexOf('$("dialog").addEventListener?.("close"');
+  vm.runInContext(source.slice(start, source.indexOf("\n", start)), context);
+  return {context, elements, events, submit:() => elements["dialog-form"].onsubmit({preventDefault(){}, currentTarget:{}})};
+}
+
+test("queued old dialog close does not erase a newly opened form", () => {
+  const {context, elements, events} = modalHarness();
+  context.modal("Old", ["old private draft"], "Submit", async () => {});
+  elements.dialog.close();
+  const input = {value:"new private draft"};
+  context.modal("New", [input], "Submit", async () => {});
+  events.shift()();
+  assert.equal(elements.dialog.open, true);
+  assert.deepEqual(elements["dialog-content"].children, [input]);
+  elements.dialog.close(); events.shift()();
+  assert.equal(elements["dialog-content"].children.length, 0);
+  assert.equal(input.value, "");
+  assert.equal(elements["dialog-form"].onsubmit, null);
+  assert.equal(context.historyView, null);
+});
+
+test("late old form success or failure cannot close, overwrite or re-enable a replacement form", async () => {
+  for (const fail of [false, true]) {
+    const {context, elements, events, submit} = modalHarness();
+    let resolveOld, rejectOld, resolveNew;
+    context.modal("Old", ["old"], "Submit", () => new Promise((resolve, reject) => { resolveOld = resolve; rejectOld = reject; }));
+    const old = submit(); elements.dialog.close();
+    context.modal("New", ["new"], "Submit", () => new Promise(resolve => { resolveNew = resolve; }));
+    events.shift()(); const current = submit();
+    if (fail) rejectOld(new Error("old failure")); else resolveOld();
+    await old;
+    assert.equal(elements.dialog.open, true);
+    assert.deepEqual(elements["dialog-content"].children, ["new"]);
+    assert.equal(elements["dialog-error"].textContent, "");
+    assert.equal(elements["dialog-submit"].disabled, true);
+    resolveNew(false); await current;
+    assert.equal(elements["dialog-submit"].disabled, false);
+  }
+});
+
 test("file refusal explains room access and live recipient consent", async () => {
   const context = {
     room: () => ({name:"study", status:{owner:"self", members:["self", "peer"]}}),

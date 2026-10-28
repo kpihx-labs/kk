@@ -52,8 +52,35 @@ specific new mission and record its ownership before execution.
 | `ses_e7d9ef842ffeJbGNhXOe97mdDW` (Sol fast, executor, returned) | None; runtime ownership released | Typed two-slot history lane, cached public summary and pre/post/per-author authorization; main verified nine runtime tests plus 33 Group and 18 key tests; IPC/CLI/UI remain next |
 | `ses_e7d71d12affeKVU80KUTOWSC7v` (Sol fast, executor, archived) | None; local/CLI history adapters released | Typed path-free IPC and CLI controls/search/recovery; three actual two-profile history tests pass in Main aggregate gate; incoming live stable-reference gap remains |
 | `ses_e7d715655ffeS5lBn0Wkq3dh7m` (Terra fast, checker, archived) | None; runtime review retained | Prepared/processed storage versus disclosure and uncertain committed outcomes made explicit in history-runtime.md; active-work scheduling and final paging budget remain qualification gates |
+| `ses_e7d5c2ff5ffeXSgemJ481K4t3X` (Sol fast, executor, archived) | None; runtime/reference work released | Authenticated ReferencedText and additive local reference; shorter JSON pages and uncertain-outcome semantics; 13 runtime/8 local tests reported; main combined gate pending |
+| `ses_e7d5b31bdffeKptCHzzW8UGsvQ` (Sol fast, executor, archived) | None; UI history work released | Path-free history controls/search/merge and confirmations; six API and 46 JS tests reported; main combined and real Edge qualification pending |
+| `ses_e7d59e0efffeshj6tOql1mSI6S` (Sol fast, executor, archived) | None; bootstrap work released | Authenticated helper/notices pair and retained companion distribution; 23 packaging/19 installer tests reported with PowerShell skipped; main owns actual provenance wiring/replay |
+| `ses_e7d54b156ffeflCAn9tG7ddwR1` (Sol fast, executor, archived) | None; terminal fixture released | Intel trace identified unconsumed release echo; consume before exit and close PTY before failure cleanup. Seven Windows store/key cfg diagnostics remain with main |
+| `ses_e7cb2e581ffeMJDQx7EBxmI9O8` (Sol fast, executor, archived after corrective handoff) | None; IPC files returned to Main | Anchored operations, trusted ancestors, bound lock lifecycle and interrupted initialization corrections returned; Main reviewed, bounded staging scan and independently passed 11 IPC tests plus isolated umask child, three integration tests, five reservation tests and all-target Clippy. Native macOS and stable full gate remain open |
+| `ses_e7ca1c1e5ffebBWH0mmJpoq3QB` (Terra fast, checker, archived) | None; review returned | Rejected initial IPC acceptance: pathname replacement, incomplete namespace initialization and lock entry binding; no native execution claim |
+| `ses_e7ca1c1acffeLi4EW8LYM2F1T1` (Sol fast, executor, archived) | None; release tests returned to Main | Public bundle recovery at nine boundaries and private notices failures; Main independently ran all 33 release tests successfully; mocked build inputs |
+| `ses_e7cb6ffa4ffeQlxjoTsblYIEfv` (Terra fast, executor, archived) | None; GUI ownership returned to Main | Distinct profiles/settings observed; lease blocked restart of old processes. Main owns restart and remaining GUI qualification; no pairing/security acceptance |
 
 ## Integration Boundaries
+
+### Initial after-reboot handoff snapshot
+
+| Peer | Current ownership | Acceptance / handoff |
+| --- | --- | --- |
+| `ses_e7cb2e581ffeMJDQx7EBxmI9O8` (Sol fast, archived) | None; IPC implementation returned to Main | Long-path transport: five IPC unit, three actual IPC/HTTP integration, five existing node and eight local tests reported; independent review pending |
+| `ses_e7cb6ffa4ffeQlxjoTsblYIEfv` (Terra fast, executor) | Existing Edge QA, panes `%124`/`%125`, `reboot-ui-qualification.md` only | Resume unchanged long-path profiles with rebuilt binary; pairing, history, files, synthetic sharing and restart evidence required |
+| `ses_e7ca1c1e5ffebBWH0mmJpoq3QB` (Terra fast, checker) | Read-only IPC long-path security/lifetime review | Inspect binding, directories, ownership, stale cleanup and compatibility; return concrete findings |
+| `ses_e7ca1c1acffeLi4EW8LYM2F1T1` (Sol fast, returned) | Release-test changes returned to Main | Public bundle retry at nine publication boundaries and private notices failures; 33 release tests reported; mocked build inputs, no attestation claim |
+
+Main rebuilt `target/debug/kk` successfully after the IPC changes. The new QA
+root remains `target/qa-after-reboot-20261028`; the previous `/tmp` dataset was
+lost on reboot and is not restored by these tests. Earlier QA pane/window IDs
+in workstreams are historical, not current automation targets.
+The snapshot above is historical. Current ownership is in the main register.
+Main's current window is `pro:0`; replacement QA processes used idle panes
+`%127`/`%129` there and both subsequently acknowledged HTTP shutdown. Strict IPC
+now refuses group-writable ancestors at the workspace, repository and target
+roots. Their permissions remain unchanged pending explicit operator approval.
 
 - Use the two verified 6.1 fast models for this account; catalog presence did not
   make Mini executable. No fallback to another provider is authorized.

@@ -14,12 +14,18 @@ import subprocess
 import tarfile
 import tempfile
 import time
-import tomllib
 import zipfile
 from pathlib import Path, PurePosixPath
 
+import tomllib
+
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = {"x86_64-unknown-linux-gnu": "linux-x86_64", "aarch64-unknown-linux-gnu": "linux-aarch64"}
+# Explicit platform/container contract; a future Windows helper is not an ELF rename.
+HELPERS = {
+    "x86_64-unknown-linux-gnu": {"platform": "linux", "architecture": "x86_64", "executable_format": "elf", "suffix": ".bin"},
+    "aarch64-unknown-linux-gnu": {"platform": "linux", "architecture": "aarch64", "executable_format": "elf", "suffix": ".bin"},
+}
 MAX_MEMBERS = 4096
 MAX_UNPACKED_BYTES = 256 * 1024 * 1024
 MAX_MANIFEST_BYTES = 4 * 1024 * 1024
@@ -240,20 +246,95 @@ def licenses():
             if candidate.stat().st_size > 1024 * 1024:
                 raise ValueError("Oversized dependency notice")
             name = f"licenses/{package['name']}-{package['version']}/{candidate.name}"
-            files[name] = (candidate.read_bytes(), 0o644)
+            data = candidate.read_bytes()
+            if not data.strip():
+                raise ValueError("Empty dependency notice")
+            files[name] = (data, 0o644)
             included.append(name)
-        if not included:
-            for relative in extra["packages"].get(package["name"] + "@" + package["version"], []):
-                candidate = ROOT / "third_party" / relative
-                if candidate.is_symlink() or not candidate.resolve().is_relative_to((ROOT / "third_party").resolve()) or candidate.stat().st_size > 1024 * 1024:
-                    raise ValueError("Unsafe collected notice")
-                data = candidate.read_bytes()
-                if digest(data) != extra["sources"][relative]["sha256"]:
-                    raise ValueError("Collected upstream notice changed")
-                files[relative] = (data, 0o644)
+        # Curated nested notices supplement, never replace, package-root notices.
+        for relative in extra["packages"].get(key, []):
+            member_path(relative)
+            candidate = ROOT / "third_party" / relative
+            if candidate.is_symlink() or not candidate.resolve().is_relative_to((ROOT / "third_party").resolve()) or not candidate.is_file() or candidate.stat().st_size > 1024 * 1024:
+                raise ValueError("Unsafe collected notice")
+            data = candidate.read_bytes()
+            if not data.strip():
+                raise ValueError("Empty collected notice")
+            if digest(data) != extra["sources"][relative]["sha256"]:
+                raise ValueError("Collected upstream notice changed")
+            if relative in files and files[relative][0] != data:
+                raise ValueError("Conflicting collected notice")
+            files[relative] = (data, 0o644)
+            if relative not in included:
                 included.append(relative)
         notices.append({"name": package["name"], "version": package["version"], "license": package["license"], "repository":package.get("repository"), "revision":revision, "path_in_vcs":vcs.get("path_in_vcs", ""), "override": override, "notices": included})
     return notices, files
+
+
+def publish_assets(assets, destination):
+    """Exclusive complete-file publication with retained stages and matching-byte recovery.
+
+    Multiple directory entries are NOT atomic. A failed link leaves full prior
+    members plus a private complete stage; retrying identical inputs fills gaps.
+    """
+    paths = [destination / name for name in assets]
+    for path in paths:
+        if (path.exists() or path.is_symlink()) and (
+            path.is_symlink() or not path.is_file() or archive_snapshot(path) != assets[path.name]
+        ):
+            raise FileExistsError("Different or unsafe release asset: " + str(path))
+    if all(path.exists() for path in paths):
+        return paths
+    stage = Path(tempfile.mkdtemp(prefix=".kk-assets-", dir=destination))
+    try:
+        for name, data in assets.items():
+            with (stage / name).open("xb") as output:
+                output.write(data)
+                output.flush()
+                os.fsync(output.fileno())
+    except OSError as error:
+        raise RuntimeError(f"Incomplete private release stage retained at {stage}; "
+                           "no publication attempted; retry identical inputs") from error
+    try:
+        for path in paths:
+            try:
+                os.link(stage / path.name, path)
+            except FileExistsError:
+                if path.is_symlink() or not path.is_file() or archive_snapshot(path) != assets[path.name]:
+                    raise FileExistsError("Different or unsafe release asset: " + str(path)) from None
+    except OSError as error:
+        raise RuntimeError(f"Partial release asset publication; complete stage retained at {stage}; "
+                           "retry identical inputs to recover, never overwrite foreign bytes") from error
+    return paths
+
+
+def bootstrap_assets(target, version, commit, files, destination):
+    """Companion distribution, retaining every reviewed notice byte (not legal advice)."""
+    contract = HELPERS[target]
+    helper_name = f"kk-v{version}-{TARGETS[target]}-bootstrap{contract['suffix']}"
+    notice_name = f"kk-v{version}-{TARGETS[target]}-bootstrap-notices.json"
+    if not files.get("LICENSE", (b"",))[0].strip():
+        raise ValueError("Bootstrap requires the project license")
+    inventory = json.loads(files["THIRD-PARTY.json"][0])
+    names = set(files) - {"kk"}  # Same-version build metadata and original notice inventory.
+    for package in inventory:
+        if not package["notices"]:
+            raise ValueError("Bootstrap requires upstream notice inventory")
+        names.update(package["notices"])
+        if any(not files[name][0].strip() for name in package["notices"]):
+            raise ValueError("Bootstrap refuses empty upstream notices")
+    texts = {}
+    for name in sorted(names):
+        member_path(name)
+        texts[name] = files[name][0].decode("utf-8")  # Never silently replace author bytes.
+    helper = files["kk"][0]
+    record = {"format": 1, "version": version, "commit": commit, "target": target,
+              **contract, "helper": {"asset": helper_name, "sha256": digest(helper)},
+              "notices_asset": notice_name, "files": texts}
+    notices = (json.dumps(record, ensure_ascii=True, indent=2) + "\n").encode()
+    if not helper or len(helper) > MAX_MEMBER_BYTES or len(notices) > MAX_MEMBER_BYTES:
+        raise ValueError("Oversized or empty bootstrap distribution")
+    return publish_assets({helper_name: helper, notice_name: notices}, destination)
 
 
 def bundle(target, destination):
@@ -288,16 +369,23 @@ def bundle(target, destination):
                 "files": {name: digest(data) for name, (data, _) in sorted(files.items())}}
     files["build-manifest.json"] = ((json.dumps(manifest, indent=2) + "\n").encode(), 0o644)
     destination.mkdir(parents=True, exist_ok=True)
+    # Regenerate the complete expected set privately, including source/checksums.
+    # Never create exclusive archives directly in a partially published release:
+    # retry must compare ALL expected bytes before it fills any missing member.
+    stage = Path(tempfile.mkdtemp(prefix=".kk-bundle-", dir=destination))
     stem = f"kk-v{version}-{TARGETS[target]}"
-    output = destination / (stem + ".tar.gz")
+    output = stage / (stem + ".tar.gz")
     archive(output, stem, files, epoch)
     verify(output)
-    zip_output = destination / (stem + ".zip")
+    zip_output = stage / (stem + ".zip")
     archive(zip_output, stem, files, epoch)
     verify(zip_output)
-    manifest_path = destination / (stem + ".build.json")
+    manifest_path = stage / (stem + ".build.json")
     with manifest_path.open("xb") as record:
         record.write(files["build-manifest.json"][0])
+    helper_path, notices_path = bootstrap_assets(target, version, commit, files, stage)
+    entrypoints = publish_assets({name: (ROOT / "scripts" / name).read_bytes()
+                                  for name in ("install.sh", "install.ps1")}, stage)
     # Vendor every locked target dependency so source can rebuild without a registry.
     work = Path(tempfile.mkdtemp(prefix="kk-source-", dir=ROOT / "target"))
     vendor = work / "vendor"
@@ -318,13 +406,23 @@ def bundle(target, destination):
     if config in source_files:
         raise ValueError("Review existing Cargo configuration before vendoring")
     source_files[config] = (b'[source.crates-io]\nreplace-with = "vendored-sources"\n[source.vendored-sources]\ndirectory = "vendor"\n', 0o644)
-    source = destination / f"kk-v{version}-source-offline.tar.gz"
+    source = stage / f"kk-v{version}-source-offline.tar.gz"
     archive(source, f"kk-v{version}-source", source_files, epoch)
-    sums = destination / (stem + ".sha256")
+    sums = stage / (stem + ".sha256")
     with sums.open("x") as record:
-        for path in [output, zip_output, manifest_path, source]:
+        for path in [output, zip_output, manifest_path, source, helper_path, notices_path, *entrypoints]:
             record.write(f"{digest(path.read_bytes())}  {path.name}\n")
-    print(json.dumps({"archive": str(output), "zip_archive": str(zip_output), "offline_source": str(source), "checksums": str(sums), "commit": commit}))
+    try:
+        publish_assets({path.name: path.read_bytes() for path in
+                        [output, zip_output, manifest_path, helper_path, notices_path, *entrypoints, source, sums]}, destination)
+    except RuntimeError as error:
+        raise RuntimeError(f"Bundle publication incomplete; expected assets retained at {stage}; "
+                           "rerun the same bundle command with identical inputs to recover; "
+                           f"existing files are never overwritten. {error}") from error
+    print(json.dumps({"archive": str(destination / output.name), "zip_archive": str(destination / zip_output.name),
+                      "offline_source": str(destination / source.name), "checksums": str(destination / sums.name), "commit": commit,
+                      "bootstrap_helper": str(destination / helper_path.name), "bootstrap_notices": str(destination / notices_path.name),
+                      "bootstrap_entrypoints": [str(destination / path.name) for path in entrypoints]}))
 
 
 def collect(source, destination):

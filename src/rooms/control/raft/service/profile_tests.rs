@@ -337,6 +337,7 @@ async fn untrusted_response(
 
 #[tokio::test]
 async fn profile_get_uses_real_private_rooms_readers_mtls_and_live_privacy() {
+    let phase = std::cell::Cell::new("initialization");
     tokio::time::timeout(
         Duration::from_secs(40),
         tokio::task::LocalSet::new().run_until(async {
@@ -394,6 +395,7 @@ async fn profile_get_uses_real_private_rooms_readers_mtls_and_live_privacy() {
                 );
                 controls.push(control);
             }
+            phase.set("initial quorum");
             controls[0].initialize(voters).await.unwrap();
             let mut metrics = controls[0].raft.metrics();
             tokio::time::timeout(WAIT, metrics.wait_for(|m| m.current_leader.is_some()))
@@ -438,6 +440,7 @@ async fn profile_get_uses_real_private_rooms_readers_mtls_and_live_privacy() {
             )
             .await
             .unwrap();
+            phase.set("actor registration");
             let mut handles = Vec::new();
             let mut actors = Vec::new();
             for (i, room) in [owner, reader].into_iter().enumerate() {
@@ -447,6 +450,7 @@ async fn profile_get_uses_real_private_rooms_readers_mtls_and_live_privacy() {
                 controls[i].register_room(handle.clone()).await.unwrap();
                 handles.push(handle);
             }
+            phase.set("authenticated metadata");
             let a = controls[0].id();
             let b = controls[1].id();
             // Default is no disclosure; a reader may GET without publisher rights.
@@ -506,7 +510,9 @@ async fn profile_get_uses_real_private_rooms_readers_mtls_and_live_privacy() {
                     .as_deref(),
                 Some("Bob")
             );
+            phase.set("background cache");
             background_cache_roundtrip(&controls, &handles).await;
+            phase.set("directory disclosure");
             controls[0]
                 .configure_profile_name("Alice".into(), false)
                 .unwrap();
@@ -591,11 +597,13 @@ async fn profile_get_uses_real_private_rooms_readers_mtls_and_live_privacy() {
             std::fs::write(&settings_path, vec![b' '; 128 * 1024 + 1]).unwrap();
             assert!(controls[1].peer_profile(a, WAIT).await.is_err());
             std::fs::write(settings_path, saved).unwrap();
+            phase.set("paused publication races");
             paused_publication_races(&controls, &identities, &profile0).await;
 
             // A real consented media publication keeps using its authenticated
             // link while an optional GET on that link fails. Synthetic RTP only;
             // there is no codec/device or physical capture claim here.
+            phase.set("parallel media");
             let mut screen = controls[1]
                 .subscribe_media(a, crate::media::Kind::Screen)
                 .await
@@ -645,6 +653,7 @@ async fn profile_get_uses_real_private_rooms_readers_mtls_and_live_privacy() {
                 .configure_profile_name("Bob".into(), true)
                 .unwrap();
 
+            phase.set("local veto and removal");
             // Local veto is enforced on both the receiving and disclosing endpoints.
             for (incoming, outgoing) in [(false, true), (true, false)] {
                 let registry = Registry::open(profile0.clone()).unwrap();
@@ -719,6 +728,7 @@ async fn profile_get_uses_real_private_rooms_readers_mtls_and_live_privacy() {
                 .await
                 .is_err()
             );
+            phase.set("shutdown actors");
             for (control, handle) in controls.iter().zip(&handles) {
                 control.unregister_room().unwrap();
                 handle.shutdown(WAIT).await.unwrap();
@@ -728,6 +738,7 @@ async fn profile_get_uses_real_private_rooms_readers_mtls_and_live_privacy() {
             }
             drop(handles);
             drop(metrics);
+            phase.set("shutdown controls");
             for control in controls {
                 match Arc::try_unwrap(control) {
                     Ok(control) => control.shutdown().await.unwrap(),
@@ -737,5 +748,5 @@ async fn profile_get_uses_real_private_rooms_readers_mtls_and_live_privacy() {
         }),
     )
     .await
-    .unwrap();
+    .unwrap_or_else(|error| panic!("profile fixture timed out in {}: {error}", phase.get()));
 }

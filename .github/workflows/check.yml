@@ -149,6 +149,10 @@ jobs:
           subject-path: |
             target/dist/*.tar.gz
             target/dist/*.zip
+            target/dist/*-bootstrap.bin
+            target/dist/*-bootstrap-notices.json
+            target/dist/install.sh
+            target/dist/install.ps1
       - name: Include the public verification bundle
         env:
           BUNDLE: ${{ steps.provenance.outputs.bundle-path }}

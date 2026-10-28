@@ -1,55 +1,54 @@
 # Portable Prebuilt Installer Boundary
 
 ## Status
+The same-package native helper lives in `src/install.rs` and submodules with CLI wiring.
+`scripts/install.sh` bootstraps Linux with authenticated raw helper and notices
+assets; `--helper` instead accepts an explicitly already-trusted native `kk`.
+PowerShell on Linux supports only explicit `-Helper`; without it it exits 3.
+Help exits 0; input/tool failures exit nonzero. No profile/PATH/service/identity changes occur.
+This is not release or native-platform qualification.
 
-The same-package native helper lives in `src/install.rs` and submodules, with
-CLI wiring and normal archive dependencies. End users need no Rust/Node/Python.
-`scripts/install.sh` and `scripts/install.ps1` accept an explicit already-trusted
-native `kk` via `--helper`/`-Helper`. Without it they exit 3 before installation.
-Help exits 0; bad input/tool failures exit nonzero. No profile, PATH, service or
-identity changes occur. This is not release or native-platform qualification.
-
-The archive format and platform authority remain [release.py](../scripts/release.py),
-not a second release registry. Linux host/CPU detection selects a candidate using
-the existing release filename convention; its authenticated manifest must match.
-Only Linux transactions are enabled. PowerShell on Linux can invoke the helper;
-Windows/macOS are refused. ZIP availability does not imply Windows support.
+The format/platform authority remains [release.py](../scripts/release.py), not a second registry.
+Linux host/CPU selects a candidate; its authenticated manifest must match.
+Only Linux transactions are enabled. Windows/macOS are refused; ZIP is not Windows
+support. Separately provision capable `gh`, `curl`, `jq`, `sha256sum`, `timeout` and Linux tools;
+the native helper also needs `ldconfig`. No Rust/Node/Python is needed by end users.
 
 ## Inspect Before Running
-
-After a public release has passed its gates, download its bootstrap over HTTPS,
-inspect it, then invoke it explicitly. Do not pipe network content into a shell.
+After release gates, retrieve its entrypoint with separately trusted tooling,
+authenticate and inspect it, then invoke it. Never pipe network content into a shell.
 Replace the example selectors with the reviewed release tag and full source commit.
-The bootstrap and raw helper assets below are a release integration design, not
-an assertion that public assets or their attestations exist today.
+This is not published-asset evidence; publication requires all existing release/exact-byte replay gates.
 
 ```sh
-curl --disable --fail --show-error --location --max-redirs 5 --proto '=https' --proto-redir '=https' \
-  --connect-timeout 15 --max-time 60 --max-filesize 131072 \
-  --output install.sh \
-  https://github.com/kpihx-labs/kk/releases/download/vVERSION/install.sh
-less install.sh
-sh install.sh --version VERSION --commit FULL_COMMIT_SHA --helper /absolute/trusted/kk
+gh release download vVERSION --repo kpihx-labs/kk --pattern install.sh --dir FRESH_DIRECTORY
+gh attestation verify FRESH_DIRECTORY/install.sh --repo kpihx-labs/kk \
+  --signer-workflow kpihx-labs/kk/.github/workflows/check.yml --source-ref refs/tags/vVERSION \
+  --source-digest FULL_COMMIT_SHA --deny-self-hosted-runners
+less FRESH_DIRECTORY/install.sh
+sh FRESH_DIRECTORY/install.sh --version VERSION --commit FULL_COMMIT_SHA
 ```
 
-Use fresh destinations and retain inspected bytes. PowerShell users can use
-the same curl flags with `curl.exe`, inspect `install.ps1` with `Get-Content`, then
+Use fresh destinations and retain inspected bytes. For PowerShell retrieve and authenticate
+`install.ps1` with the same pinned policy, inspect it with `Get-Content`, then
 run `pwsh -NoProfile -File ./install.ps1 -Version VERSION -Commit FULL_COMMIT_SHA
 -Helper /absolute/trusted/kk` on Linux.
 Do not bypass execution policy. Neither bootstrap auto-installs dependencies.
 
 ## Native Helper And Bootstrap Trust
-
-Shell archive listings and extraction tools do not provide the existing verifier's
-bounded immutable-snapshot guarantees. Python is not an end-user prerequisite.
-A separately provisioned, explicitly trusted native `kk` binary is required.
-Do not execute a helper extracted from an unverified archive to verify itself.
-The release workflow must publish a standalone raw host-specific `kk` asset and
-include those exact bytes in its existing GitHub provenance subject list. Download
-it with HTTPS-only redirects, fresh output, time/redirect bounds and a byte cap.
-Authenticate that raw asset with the gh command below BEFORE chmod/execution;
-bind it to the reviewed helper tag/commit. Never use an archive's candidate as its
-own verifier. Raw-helper asset publication/bootstrap automation remains Main's gate.
+Shell archive tools do not provide the native verifier's bounded immutable-snapshot guarantees.
+Never execute a helper extracted from an unverified archive to verify itself.
+`bundle` emits `kk-vVERSION-linux-ARCH-bootstrap.bin` (unchanged archive executable)
+and `kk-vVERSION-linux-ARCH-bootstrap-notices.json`, where ARCH is `x86_64` or `aarch64`.
+Both require CI attestation. JSON retains all non-executable archive files and collected
+upstream text/inventory, target/platform/CPU/format, version/commit and both asset names.
+The shell parses authenticated JSON with jq and matches selectors, helper basename and
+SHA-256 BEFORE chmod/execution. Two independently authenticated but swapped subjects fail.
+This inventory is not independent legal-completeness review. Never ship the helper alone.
+Downloads retain a private directory, bounded bodies/metadata, time and five redirects.
+Each hop is checked BEFORE following: exact HTTPS github.com, release-assets.githubusercontent.com
+or objects.githubusercontent.com only; userinfo/ports/other hosts fail. Signed URLs are not printed.
+Missing jq is fatal, never auto-installed. The retained notices path is printed on success.
 
 ```text
 kk install --version VERSION --commit FULL_SHA --prefix ABSOLUTE
@@ -76,8 +75,9 @@ The helper owns the complete transaction, including these gates:
      --deny-self-hosted-runners
    ```
 
-   A capability check runs before download. Missing flags/tool, timeout or failure
-   is fatal. gh reads kernel-sealed memfd bytes via procfs, not replaceable input paths.
+   A bounded capability check runs before bootstrap download. Missing flags/tool,
+   timeout or failure is fatal. Bootstrap uses private retained paths (same-UID
+   tampering excluded); native archive gh reads sealed memfd bytes via procfs.
 4. USB/local `--archive` uses exactly the same private immutable snapshot and
    provenance/content path as download. Offline verification additionally requires
    an exported GitHub attestation `--bundle` passed to gh's supported bundle option,
@@ -110,11 +110,11 @@ The helper owns the complete transaction, including these gates:
 
 ## Evidence And Remaining Gates
 
-`uv run --no-project tests/test_installers.py` tests bootstrap quoting and dispatch
-with mocked discovery/helper tools. `cargo test --test install` exercises actual
+`uv run --no-project tests/test_installers.py` tests quoting, dispatch and failed
+helper/notice verification with MOCKED gh/curl. `cargo test --test install` exercises actual
 TAR/ZIP parsing, hostile archives and managed filesystem/rollback transactions with
 explicitly MOCKED gh/curl. It is not real GitHub provenance or download evidence.
 PowerShell execution tests run only if `pwsh` is already available; skips are explicit.
-Real Linux TAR/online/same-version replay: [evidence](install-qualification.md). Raw bootstrap, offline trust and full crash injection remain gates.
-Dependencies: tar 0.4.46 (MIT/Apache, MSRV 1.63), flate2 1.1.10 (MIT/Apache, 1.67),
-zip 9.1.3 (MIT, 1.88). RustSec fixes reviewed; cargo-audit/pwsh are unavailable locally.
+Native [evidence](install-qualification.md) is not raw bootstrap replay; that and offline trust remain gates.
+Release pairs are NOT atomic: private stages are retained; retry identical companion inputs to fill
+partial publication. Existing differing bytes/links fail closed. See [distribution](distribution.md).

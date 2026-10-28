@@ -432,7 +432,9 @@ async fn three_private_rooms_use_quorum_order_durable_nonce_and_local_veto_witho
                 .send_room_text(target, &original, Duration::from_secs(5))
                 .await
                 .unwrap();
-            let Event::Text(original) = events.recv().await.unwrap();
+            let Event::ReferencedText { text: original, .. } = events.recv().await.unwrap() else {
+                panic!("missing authenticated reference")
+            };
             assert_eq!(original.content.text(), "original peer binding");
             // The remaining direct sender is Charlie (Bob has been removed).
             for _ in 0..config::ROOM_EVENT_QUEUE {
@@ -459,7 +461,9 @@ async fn three_private_rooms_use_quorum_order_durable_nonce_and_local_veto_witho
                     .await,
                 Err(Error::Node(_))
             ));
-            let Event::Text(first) = events.recv().await.unwrap();
+            let Event::ReferencedText { text: first, .. } = events.recv().await.unwrap() else {
+                panic!("missing authenticated reference")
+            };
             assert_eq!(first.content.text(), "bounded actor event");
             controls[2]
                 .send_room_text(target, &wire, Duration::from_secs(5))
@@ -468,7 +472,9 @@ async fn three_private_rooms_use_quorum_order_durable_nonce_and_local_veto_witho
             for _ in 1..config::ROOM_EVENT_QUEUE {
                 events.recv().await.unwrap();
             }
-            let Event::Text(last) = events.recv().await.unwrap();
+            let Event::ReferencedText { text: last, .. } = events.recv().await.unwrap() else {
+                panic!("missing authenticated reference")
+            };
             assert_eq!(last.content.text(), "must survive queue-full retry");
             controls[0].unregister_room().unwrap();
             handle.shutdown(Duration::from_secs(5)).await.unwrap();

@@ -47,7 +47,8 @@ impl Codec for JsonCodec {
 struct Session {
     connection: Connection,
     poisoned: Cell<bool>,
-    _lease: Option<File>,
+    _lease: Option<super::lease::Lease>,
+    #[cfg(unix)]
     directory: Option<File>,
 }
 #[derive(Clone)]
@@ -112,7 +113,7 @@ impl Provider {
             .map_err(|_| Error::Storage("cannot open database"))?;
         lease.verify_path()?;
         let root = File::open(directory)?;
-        let provider = Self::initialize(connection, Some(lease.into_file()), Some(root), create)?;
+        let provider = Self::initialize(connection, Some(lease), Some(root), create)?;
         provider.verify_history_directory(provider.session.0.directory.as_ref().unwrap())?;
         if create {
             super::lease::sync_creation(directory)?;
@@ -125,14 +126,24 @@ impl Provider {
     }
 
     fn initialize(
-        mut connection: Connection,
-        lease: Option<File>,
-        directory: Option<File>,
+        connection: Connection,
+        lease: Option<super::lease::Lease>,
+        _directory: Option<File>,
         create: bool,
     ) -> Result<Self> {
+        // Establish field-ordered ownership before any fallible initialization:
+        // SQLite must close before the exclusive database lease is unlocked.
+        let mut owner = Session {
+            connection,
+            poisoned: Cell::new(false),
+            _lease: lease,
+            #[cfg(unix)]
+            directory: _directory,
+        };
         // Validate an existing store before applying mutable pragmas/migrations.
         if !create {
-            let version: i64 = connection
+            let version: i64 = owner
+                .connection
                 .pragma_query_value(None, "user_version", |row| row.get(0))
                 .map_err(|_| Error::Storage("cannot read schema version"))?;
             if version != SCHEMA_VERSION && version != history::SCHEMA_VERSION {
@@ -140,24 +151,26 @@ impl Provider {
                     "unrecognized private state; explicit recovery required",
                 ));
             }
-            connection
+            owner
+                .connection
                 .prepare("SELECT name, value FROM kk_private_metadata LIMIT 0")
                 .map_err(|_| Error::Storage("private metadata is missing"))?;
             if version == history::SCHEMA_VERSION {
-                history::validate_schema(&connection)?;
+                history::validate_schema(&owner.connection)?;
             }
         }
         super::database::configure(
-            &connection,
+            &owner.connection,
             config::ROOM_STORE_MAX_BYTES,
             config::ROOM_STORE_VALUE_BYTES,
         )?;
         if create {
-            let mut storage = SqliteStorageProvider::<JsonCodec, _>::new(&mut connection);
+            let mut storage = SqliteStorageProvider::<JsonCodec, _>::new(&mut owner.connection);
             storage
                 .run_migrations()
                 .map_err(|_| Error::Storage("cannot initialize MLS schema"))?;
-            connection
+            owner
+                .connection
                 .execute_batch(
                     "CREATE TABLE kk_private_metadata (name TEXT PRIMARY KEY, value BLOB NOT NULL);
                 PRAGMA user_version=1;",
@@ -165,12 +178,7 @@ impl Provider {
                 .map_err(|_| Error::Storage("cannot initialize private metadata"))?;
         }
         let crypto = CryptoProvider::new().map_err(|_| Error::Authentication)?;
-        let session = ConnectionHandle(Rc::new(Session {
-            connection,
-            poisoned: Cell::new(false),
-            _lease: lease,
-            directory,
-        }));
+        let session = ConnectionHandle(Rc::new(owner));
         let storage = SqliteStorageProvider::new(session.clone());
         Ok(Self {
             crypto,
@@ -221,6 +229,7 @@ impl Provider {
             ._lease
             .as_ref()
             .ok_or(Error::Storage("missing private lease"))?
+            .file()
             .metadata()?;
         if !named.is_file() || named.dev() != leased.dev() || named.ino() != leased.ino() {
             return Err(Error::Storage("history database anchor changed"));

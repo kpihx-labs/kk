@@ -1,5 +1,6 @@
 #![cfg(unix)]
 //! Actual CLI/backend processes with disposable profiles, never operator data.
+mod support;
 use serde_json::{Value, json};
 use std::{
     io::{BufRead, BufReader, Write},
@@ -142,7 +143,7 @@ impl Drop for Process {
 
 #[test]
 fn two_profiles_capture_page_restart_disable_clear_and_exclude_sensitive() {
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let alice = root.path().join("alice");
     let bob = root.path().join("bob");
     for profile in [&alice, &bob] {
@@ -286,7 +287,7 @@ fn history_ipc_rejects_paths_unknown_fields_and_bypassing_query_bounds() {
     ] {
         assert!(serde_json::from_value::<Ipc>(command).is_err());
     }
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let profile = root.path().join("raw");
     call(&profile, &["init"]);
     call(&profile, &["room", "create", "team", "--bind", &address()]);
@@ -320,7 +321,7 @@ fn history_ipc_rejects_paths_unknown_fields_and_bypassing_query_bounds() {
 
 #[test]
 fn orphan_requires_confirmed_exact_public_recipient_without_key_replacement() {
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let profile = root.path().join("orphan");
     call(&profile, &["init"]);
     call(&profile, &["room", "create", "team", "--bind", &address()]);

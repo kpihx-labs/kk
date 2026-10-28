@@ -11,6 +11,8 @@ use std::{
 pub(super) struct Lease {
     file: File,
     path: PathBuf,
+    #[cfg(test)]
+    release_probe: Option<Box<dyn FnOnce() + Send>>,
 }
 impl Lease {
     #[cfg(unix)]
@@ -67,7 +69,12 @@ impl Lease {
                 })
             },
         )?;
-        Ok(Self { file, path })
+        Ok(Self {
+            file,
+            path,
+            #[cfg(test)]
+            release_probe: None,
+        })
     }
     #[cfg(not(unix))]
     pub(super) fn open(
@@ -95,8 +102,28 @@ impl Lease {
     pub(super) fn verify_path(&self) -> Result<()> {
         Err(Error::UnsupportedPlatform)
     }
-    pub(super) fn into_file(self) -> File {
-        self.file
+    #[cfg(unix)]
+    pub(super) fn file(&self) -> &File {
+        &self.file
+    }
+    #[cfg(all(test, unix))]
+    pub(super) fn observe_release(&mut self, probe: impl FnOnce() + Send + 'static) {
+        self.release_probe = Some(Box::new(probe));
+    }
+}
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        #[cfg(test)]
+        if let Some(probe) = self.release_probe.take() {
+            probe();
+        }
+        // CLOEXEC does not release an inherited description until the child
+        // executes. The logical owner's lifetime, not that alias, owns the lock.
+        #[cfg(unix)]
+        if let Err(error) = rustix::fs::flock(&self.file, rustix::fs::FlockOperation::Unlock) {
+            eprintln!("database lease unlock failed: {error}");
+        }
     }
 }
 
@@ -108,4 +135,24 @@ pub(super) fn sync_creation(directory: &Path) -> Result<()> {
         .unwrap_or_else(|| Path::new("."));
     File::open(parent)?.sync_all()?;
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn owner_release_is_not_extended_by_an_inherited_file_description() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("private");
+        let owner = Lease::open(&path, "private.sqlite3", true, 4096).unwrap();
+        let inherited = owner.file.try_clone().unwrap();
+        drop(owner);
+        let reopened = Lease::open(&path, "private.sqlite3", false, 4096)
+            .expect("the disposed owner must release its own lease");
+        drop(inherited);
+        assert!(Lease::open(&path, "private.sqlite3", false, 4096).is_err());
+        drop(reopened);
+        assert!(Lease::open(&path, "private.sqlite3", false, 4096).is_ok());
+    }
 }

@@ -63,6 +63,18 @@ jobs:
       - name: Execute macOS file transfer and envelope storage regressions
         if: runner.os == 'macOS'
         run: cargo test --locked --offline --target $env:TARGET --test files --test envelope -- --nocapture
+      - name: Execute macOS private shared IPC ownership and recovery regressions
+        if: runner.os == 'macOS'
+        run: cargo test --locked --offline --target $env:TARGET --lib node::ipc::path_tests -- --nocapture
+      - name: Execute macOS actual long-path contact, room and HTTP workflows
+        if: runner.os == 'macOS'
+        run: cargo test --locked --offline --target $env:TARGET --test ipc_long_paths -- --nocapture
+      - name: Execute macOS room reservation ownership regressions
+        if: runner.os == 'macOS'
+        run: cargo test --locked --offline --target $env:TARGET --lib rooms::local::reservation_tests -- --nocapture
+      - name: Execute macOS protected history-key regressions
+        if: runner.os == 'macOS'
+        run: cargo test --locked --offline --target $env:TARGET --test history_keys -- --nocapture
       - name: Execute macOS pipe/socket stdio and supervised worker regressions
         if: runner.os == 'macOS'
         run: cargo test --locked --offline --target $env:TARGET --test stdio_pipe --test stdio_socket --test stdio_worker --test stdio_terminal -- --nocapture
@@ -81,8 +93,8 @@ jobs:
         run: |
           @'
           ## Native foundation and bounded macOS storage
-          Compilation/lint, minimum binary smoke and explicit platform-contract tests run on all hosts. macOS additionally executes selected storage, transfer, envelope and publication/consent unit regressions. Read each step result; this summary is not a passing result.
+          Compilation/lint, minimum binary smoke and explicit platform-contract tests run on all hosts. macOS additionally executes selected storage, transfer, envelope, shared IPC, actual long-path workflows, protected history-key and publication/consent regressions. Read each step result; this summary is not a passing result.
           Other product integration and library unit suites are NOT executed here. See docs/platforms.md for the exact gating inventory and filesystem/durability scope.
-          Windows protected storage/IPC remains refused. macOS storage tests do not qualify native IPC, capture, UI, installers or the whole product. Expected refusals are tested, not presented as working product features.
+          Windows protected storage/IPC remains refused. Selected macOS IPC/history-key tests do not qualify the complete room lifecycle, capture, UI, installers or the whole product. Expected refusals are tested, not presented as working product features.
           No release, installer, artifact upload, signing, physical capture or native product-support claim is made. This workflow is not a dependency of the existing release job.
           '@ | Add-Content -Path $env:GITHUB_STEP_SUMMARY
