@@ -39,7 +39,9 @@ retain their sessions/results but have no active file ownership. Main integrates
 | `ses_e7e659fcaffeOTCafBKyUVrhre` (Terra fast, checker) | Read-only installer review | Four concrete early findings assigned to installer owner; final snapshot requires re-review |
 | `ses_e7e603c4affe9LzWPMLszi4Fhb` (Sol fast, executor, returned) | None; layout ownership released | CSS corrected; main replayed all 34 unchanged static rendered cases successfully. Native/interactive mobile remains distinct; latest report and CSS digest in ui-qualification.md |
 | `ses_e7e09a202ffeJa5oXNwoHN050g` (Sol fast, executor, returned) | None; stdio ownership released | Darwin broken-output fixture now closes the endpoint rather than read-half-shutdown; strict BrokenPipe preserved, bounded diagnostics retained; committed 1e81009, hosted rerun pending |
-| `ses_e7dfe8f78ffexG325Rn86oA0In` (Sol fast, executor) | New envelope/record.rs, minimal envelope export/config limits, envelope_records tests and focused guide | Bounded standard age record codec only; no history key provisioning, database, runtime or UI edits; tests must cover authentication, work/input bounds and zeroizing failures |
+| `ses_e7dfe8f78ffexG325Rn86oA0In` (Sol fast, executor, returned) | None; codec ownership released | Bounded multi-chunk AGE with exact EOF/authentication reviewed; 11 record tests pass. Main measured optimized workstation timing separately; no complete dependency-internal erasure claim |
+| `ses_e7dd54492ffe1NCPM7uFbzcCQ9` (Sol fast, executor, returned) | None; SQL foundation released | Explicit V1-to-V2 migration, ciphertext policy/search, quarantine/clock/frame fixes reviewed; main ran 24 store and 15 Group tests. SDK callers must commit before exposure; live capture/actor/UI still separate |
+| `ses_e7dd0c727ffejbbbbYTpHiGvV4` (Sol fast, executor, returned) | None; key helper ownership released | Anchored key initialize/load reviewed; main independently ran 13 debug and release tests plus Clippy, including descriptor flags/pending preservation. DB enrollment not inferred from key loading |
 
 ## Integration Boundaries
 

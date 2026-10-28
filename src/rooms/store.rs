@@ -14,6 +14,10 @@ use std::{borrow::Borrow, cell::Cell, fs::File, path::Path, rc::Rc};
 
 const SCHEMA_VERSION: i64 = 1;
 
+pub mod history;
+#[cfg(test)]
+mod history_tests;
+
 #[derive(Default)]
 pub struct JsonCodec;
 impl Codec for JsonCodec {
@@ -121,7 +125,7 @@ impl Provider {
             let version: i64 = connection
                 .pragma_query_value(None, "user_version", |row| row.get(0))
                 .map_err(|_| Error::Storage("cannot read schema version"))?;
-            if version != SCHEMA_VERSION {
+            if version != SCHEMA_VERSION && version != history::SCHEMA_VERSION {
                 return Err(Error::Storage(
                     "unrecognized private state; explicit recovery required",
                 ));
@@ -129,6 +133,9 @@ impl Provider {
             connection
                 .prepare("SELECT name, value FROM kk_private_metadata LIMIT 0")
                 .map_err(|_| Error::Storage("private metadata is missing"))?;
+            if version == history::SCHEMA_VERSION {
+                history::validate_schema(&connection)?;
+            }
         }
         super::database::configure(
             &connection,
@@ -273,6 +280,14 @@ pub struct Transaction {
 }
 impl Transaction {
     pub fn commit(mut self) -> Result<()> {
+        // Savepoint cleanup may have failed while leaving the outer transaction
+        // active. Never commit uncertain MLS/history writes through that handle.
+        if self.session.0.poisoned.get() {
+            self.finished = self.session.0.connection.execute_batch("ROLLBACK").is_ok();
+            return Err(Error::Storage(
+                "uncertain private transaction refused; reopen and verify state",
+            ));
+        }
         if self.session.0.connection.execute_batch("COMMIT").is_err() {
             self.session.0.poisoned.set(true);
             return Err(Error::Storage(

@@ -2,7 +2,7 @@
 //!
 //! Keys are typed X25519 only; no paths, passphrases, plugins or ambient configuration.
 //! Inputs are a restricted binary AGE subset: one X25519 stanza, at most one grease
-//! stanza and one payload frame, not arbitrary AGE files or ASCII armor.
+//! stanza and bounded standard STREAM chunks, not arbitrary AGE files or ASCII armor.
 //! See `docs/history-records.md` for work bounds and upstream zeroization limitations.
 //!
 //! The pinned AGE X25519 identity deliberately has no `Debug` implementation. This
@@ -52,8 +52,8 @@ pub fn seal(plaintext: Zeroizing<Vec<u8>>, recipient: &x25519::Recipient) -> Res
 pub fn open(ciphertext: &[u8], identity: &x25519::Identity) -> Result<Zeroizing<Vec<u8>>> {
     header_bound(ciphertext)?;
     // Cursor is a bounded BufRead; AGE owns syntax, stanza validation, MAC and STREAM.
-    let decryptor =
-        age::Decryptor::new_buffered(Cursor::new(ciphertext)).map_err(|_| Error::Encryption)?;
+    let mut input = Cursor::new(ciphertext);
+    let decryptor = age::Decryptor::new_buffered(&mut input).map_err(|_| Error::Encryption)?;
     let mut reader = decryptor
         .decrypt(std::iter::once(identity as &dyn age::Identity))
         .map_err(|_| Error::Encryption)?;
@@ -72,13 +72,20 @@ pub fn open(ciphertext: &[u8], identity: &x25519::Identity) -> Result<Zeroizing<
             return Err(Error::Encryption);
         }
     }
+    // The pinned AGE reader authenticates the final flag and rejects post-final
+    // chunks. Require exact consumption as well, using the borrowed Cursor rather
+    // than parsing STREAM frames ourselves or assuming that read(0) means raw EOF.
+    drop(reader);
+    if input.position() != ciphertext.len() as u64 {
+        return Err(Error::Encryption);
+    }
     plaintext.truncate(length);
     Ok(plaintext)
 }
 
 /// Resource/policy screening only, not an alternative AGE parser. Like file `open`,
 /// locate the MAC line at a line boundary before invoking AGE's standard parser.
-/// One frame makes any suffix part of that frame's authenticated ciphertext.
+/// The payload cap bounds standard STREAM chunk work before cryptography.
 fn header_bound(ciphertext: &[u8]) -> Result<()> {
     if ciphertext.len() > config::MAX_RECORD_CIPHERTEXT_BYTES {
         return Err(Error::Limit {

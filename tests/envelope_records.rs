@@ -92,7 +92,7 @@ fn every_byte_tamper_and_suffix_fail_closed() {
         assert!(record::open(&corrupt, &identity).is_err());
     }
     // Exact full-frame termination is distinct in AGE and must also reject suffixes.
-    let mut full = seal(&vec![7; config::MAX_RECORD_PLAINTEXT_BYTES], &identity);
+    let mut full = seal(&vec![7; config::AGE_STREAM_CHUNK_BYTES], &identity);
     full.push(0);
     assert!(record::open(&full, &identity).is_err());
 }
@@ -103,9 +103,8 @@ fn maximum_record_tamper_and_truncation_include_the_final_authentication_tag() {
     let bytes = Zeroizing::new(vec![0xa5; config::MAX_RECORD_PLAINTEXT_BYTES]);
     let ciphertext = seal(&bytes, &identity);
     assert_eq!(*record::open(&ciphertext, &identity).unwrap(), *bytes);
-    // For an exact maximum record the payload is a nonce, one full STREAM frame
-    // and its final 16-byte authentication tag. Keep the genuine header unchanged
-    // so these failures exercise payload authentication, not header rejection.
+    // Keep the genuine header unchanged so failures exercise payload authentication,
+    // including failures after earlier chunks have already decrypted internally.
     let payload_start = ciphertext.len() - config::MAX_RECORD_PAYLOAD_BYTES;
     let tag_start = ciphertext.len() - 16;
     for index in [
@@ -138,6 +137,85 @@ fn maximum_record_tamper_and_truncation_include_the_final_authentication_tag() {
             record::open(&ciphertext[..end], &identity),
             Err(Error::Encryption)
         ));
+    }
+    let stream_start = payload_start + 16;
+    let encrypted_chunk_bytes = config::AGE_STREAM_CHUNK_BYTES + 16;
+    for chunk in 0..config::MAX_RECORD_CHUNKS {
+        let start = stream_start + chunk * encrypted_chunk_bytes;
+        let end = (start + encrypted_chunk_bytes).min(ciphertext.len());
+        for index in [start, (start + end - 16) / 2, end - 16, end - 1] {
+            let mut corrupt = ciphertext.clone();
+            corrupt[index] ^= 1;
+            assert!(record::open(&corrupt, &identity).is_err());
+        }
+        for cut in [start, end - 17, end - 16, end - 1, end] {
+            if cut < ciphertext.len() {
+                assert!(record::open(&ciphertext[..cut], &identity).is_err());
+            }
+        }
+    }
+    assert!(record::open(&ciphertext, &x25519::Identity::generate()).is_err());
+}
+
+#[test]
+fn every_chunk_boundary_and_neighbors_roundtrip_up_to_the_record_cap() {
+    let identity = x25519::Identity::generate();
+    let mut sizes = vec![0, 1, config::MAX_RECORD_PLAINTEXT_BYTES];
+    for boundary in (config::AGE_STREAM_CHUNK_BYTES..=config::MAX_RECORD_PLAINTEXT_BYTES)
+        .step_by(config::AGE_STREAM_CHUNK_BYTES)
+    {
+        sizes.extend([boundary - 1, boundary, boundary + 1]);
+    }
+    for size in sizes {
+        let bytes = Zeroizing::new(vec![0xa5; size]);
+        let ciphertext = seal(&bytes, &identity);
+        assert_eq!(*record::open(&ciphertext, &identity).unwrap(), *bytes);
+        let chunks = size.div_ceil(config::AGE_STREAM_CHUNK_BYTES).max(1);
+        assert!(ciphertext.len() <= config::MAX_RECORD_HEADER_BYTES + 16 + size + chunks * 16);
+        // Check the standard library in both directions across exact-final boundaries.
+        let standard = standard_seal(&bytes, &[identity.to_public()]);
+        assert_eq!(*record::open(&standard, &identity).unwrap(), *bytes);
+        let decryptor = age::Decryptor::new(ciphertext.as_slice()).unwrap();
+        let mut reader = decryptor
+            .decrypt(std::iter::once(&identity as &dyn age::Identity))
+            .unwrap();
+        let mut opened = Zeroizing::new(vec![0; size]);
+        reader.read_exact(&mut opened).unwrap();
+        let mut eof = [0];
+        assert_eq!(reader.read(&mut eof).unwrap(), 0);
+        assert_eq!(*opened, *bytes);
+    }
+}
+
+#[test]
+fn suffixes_full_frames_and_concatenated_age_never_return_a_prefix() {
+    let identity = x25519::Identity::generate();
+    let full_frame = vec![0; config::AGE_STREAM_CHUNK_BYTES + 16];
+    let other_record = seal(b"another valid record", &identity);
+    for size in [
+        0,
+        1,
+        config::AGE_STREAM_CHUNK_BYTES - 1,
+        config::AGE_STREAM_CHUNK_BYTES,
+        config::AGE_STREAM_CHUNK_BYTES + 1,
+        config::AGE_STREAM_CHUNK_BYTES * 2,
+        config::MAX_RECORD_PLAINTEXT_BYTES,
+    ] {
+        let ciphertext = seal(&vec![0xa5; size], &identity);
+        for suffix in [b"\0".as_slice(), b"trailing", &full_frame, &other_record] {
+            let mut appended = ciphertext.clone();
+            appended.extend_from_slice(suffix);
+            if size <= config::AGE_STREAM_CHUNK_BYTES * 2 {
+                // These must fail by authentication/EOF, not merely the input cap.
+                assert!(appended.len() < config::MAX_RECORD_CIPHERTEXT_BYTES);
+                assert!(matches!(
+                    record::open(&appended, &identity),
+                    Err(Error::Encryption)
+                ));
+            } else {
+                assert!(record::open(&appended, &identity).is_err());
+            }
+        }
     }
 }
 

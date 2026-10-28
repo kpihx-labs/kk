@@ -19,7 +19,7 @@ does not access environment variables or log payloads.
   There is no custom ciphertext wrapper, AEAD construction or KDF protocol.
 
 This is **not a universal AGE decoder**: accepted inputs contain one X25519
-stanza, zero or one grease stanza and one payload frame within the limits below.
+stanza, zero or one grease stanza and bounded STREAM chunks within the limits below.
 The pinned writer emits one grease stanza. ASCII armor is explicitly rejected.
 
 The exact pinned source, `third_party/overrides/age-0.12.1/src/native/x25519.rs`,
@@ -32,9 +32,10 @@ redacted `Debug`. Never expose, format or log its secret contents.
 ## Bounds before cryptography
 
 The authoritative limits are the `MAX_RECORD_*` constants in `src/config.rs`.
-Plaintext fits in one AGE STREAM frame. Ciphertext is bounded before parsing;
-the header is scanned only within its smaller cap, using the existing file
-envelope's line-boundary MAC delimiter pattern.
+Plaintext allows `MAX_MESSAGE_BYTES * 6 + 8192`: worst-case JSON text escaping
+plus bounded row context. The typed-row caller must validate text, context bytes,
+field counts and structure separately; this byte codec cannot validate metadata.
+Ciphertext and the line-boundary header scan are capped before parsing.
 
 This gate is resource/policy screening, not a replacement syntax parser. It
 permits exactly one `X25519` stanza and at most one inert `*-grease` stanza
@@ -42,12 +43,12 @@ permits exactly one `X25519` stanza and at most one inert `*-grease` stanza
 decryption. The standard AGE parser and X25519 identity retain ownership of
 syntax, canonical key validation, header MAC and payload authentication.
 
-The remaining payload must fit one nonce and one authenticated STREAM frame.
-This bounds frame work before crypto and makes appended bytes part of the
-same authenticated frame, rather than allowing ignored suffixes. Wrong keys,
-tampering, truncation, suffixes, armor and oversized records fail without a
-plaintext result. These restrictions are intentionally narrower than general
-AGE files; multi-recipient and multi-frame files are not record inputs.
+The payload cap is nonce + maximum plaintext + ceil(plaintext/chunk size) tags.
+Header and recipient-count bounds are unchanged. The pinned AGE reader validates
+the final flag and rejects post-final chunks (`primitives/stream.rs`). Opening
+drains that reader, drops it, then requires the borrowed bounded Cursor's position
+to equal the full input length. No plaintext returns before all authentication
+and exact EOF consumption succeed; no custom frame parser or crypto is used.
 
 ## Memory, work and latency
 
@@ -83,13 +84,13 @@ or async executor thread expecting nonblocking behavior.
 ### Observed current-thread timing
 
 Local x86_64 Linux, rustc 1.99.1, unoptimized test profile, debug assertions on:
-20 sequential seal/open pairs for one maximum-size record, no warm-up or load
-isolation. This observes one chunk only, not multi-chunk or SQLite performance.
+20 sequential seal/open pairs at the extended cap (401,408 bytes, seven chunks),
+without warm-up or load isolation. This is not SQLite transaction performance.
 
 | Operation | Min ms | Median ms | Mean ms | Max ms |
 | --- | ---: | ---: | ---: | ---: |
-| Seal | 18.717 | 19.091 | 21.026 | 30.089 |
-| Open | 21.888 | 22.600 | 24.865 | 50.838 |
+| Seal | 75.264 | 77.255 | 77.405 | 86.025 |
+| Open | 75.094 | 77.419 | 77.194 | 79.186 |
 
 Key/fixture preparation and assertions are untimed; seal includes consumed-owner
 drop, open excludes returned-owner drop. There is no absolute CI timing threshold.
@@ -104,9 +105,9 @@ these observations are not latency guarantees or transaction-placement approval.
 standard AGE interoperability, exact plaintext bounds and bound-plus-one,
 ciphertext/header bombs, recipient multiplicity, hostile stanza types, wrong
 identity, bytewise tampering, every truncation and trailing data. It checks the
-maximum-size record at nonce/body positions, every final authentication-tag byte
-and truncations immediately before and throughout that tag; valid ASCII armor
-is rejected. Identity-formatting compile failure and synthetic serialized-key
+maximum-size record at each chunk and final authentication tag, chunk-boundary
+neighbors, truncations and small/full-frame/concatenated suffixes. Armor is rejected.
+Identity-formatting compile failure and synthetic serialized-key
 redaction are separate checks. Wiping checks cover the zeroizing public type and
 explicit in-place wiping, not freed memory. Tests use
 synthetic keys only and the codec has no filesystem API or filesystem effects;

@@ -8,12 +8,17 @@ pub const MESSAGE_HEADER_BYTES: usize = 5;
 pub const MAX_AGE_HEADER_BYTES: usize = 65_536;
 /// Bound before parsing any certificate or private-key file.
 pub const MAX_IDENTITY_BYTES: usize = 16_384;
-/// Records fit in one standard AGE STREAM plaintext frame (including empty records).
-pub const MAX_RECORD_PLAINTEXT_BYTES: usize = 65_536;
+/// Worst-case JSON escaping of one maximum message plus bounded typed row context.
+/// Callers must separately validate message and context limits before serialization.
+pub const MAX_RECORD_PLAINTEXT_BYTES: usize = MAX_MESSAGE_BYTES * 6 + 8192;
 /// Small binary header: one X25519 stanza and at most one inert AGE grease stanza.
 pub const MAX_RECORD_HEADER_BYTES: usize = 1024;
-/// One AGE payload nonce and one authenticated STREAM frame, without the header.
-pub const MAX_RECORD_PAYLOAD_BYTES: usize = 16 + MAX_RECORD_PLAINTEXT_BYTES + 16;
+/// Standard AGE STREAM chunk size, not a custom framing parameter.
+pub const AGE_STREAM_CHUNK_BYTES: usize = 65_536;
+pub const MAX_RECORD_CHUNKS: usize = MAX_RECORD_PLAINTEXT_BYTES.div_ceil(AGE_STREAM_CHUNK_BYTES);
+/// One AGE nonce plus bounded plaintext and one authentication tag per chunk.
+pub const MAX_RECORD_PAYLOAD_BYTES: usize =
+    16 + MAX_RECORD_PLAINTEXT_BYTES + MAX_RECORD_CHUNKS * 16;
 pub const MAX_RECORD_CIPHERTEXT_BYTES: usize = MAX_RECORD_HEADER_BYTES + MAX_RECORD_PAYLOAD_BYTES;
 /// Default whole-operation deadline, including handshake and receipt.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);

@@ -16,6 +16,9 @@ current state and Git history for detailed implementation checkpoints.
   workflows and independent keyed media controls with concurrency regressions.
 - Add deterministic ZIP archives and bounded immutable-snapshot verification.
 - Add nonpublishing native foundation jobs; these are not product qualification.
+- Add bounded multi-chunk AGE records, a transaction-owned encrypted-history SDK
+  foundation with explicit schema migration and an anchored room-key helper.
+  Live message capture, key enrollment and history adapters are not included yet.
 - Add default-off, authenticated room profile-name metadata with bounded refresh,
   explicit provenance and disclosure fencing against cooperating opt-out writers.
 - Reject stale Settings saves through lossless revisions; retain editable drafts
