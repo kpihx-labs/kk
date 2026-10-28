@@ -7,13 +7,33 @@ rust-foundation:
   timeout: 15m
   script:
     - rustup component add rustfmt clippy
-    - cargo fetch --locked
-    - cargo fmt --package kk -- --check
-    - cargo clippy --locked --all-targets -- -D warnings
-    - cargo test --locked --all-targets
-    - cargo doc --locked --no-deps
+    - |
+      case "$(uname -m)" in
+        x86_64) uv_target=x86_64-unknown-linux-gnu ;;
+        aarch64) uv_target=aarch64-unknown-linux-gnu ;;
+        *) exit 1 ;;
+      esac
+      curl --fail --show-error --location --proto '=https' --proto-redir '=https' \
+        --connect-timeout 15 --max-time 120 --max-filesize 50000000 \
+        "https://github.com/astral-sh/uv/releases/download/0.10.3/uv-${uv_target}.tar.gz" \
+        --output /tmp/kk-ci-uv.tar.gz
+      tar -xzf /tmp/kk-ci-uv.tar.gz -C /tmp
+      install -m 0755 "/tmp/uv-${uv_target}/uv" /usr/local/bin/uv
+      useradd --user-group --no-create-home --home-dir "$CI_PROJECT_DIR/.ci-home" kk-ci
+      install -d -o kk-ci -g kk-ci "$CI_PROJECT_DIR/.ci-home" "$CARGO_HOME"
+      chown -R kk-ci:kk-ci "$CI_PROJECT_DIR"
+    - runuser -u kk-ci -- id
+    - runuser -u kk-ci -- uv python install 3.12
+    - runuser -u kk-ci -- cargo fetch --locked
+    - runuser -u kk-ci -- cargo fmt --package kk -- --check
+    - runuser -u kk-ci -- cargo clippy --locked --all-targets -- -D warnings
+    - runuser -u kk-ci -- cargo test --locked --all-targets
+    - runuser -u kk-ci -- cargo doc --locked --no-deps
   variables:
     RUSTDOCFLAGS: -D warnings
+    CARGO_HOME: $CI_PROJECT_DIR/.ci-cargo
+    UV_PYTHON_INSTALL_DIR: $CI_PROJECT_DIR/.ci-python
+    UV_CACHE_DIR: $CI_PROJECT_DIR/.ci-uv-cache
 
 browser-adapter:
   stage: check
