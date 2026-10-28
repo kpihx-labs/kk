@@ -13,6 +13,7 @@ use std::{
     time::Duration,
 };
 use zeroize::Zeroizing;
+mod install;
 mod media;
 mod pair;
 mod profile;
@@ -89,6 +90,10 @@ fn profile_directory(selected: Option<&std::path::Path>) -> Result<PathBuf> {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Install authenticated prebuilt bytes without opening runtime profiles
+    Install(install::InstallArgs),
+    /// Reactivate an unchanged, verified managed version without touching profiles
+    Rollback(install::RollbackArgs),
     /// Private local workspace; foreground SDK rooms, no installed service
     #[cfg(unix)]
     Ui {
@@ -271,6 +276,33 @@ pub(crate) async fn run() -> Result<()> {
         profile_name,
         command,
     } = Cli::parse();
+    let command = match command {
+        Some(Command::Install(args)) => {
+            if profile.is_some() || profile_name.is_some() {
+                return Err(Error::Configuration(
+                    "installation does not use runtime profiles",
+                ));
+            }
+            return tokio::select! {
+                biased;
+                signal = tokio::signal::ctrl_c() => { signal?; Err(Error::Cancelled) },
+                result = install::install(args) => result,
+            };
+        }
+        Some(Command::Rollback(args)) => {
+            if profile.is_some() || profile_name.is_some() {
+                return Err(Error::Configuration(
+                    "rollback does not use runtime profiles",
+                ));
+            }
+            return tokio::select! {
+                biased;
+                signal = tokio::signal::ctrl_c() => { signal?; Err(Error::Cancelled) },
+                result = install::rollback(args) => result,
+            };
+        }
+        command => command,
+    };
     let profile = match profile_name {
         Some(id) => Some(kk::profile::catalog::resolve(&id)?),
         None => profile,
@@ -317,6 +349,9 @@ pub(crate) async fn run() -> Result<()> {
 
 async fn execute(profile: Option<PathBuf>, command: Option<Command>) -> Result<()> {
     match command {
+        Some(Command::Install(_) | Command::Rollback(_)) => {
+            unreachable!("installation bypasses runtime profiles")
+        }
         #[cfg(unix)]
         Some(Command::Ui { .. }) => unreachable!("the UI owns its foreground SDK lifecycle"),
         Some(Command::Media { .. }) => unreachable!("native media owns its subprocess shutdown"),

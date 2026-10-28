@@ -85,7 +85,10 @@ impl Device {
             .await
             .unwrap()
     }
-    async fn action(&self, action: Value) -> Value {
+    async fn action(&self, mut action: Value) -> Value {
+        if action["action"] == "settings" && action.get("expected_revision").is_none() {
+            action["expected_revision"] = self.state().await["settings"]["revision"].clone();
+        }
         let response = self
             .request(
                 Method::POST,
@@ -227,7 +230,11 @@ async fn ui_requires_private_session_exact_host_and_same_origin_without_port_lea
             let state = device.state().await;
             assert_eq!(state["media"]["max_tracks"], config::MEDIA_MAX_STREAMS);
             assert_eq!(state["media"]["max_subscriptions"], config::MEDIA_MAX_STREAMS);
-            assert_eq!(state["media"]["max_users"], config::MEDIA_MAX_STREAMS * 2);
+            assert_eq!(state["media"]["max_publications"], config::MEDIA_MAX_PUBLICATIONS);
+            assert_eq!(state["media"]["source_kinds"], config::MEDIA_SOURCE_KINDS);
+            assert_eq!(state["media"]["max_users"], config::MEDIA_MAX_USERS);
+            assert_eq!(config::MEDIA_MAX_STREAMS, (config::ROOM_MAX_MEMBERS - 1) * config::MEDIA_SOURCE_KINDS);
+            assert_eq!(config::MEDIA_MAX_USERS, config::MEDIA_MAX_STREAMS + config::MEDIA_MAX_PUBLICATIONS);
             assert_eq!(
                 device
                     .request(Method::GET, "/api/state", None, None, false)
@@ -285,14 +292,44 @@ async fn ui_requires_private_session_exact_host_and_same_origin_without_port_lea
             assert!(!response.headers().contains_key(header::SET_COOKIE));
             assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
             assert_eq!(device.state().await["settings"]["display_name"], "My profile");
+            assert_eq!(device.state().await["settings"]["share_display_name"], false);
+            assert_eq!(device.state().await["settings"]["sidebar_mode"], "expanded");
+            for mode in ["compact", "expanded"] {
+                device.action(json!({"action":"settings", "sidebar_mode":mode})).await;
+                assert_eq!(device.state().await["settings"]["sidebar_mode"], mode);
+                assert_eq!(serde_json::to_value(crate::profile::Settings::load(&device.app.0.profile).unwrap()).unwrap()["sidebar_mode"], mode);
+            }
+            device.action(json!({"action":"settings", "sidebar_mode":"auto"})).await;
+            device.action(json!({"action":"settings", "share_display_name":true})).await;
             device.action(json!({"action":"settings", "display_name":"Alice"})).await;
             device.action(json!({"action":"settings", "appearance":{"hue":120,"clarity":60,"saturation":30}})).await;
             let settings = device.state().await["settings"].clone();
             assert_eq!(settings["display_name"], "Alice");
             assert_eq!(settings["appearance"]["hue"], 120);
-            let refused = device.request(Method::POST, "/api/action", Some(json!({"action":"settings", "appearance":{"hue":400,"clarity":60,"saturation":30}})), Some(&device.app.0.origin), true).await;
+            assert_eq!(settings["share_display_name"], true);
+            assert_eq!(settings["sidebar_mode"], "auto");
+            let before = std::fs::read(device.app.0.profile.join("settings.json")).unwrap();
+            let refused = device.request(Method::POST, "/api/action", Some(json!({"action":"settings", "expected_revision":settings["revision"], "display_name":"Discarded", "sidebar_mode":"invalid"})), Some(&device.app.0.origin), true).await;
+            assert!(refused.status().is_client_error());
+            assert_eq!(device.state().await["settings"], settings);
+            assert_eq!(std::fs::read(device.app.0.profile.join("settings.json")).unwrap(), before);
+            device.action(json!({"action":"settings", "share_display_name":false})).await;
+            let settings = device.state().await["settings"].clone();
+            assert_eq!(settings["display_name"], "Alice");
+            assert_eq!(settings["appearance"]["hue"], 120);
+            let refused = device.request(Method::POST, "/api/action", Some(json!({"action":"settings", "expected_revision":settings["revision"], "appearance":{"hue":400,"clarity":60,"saturation":30}})), Some(&device.app.0.origin), true).await;
             assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
             assert_eq!(device.state().await["settings"], settings);
+            let stale_revision = settings["revision"].clone();
+            device.action(json!({"action":"settings", "share_display_name":true})).await;
+            device.action(json!({"action":"settings", "share_display_name":false})).await;
+            let before = std::fs::read(device.app.0.profile.join("settings.json")).unwrap();
+            let refused = device.request(Method::POST, "/api/action", Some(json!({"action":"settings", "expected_revision":stale_revision, "share_display_name":true, "display_name":"Stale dialog"})), Some(&device.app.0.origin), true).await;
+            assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+            let body = to_bytes(refused.into_body(), config::UI_JSON_BYTES).await.unwrap();
+            assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["code"], "SETTINGS_CONFLICT");
+            assert_eq!(std::fs::read(device.app.0.profile.join("settings.json")).unwrap(), before);
+            assert_eq!(device.state().await["settings"]["share_display_name"], false);
             let refused = device.request(Method::POST, "/api/action", Some(json!({"action":"join", "name":"../bad", "invitation":"{}", "bind":address(), "accept_files":true})), Some(&device.app.0.origin), true).await;
             assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
             let operations = device.state().await["operations"].clone();
@@ -321,6 +358,9 @@ async fn ui_http_pairs_independent_devices_owns_foreground_rooms_and_redacts_sen
         let b = Device::new(root.path().join("b"), 12346).await;
         a.action(json!({"action": "init"})).await;
         b.action(json!({"action": "init"})).await;
+        // Even a configured human name is local-only until separately enabled.
+        a.action(json!({"action":"settings","display_name":"Sam"})).await;
+        b.action(json!({"action":"settings","display_name":"Sam"})).await;
         assert_ne!(a.state().await["identity"], b.state().await["identity"]);
         a.action(json!({"action": "create", "name": "team", "title": "UI integration room", "bind": address()})).await;
         a.action(json!({"action": "serve", "name": "team", "accept_files": true})).await;
@@ -347,6 +387,7 @@ async fn ui_http_pairs_independent_devices_owns_foreground_rooms_and_redacts_sen
         let before_label = a.state().await;
         let member = before_label["rooms"][0]["presentation"].as_array().unwrap().iter().find(|entry| entry["id"] == peer_b).unwrap();
         assert_eq!(member["source"], "unknown");
+        assert_eq!(before_label["rooms"][0]["status"]["profile_names"], json!({}));
         a.action(json!({"action":"member-label","name":"team","member":peer_b,"display_name":"Local friend"})).await;
         let labeled = a.state().await;
         let member = labeled["rooms"][0]["presentation"].as_array().unwrap().iter().find(|entry| entry["id"] == peer_b).unwrap();
@@ -366,6 +407,25 @@ async fn ui_http_pairs_independent_devices_owns_foreground_rooms_and_redacts_sen
         a.action(json!({"action":"member-label","name":"team","member":peer_b,"display_name":null})).await;
         let cleared = a.state().await;
         assert_eq!(cleared["rooms"][0]["presentation"].as_array().unwrap().iter().find(|entry| entry["id"] == peer_b).unwrap()["source"], "unknown");
+        a.action(json!({"action":"settings","share_display_name":true})).await;
+        b.action(json!({"action":"settings","share_display_name":true})).await;
+        let announced = a.until(|state| state["rooms"][0]["presentation"].as_array().unwrap().iter().any(|entry| entry["id"] == peer_b && entry["source"] == "self_announcement")).await;
+        let remote_announced = b.until(|state| state["rooms"][0]["presentation"].as_array().unwrap().iter().any(|entry| entry["id"] == peer_a && entry["source"] == "self_announcement")).await;
+        assert_eq!(announced["rooms"][0]["status"]["profile_names"][&peer_b], "Sam");
+        for state in [&announced, &remote_announced] {
+            let members = state["rooms"][0]["presentation"].as_array().unwrap();
+            assert_eq!(members.len(), 2);
+            assert!(members.iter().all(|entry| entry["display_name"] == "Sam"));
+            assert_ne!(members[0]["id"], members[1]["id"]);
+        }
+        assert_eq!(before_label["rooms"][0]["status"]["members"], announced["rooms"][0]["status"]["members"]);
+        a.action(json!({"action":"member-label","name":"team","member":peer_b,"display_name":"Known locally"})).await;
+        b.action(json!({"action":"settings","share_display_name":false})).await;
+        let disabled = a.state().await;
+        let member = disabled["rooms"][0]["presentation"].as_array().unwrap().iter().find(|entry| entry["id"] == peer_b).unwrap();
+        assert_eq!(member["display_name"], "Known locally");
+        assert_eq!(member["source"], "local_override");
+        assert_eq!(b.state().await["settings"]["share_display_name"], false);
         a.action(json!({"action": "send", "name": "team", "text": "actual UI event", "sensitive": false})).await;
         b.until(|state| state["messages"].as_array().unwrap().iter().any(|message| message["text"] == "actual UI event")).await;
         a.action(json!({"action": "send", "name": "team", "text": "synthetic sensitive UI payload", "sensitive": true})).await;
@@ -431,6 +491,7 @@ async fn ui_http_pairs_independent_devices_owns_foreground_rooms_and_redacts_sen
         let corrupted = a.state().await;
         assert!(corrupted["rooms"][0]["presentation_error"].is_string());
         assert!(corrupted["rooms"][0]["presentation"].is_null());
+        assert_eq!(corrupted["rooms"][0]["status"]["running"], true);
         let refused = a.request(Method::POST, "/api/action", Some(json!({"action":"member-label","name":"team","member":peer_b,"display_name":"Again"})), Some(&a.app.0.origin), true).await;
         assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
         assert_eq!(std::fs::read(a.app.0.profile.join("labels.json")).unwrap(), b"invalid labels");

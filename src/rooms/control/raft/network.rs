@@ -29,11 +29,13 @@ use tokio::{
 const ALPN: &[u8] = b"kk-room-control/1";
 mod file;
 mod media;
+mod profile;
 mod replica;
 pub use media::{
     Frame as MediaFrame, Publication as MediaPublication, Status as MediaStatus,
     Subscription as MediaSubscription,
 };
+pub use profile::ProfileMetadata;
 
 pub fn configuration() -> Result<openraft::Config> {
     openraft::Config {
@@ -61,6 +63,10 @@ struct Shared {
     peers: RwLock<BTreeMap<PeerId, Peer>>,
     slots: Mutex<BTreeMap<PeerId, Slot>>,
     room_port: RwLock<Option<crate::rooms::runtime::Handle>>,
+    profile_source: RwLock<profile::SourceState>,
+    profile_cache: std::sync::Mutex<profile::Cache>,
+    #[cfg(all(test, unix))]
+    profile_publication_pause: std::sync::Mutex<Option<profile::PublicationPause>>,
     room_data: Arc<Semaphore>,
     room_files: RwLock<file::Consent>,
     file_shares: RwLock<replica::Registry>,
@@ -124,6 +130,7 @@ enum Request {
     Configuration,
     RoomText(Vec<u8>),
     RoomFile,
+    ProfileGet,
     FileAvailability([u8; 32]),
     FileFetch([u8; 32]),
     MediaOffer(media::Offer),
@@ -576,6 +583,12 @@ impl Factory {
             return Err(Error::Authentication);
         }
         self.shared.media_epoch.store(scope.epoch, Ordering::SeqCst);
+        let profile_members: Vec<_> = scope.members.iter().map(PeerId::from_peer).collect();
+        self.shared
+            .profile_cache
+            .lock()
+            .map_err(|_| Error::Protocol)?
+            .observe(scope.epoch, &profile_members)?;
         // An unconfigured recipient's synthetic genesis is not a newer trust
         // roster. Retain its independently approved controller seeds until a
         // committed configuration exists, including delegated enrollment.
@@ -616,6 +629,7 @@ impl Factory {
         let roots: Vec<_> = peers.values().cloned().collect();
         let config = transport::server_config(&identity, &roots, &[ALPN], transport::Policy::Room)?;
         let (endpoint, drivers) = transport::owned_server(config, address)?;
+        let own = PeerId::from_peer(&identity.peer());
         let shared = Arc::new(Shared {
             bootstrap_controllers: peers
                 .keys()
@@ -629,6 +643,10 @@ impl Factory {
             peers: RwLock::new(peers),
             slots: Mutex::new(BTreeMap::new()),
             room_port: RwLock::new(None),
+            profile_source: RwLock::new(profile::SourceState::default()),
+            profile_cache: std::sync::Mutex::new(profile::Cache::new(room, own)),
+            #[cfg(all(test, unix))]
+            profile_publication_pause: std::sync::Mutex::new(None),
             room_data: Arc::new(Semaphore::new(config::ROOM_DATA_RPCS)),
             room_files: RwLock::new(file::Consent::default()),
             file_shares: RwLock::new(replica::Registry::default()),
@@ -653,11 +671,21 @@ impl Factory {
     }
     pub(super) fn fail_closed(&self) {
         self.shared.stopping.store(true, Ordering::SeqCst);
+        self.shared
+            .profile_cache
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .suspend();
         self.revoke_files();
         self.shared.endpoint.close(1u32.into(), b"");
     }
     pub(super) fn close(&self) {
         self.shared.stopping.store(true, Ordering::SeqCst);
+        self.shared
+            .profile_cache
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .suspend();
         self.revoke_files();
         self.shared.media.close();
         self.shared.endpoint.close(0u32.into(), b"");
@@ -689,10 +717,20 @@ impl Factory {
                 "private room endpoint already registered",
             ));
         }
+        self.shared
+            .profile_cache
+            .lock()
+            .map_err(|_| Error::Protocol)?
+            .register(status.epoch, &status.members)?;
         *port = Some(handle);
         Ok(())
     }
     pub fn unregister_room(&self) -> Result<()> {
+        self.shared
+            .profile_cache
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .suspend();
         self.shared.media.invalidate_sessions();
         let result = match self.shared.room_port.write() {
             Ok(mut port) => {
@@ -815,6 +853,11 @@ impl Factory {
     pub async fn replace_peers(&self, peers: BTreeMap<PeerId, Peer>) -> Result<()> {
         let _scope = self.shared.scope_updates.lock().await;
         validate_peers(&peers)?;
+        self.shared
+            .profile_cache
+            .lock()
+            .map_err(|_| Error::Protocol)?
+            .invalidate();
         let result = self.install_scope(peers).await;
         if result.is_ok() {
             self.shared.explicit_scope.store(true, Ordering::SeqCst);
@@ -904,6 +947,19 @@ struct Attempt {
     recv: quinn::RecvStream,
     complete: bool,
 }
+#[derive(Clone, Copy)]
+enum ExchangePolicy {
+    Required,
+    OptionalProfile,
+}
+impl ExchangePolicy {
+    fn response_limit(self) -> usize {
+        match self {
+            Self::Required => config::ROOM_CONTROL_RPC_BYTES,
+            Self::OptionalProfile => config::ROOM_PROFILE_WIRE_BYTES,
+        }
+    }
+}
 impl Drop for Attempt {
     fn drop(&mut self) {
         if !self.complete {
@@ -968,6 +1024,15 @@ impl Client {
         request: Request,
         option: RPCOption,
     ) -> Result<(Response, quinn::Connection)> {
+        self.exchange_policy(request, option, ExchangePolicy::Required)
+            .await
+    }
+    async fn exchange_policy<T: DeserializeOwned>(
+        &self,
+        request: Request,
+        option: RPCOption,
+        policy: ExchangePolicy,
+    ) -> Result<(T, quinn::Connection)> {
         let shared = self.shared.upgrade().ok_or(Error::Cancelled)?;
         if shared.stopping.load(Ordering::SeqCst) {
             return Err(Error::Cancelled);
@@ -997,6 +1062,7 @@ impl Client {
                 Request::ReadBarrier => 1,
                 Request::Configuration => 1,
                 Request::RoomText(_) => -1,
+                Request::ProfileGet => -1,
                 Request::RoomFile | Request::FileFetch(_) => -2,
                 Request::FileAvailability(_) => -1,
                 Request::MediaOffer(_) | Request::MediaEnd(_) => 0,
@@ -1018,13 +1084,20 @@ impl Client {
             )
             .await?;
             attempt.send.finish().map_err(|_| Error::Network)?;
-            let response = read_frame(&mut attempt.recv).await?;
+            let response = match policy {
+                ExchangePolicy::Required => read_frame(&mut attempt.recv).await?,
+                ExchangePolicy::OptionalProfile => {
+                    read_frame_limit(&mut attempt.recv, policy.response_limit()).await?
+                }
+            };
             attempt.complete = true;
             Ok((response, connection))
         })
         .await
         .unwrap_or(Err(Error::Timeout));
-        if matches!(&result, Err(Error::Timeout | Error::Network)) {
+        if matches!(policy, ExchangePolicy::Required)
+            && matches!(&result, Err(Error::Timeout | Error::Network))
+        {
             self.retire_unresponsive(&shared, used);
         }
         result
@@ -1179,10 +1252,23 @@ async fn serve_connection(
                         Ok::<_, Error>(envelope)
                     };
                     let Ok(Ok(envelope)) = tokio::time::timeout(config::DEFAULT_TIMEOUT, header).await else { return; };
-                    let deadline = if matches!(envelope.request, Request::RoomFile | Request::FileFetch(_)) { config::DEFAULT_FILE_TIMEOUT } else { config::DEFAULT_TIMEOUT };
+                    let deadline = match envelope.request {
+                        Request::RoomFile | Request::FileFetch(_) => config::DEFAULT_FILE_TIMEOUT,
+                        Request::ProfileGet => config::ROOM_PROFILE_TIMEOUT,
+                        _ => config::DEFAULT_TIMEOUT,
+                    };
                     let _ = tokio::time::timeout(deadline, async {
                         if envelope.room != shared.room || !authorized(&shared, id)? { return Err(Error::Denied); }
                         let response = match envelope.request {
+                            Request::ProfileGet => {
+                                // Metadata authorization synchronizes the private room
+                                // through quorum RPCs; never occupy that control lane.
+                                drop(_permit);
+                                let (metadata, _profile_work) = profile::disclose(&shared, id).await?;
+                                metadata.send(&shared, &mut send).await?;
+                                send.finish().map_err(|_| Error::Network)?;
+                                return Ok(());
+                            },
                             Request::Configuration => Response::Configuration(configuration_local(&raft, &machine, id).await),
                             Request::MediaOffer(offer) => {
                                 let reply = match shared.media.offer(&shared, id, connection_id, offer) {
@@ -1337,20 +1423,32 @@ fn encode_frame(value: &impl Serialize) -> Result<Vec<u8>> {
     Ok(output.bytes)
 }
 async fn read_frame<T: DeserializeOwned>(stream: &mut quinn::RecvStream) -> Result<T> {
-    let value = read_prefix(stream).await?;
+    read_frame_limit(stream, config::ROOM_CONTROL_RPC_BYTES).await
+}
+async fn read_frame_limit<T: DeserializeOwned>(
+    stream: &mut quinn::RecvStream,
+    max: usize,
+) -> Result<T> {
+    let value = read_prefix_limit(stream, max).await?;
     if stream.read(&mut [0]).await?.is_some() {
         return Err(Error::Protocol);
     }
     Ok(value)
 }
 async fn read_prefix<T: DeserializeOwned>(stream: &mut quinn::RecvStream) -> Result<T> {
+    read_prefix_limit(stream, config::ROOM_CONTROL_RPC_BYTES).await
+}
+async fn read_prefix_limit<T: DeserializeOwned>(
+    stream: &mut quinn::RecvStream,
+    max: usize,
+) -> Result<T> {
     let mut length = [0; 4];
     stream.read_exact(&mut length).await?;
     let length = u32::from_be_bytes(length) as usize;
-    if length > config::ROOM_CONTROL_RPC_BYTES {
+    if length > max {
         return Err(Error::Limit {
             resource: "control RPC",
-            max: config::ROOM_CONTROL_RPC_BYTES,
+            max,
         });
     }
     let mut bytes = vec![0; length];

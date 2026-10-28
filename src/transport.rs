@@ -14,6 +14,7 @@ use crate::{Error, Identity, Peer, Result, config, error::connection_error};
 #[derive(Clone, Copy)]
 pub(crate) enum Policy {
     OneShot,
+    #[cfg(unix)]
     Interactive,
     Room,
 }

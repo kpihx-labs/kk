@@ -1,7 +1,9 @@
 //! Bounded local input. Hidden terminal reads remain cancellable by the runtime.
 
 use crate::{Error, Result, config};
-use std::io::{self, IsTerminal, Read, Write};
+#[cfg(unix)]
+use std::io::Read;
+use std::io::{self, IsTerminal};
 use zeroize::Zeroizing;
 
 pub async fn text(value: Option<&str>, sensitive: bool) -> Result<Zeroizing<String>> {
@@ -54,21 +56,42 @@ pub async fn passphrase(confirm: bool) -> Result<age::secrecy::SecretString> {
 
 #[cfg(unix)]
 async fn line(hidden: bool, prompt: &str) -> Result<Zeroizing<String>> {
-    let (cancel_read, cancel_write) = rustix::pipe::pipe_with(rustix::pipe::PipeFlags::CLOEXEC)?;
-    let prompt = prompt.to_owned();
-    let result = tokio::task::spawn_blocking(move || blocking_line(hidden, &prompt, cancel_read))
+    let terminal = io::stdin().is_terminal();
+    // Never hold the echo restoration guard across diagnostic IO. Even stderr
+    // may be a full pipe; cancellation must join the blocking input worker.
+    if terminal {
+        crate::output::diagnostic(prompt.as_bytes()).await?;
+    } else if hidden {
+        crate::output::diagnostic(b"INPUT sensitive stdin\n").await?;
+    }
+    #[cfg(target_vendor = "apple")]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        let kind = std::fs::metadata("/dev/stdin")?.file_type();
+        if !io::stdin().is_terminal() && !kind.is_file() && !kind.is_socket() {
+            let worker = crate::stdio_worker::configured()?;
+            let bytes = worker.read().await?;
+            let value = std::str::from_utf8(&bytes)
+                .map_err(|_| Error::Configuration("text input must be UTF-8"))?;
+            return Ok(Zeroizing::new(value.to_owned()));
+        }
+    }
+    // std sets CLOEXEC on both owned endpoints (non-atomically on Apple).
+    // No data is sent: dropping the future's endpoint wakes the worker's poll
+    // with EOF/HUP, including when spawn_blocking itself cannot be cancelled.
+    let (cancel_read, cancel_write) = std::os::unix::net::UnixStream::pair()?;
+    let result = tokio::task::spawn_blocking(move || blocking_line(hidden, cancel_read.into()))
         .await
         .map_err(|_| Error::Configuration("input worker failed"))?;
     drop(cancel_write);
+    if terminal && hidden && result.is_ok() {
+        crate::output::diagnostic(b"\n").await?;
+    }
     result
 }
 
 #[cfg(unix)]
-fn blocking_line(
-    hidden: bool,
-    prompt: &str,
-    cancel: rustix::fd::OwnedFd,
-) -> Result<Zeroizing<String>> {
+fn blocking_line(hidden: bool, cancel: rustix::fd::OwnedFd) -> Result<Zeroizing<String>> {
     use rustix::event::{PollFd, PollFlags, poll};
     use rustix::{
         fs::{Mode, OFlags},
@@ -89,7 +112,7 @@ fn blocking_line(
     let metadata = std::fs::metadata("/dev/stdin")?;
     let socket = metadata.file_type().is_socket();
     let file = if !terminal && (metadata.is_file() || socket) {
-        std::fs::File::from(rustix::io::dup(io::stdin())?)
+        std::fs::File::from(rustix::io::fcntl_dupfd_cloexec(io::stdin(), 0)?)
     } else {
         std::fs::File::from(rustix::fs::open(
             if terminal { "/dev/tty" } else { "/dev/stdin" },
@@ -99,23 +122,20 @@ fn blocking_line(
     };
     let _restore = if terminal && hidden {
         let original = rustix::termios::tcgetattr(&file)?;
-        let mut attributes = original.clone();
+        // Acquire the restoration descriptor before changing terminal state.
+        let restore = Restore {
+            file: file.try_clone()?,
+            original,
+        };
+        let mut attributes = restore.original.clone();
         attributes
             .local_modes
             .remove(LocalModes::ECHO | LocalModes::ECHONL);
         rustix::termios::tcsetattr(&file, OptionalActions::Now, &attributes)?;
-        Some(Restore {
-            file: file.try_clone()?,
-            original,
-        })
+        Some(restore)
     } else {
         None
     };
-    if terminal {
-        write!(io::stderr(), "{prompt}")?;
-    } else if hidden {
-        writeln!(io::stderr(), "INPUT sensitive stdin")?;
-    }
     loop {
         let mut descriptors = [
             PollFd::new(&file, PollFlags::IN),
@@ -169,9 +189,6 @@ fn blocking_line(
         }
         if bytes.last() == Some(&b'\n') {
             bytes.pop();
-        }
-        if hidden {
-            writeln!(io::stderr())?;
         }
     }
     let value = std::str::from_utf8(&bytes)

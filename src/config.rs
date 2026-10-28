@@ -12,6 +12,8 @@ pub const MAX_IDENTITY_BYTES: usize = 16_384;
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Upper limit for callers; shorter deadlines are useful for cancellation tests.
 pub const MAX_TIMEOUT: Duration = Duration::from_secs(300);
+/// Human invitation rendezvous, bounded by the existing pairing maximum.
+pub const ROOM_INVITATION_WAIT: Duration = MAX_TIMEOUT;
 /// Discovery is intentionally short-lived and results are always untrusted.
 pub const MAX_DISCOVERY_TIME: Duration = Duration::from_secs(15);
 pub const DEFAULT_DISCOVERY_TIME: Duration = Duration::from_secs(3);
@@ -59,6 +61,12 @@ pub const ROOM_APPLIED_RECORD_BYTES: usize = 8 * 1024 * 1024;
 pub const ROOM_COMMAND_QUEUE: usize = 64;
 pub const ROOM_EVENT_QUEUE: usize = 64;
 pub const ROOM_DATA_RPCS: usize = 4;
+/// Optional metadata has its own small, process-wide work and wire budgets.
+pub const ROOM_PROFILE_RPCS: usize = 4;
+pub const ROOM_PROFILE_WIRE_BYTES: usize = 2048;
+pub const ROOM_PROFILE_TIMEOUT: Duration = Duration::from_secs(3);
+pub const ROOM_PROFILE_CACHE_TTL: Duration = Duration::from_secs(30);
+pub const ROOM_PROFILE_CACHE_BACKOFF: Duration = Duration::from_secs(5);
 pub const MEDIA_PACKET_BYTES: usize = 1024;
 pub const MEDIA_ENCODED_FRAME_BYTES: usize = 256 * 1024;
 pub const MEDIA_DIAGNOSTIC_BYTES: usize = 8192;
@@ -72,7 +80,13 @@ pub const MEDIA_VIDEO_MAX_RATE: u64 = 2_000_000;
 pub const MEDIA_PROCESS_ADDRESS_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 pub const MEDIA_PROCESS_DATA_BYTES: u64 = 256 * 1024 * 1024;
 pub const MEDIA_PACKET_QUEUE: usize = 8;
-pub const MEDIA_MAX_STREAMS: usize = 4;
+/// Audio, camera and screen, independently consented for each remote member.
+pub const MEDIA_SOURCE_KINDS: usize = 3;
+/// Incoming peer/kind slots at one endpoint of one room.
+pub const MEDIA_MAX_STREAMS: usize = (ROOM_MAX_MEMBERS - 1) * MEDIA_SOURCE_KINDS;
+/// Local encode-once sources, independent of authorized remote fan-out.
+pub const MEDIA_MAX_PUBLICATIONS: usize = MEDIA_SOURCE_KINDS;
+pub const MEDIA_MAX_USERS: usize = MEDIA_MAX_STREAMS + MEDIA_MAX_PUBLICATIONS;
 pub const MEDIA_DATAGRAM_BUFFER_BYTES: usize = 64 * (MEDIA_PACKET_BYTES + 16);
 pub const MEDIA_POLICY_REFRESH: Duration = Duration::from_millis(500);
 pub const MEDIA_POLICY_TIMEOUT: Duration = Duration::from_millis(1500);

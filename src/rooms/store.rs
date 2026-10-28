@@ -6,7 +6,9 @@ use crate::{Error, Result, config};
 use openmls_libcrux_crypto::CryptoProvider;
 use openmls_sqlite_storage::{Codec, SqliteStorageProvider};
 use openmls_traits::OpenMlsProvider;
-use rusqlite::{Connection, OpenFlags, OptionalExtension};
+#[cfg(unix)]
+use rusqlite::OpenFlags;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{borrow::Borrow, cell::Cell, fs::File, path::Path, rc::Rc};
 
@@ -257,7 +259,7 @@ impl Provider {
             WHEN NEW.name='group' BEGIN INSERT INTO kk_fault_child(parent) VALUES(99); END;").unwrap();
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn inject_recovery_quarantine(&self) {
         self.session.0.poisoned.set(true);
     }

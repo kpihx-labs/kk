@@ -16,6 +16,7 @@ use tokio::sync::Notify;
 
 #[derive(Debug, Default)]
 struct Tasks {
+    runtime: Option<tokio::runtime::Handle>,
     next: AtomicUsize,
     closing: AtomicBool,
     children: Mutex<BTreeMap<usize, Child>>,
@@ -29,6 +30,43 @@ struct Child {
 #[derive(Debug, Clone)]
 pub(crate) struct DriverOwner(Arc<Tasks>);
 impl DriverOwner {
+    /// Register application work with the same cancellation/destruction barrier
+    /// as QUIC drivers. A sealed owner drops captures before returning None.
+    #[track_caller]
+    pub(crate) fn spawn(
+        &self,
+        future: impl Future<Output = ()> + Send + 'static,
+    ) -> Option<tokio::task::AbortHandle> {
+        // Hold registration until insertion: even an immediately completed task
+        // must not remove itself before its handle has been recorded.
+        let mut children = self.0.children.lock().expect("owned driver task registry");
+        if self.0.closing.load(Ordering::SeqCst) {
+            return None;
+        }
+        let runtime = self
+            .0
+            .runtime
+            .clone()
+            .or_else(|| tokio::runtime::Handle::try_current().ok())?;
+        let id = self.0.next.fetch_add(1, Ordering::SeqCst);
+        let active = Active {
+            owner: self.clone(),
+            id,
+        };
+        let task = runtime.spawn(async move {
+            future.await;
+            drop(active);
+        });
+        let abort = task.abort_handle();
+        children.insert(
+            id,
+            Child {
+                abort: abort.clone(),
+                site: std::panic::Location::caller(),
+            },
+        );
+        Some(abort)
+    }
     pub(crate) fn terminate(&self) {
         self.0.closing.store(true, Ordering::SeqCst);
         let children = self.0.children.lock().expect("owned driver task registry");
@@ -90,35 +128,7 @@ impl quinn::Runtime for OwnedRuntime {
     }
     #[track_caller]
     fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
-        // Hold registration until insertion: a very short task must not remove
-        // itself before its owner has recorded the handle.
-        let mut children = self
-            .owner
-            .0
-            .children
-            .lock()
-            .expect("owned driver task registry");
-        if self.owner.0.closing.load(Ordering::SeqCst) {
-            drop(children);
-            return;
-        }
-        let id = self.owner.0.next.fetch_add(1, Ordering::SeqCst);
-        let active = Active {
-            owner: self.owner.clone(),
-            id,
-        };
-        let task = tokio::spawn(async move {
-            future.await;
-            drop(active);
-        });
-        let abort = task.abort_handle();
-        children.insert(
-            id,
-            Child {
-                abort,
-                site: std::panic::Location::caller(),
-            },
-        );
+        self.owner.spawn(future);
     }
     fn wrap_udp_socket(
         &self,
@@ -133,7 +143,10 @@ pub(crate) fn server(
 ) -> Result<(quinn::Endpoint, DriverOwner)> {
     tokio::runtime::Handle::try_current()
         .map_err(|_| Error::Configuration("QUIC endpoint requires an active Tokio runtime"))?;
-    let owner = DriverOwner(Arc::new(Tasks::default()));
+    let owner = DriverOwner(Arc::new(Tasks {
+        runtime: Some(tokio::runtime::Handle::current()),
+        ..Tasks::default()
+    }));
     let runtime = Arc::new(OwnedRuntime {
         runtime: quinn::TokioRuntime,
         owner: owner.clone(),
@@ -152,6 +165,47 @@ pub(crate) fn server(
 mod tests {
     use super::*;
     use quinn::Runtime;
+    #[tokio::test]
+    async fn application_spawn_reuses_the_recorded_runtime_and_joins_capture_destruction() {
+        let owner = DriverOwner(Arc::new(Tasks {
+            runtime: Some(tokio::runtime::Handle::current()),
+            ..Tasks::default()
+        }));
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let address = socket.local_addr().unwrap();
+        let (entered, waiting) = tokio::sync::oneshot::channel();
+        let borrowed = owner.clone();
+        let abort = std::thread::spawn(move || {
+            borrowed.spawn(async move {
+                let _socket = socket;
+                entered.send(()).unwrap();
+                std::future::pending::<()>().await;
+            })
+        })
+        .join()
+        .unwrap()
+        .unwrap();
+        waiting.await.unwrap();
+        abort.abort();
+        owner.released().await.unwrap();
+        assert!(std::net::UdpSocket::bind(address).is_ok());
+        assert!(owner.diagnostics().is_empty());
+        owner.terminate();
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let address = socket.local_addr().unwrap();
+        assert!(
+            owner
+                .spawn(async move {
+                    let _socket = socket;
+                    std::future::pending::<()>().await;
+                })
+                .is_none()
+        );
+        assert!(
+            std::net::UdpSocket::bind(address).is_ok(),
+            "sealed application spawn must drop captures synchronously"
+        );
+    }
     #[tokio::test]
     async fn close_grace_can_expire_during_peer_drain_without_leaking_the_owned_socket() {
         let directory = tempfile::tempdir().unwrap();

@@ -1,7 +1,8 @@
 # Source Overrides
 
-These internal sources are selected explicitly by root Cargo patches. They retain
-their original licenses; K&K's license does not relicense them.
+These internal sources are selected explicitly by root Cargo patches, except nix
+which uses direct target-specific path dependencies so SDK consumers inherit the
+correction. They retain their original licenses; K&K does not relicense them.
 
 | Source group | Scoped change |
 | --- | --- |
@@ -11,6 +12,7 @@ their original licenses; K&K's license does not relicense them.
 | Hax macros | Maintained diagnostic binding with Syn 2 compatibility |
 | OPAQUE / VOPRF | Ristretto-only internal subset; no legacy NIST adapters |
 | Expansion subset | Unchanged XMD/XOF sources; no legacy curve arithmetic |
+| nix 0.31.3 | Correct POSIX spawn positive-error returns; unchanged upstream unsafe blocks. Direct target-specific path dependency also applies in independent SDK graphs. |
 
 **Exact origins, local changes and primitive hashes:** [sources.json](sources.json).
 **Rationale and gates:** [dependency review](../../docs/dependency-overrides.md).

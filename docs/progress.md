@@ -63,10 +63,14 @@ artifact qualification. Current ownership and remaining gates: [workstreams](wor
 | Consent | Byte/attempt lifetime unit test and saturated-work-lane unit test pass; executor reports five real-service receive/fetch/budget regressions passing three reruns |
 | Intermediate full check | `make check` passes fmt, Clippy, all default Rust targets, rustdoc, six then-discovered JS tests, 19 packaging and five docs tests; four native media tests remain explicitly ignored |
 | UI follow-up | Normal UI gate discovers 11 JS tests including all quantized appearance contrasts; five docs and 22 release tests pass |
-| Native foundations | Executor reports seven Linux foundation tests; Windows/macOS workflow is authored but not yet executed |
+| Native foundations | Seven Linux foundation tests pass; hosted Windows and both macOS builds failed at 8d3f384; working-tree cfg/storage/stdio corrections still require a fresh native run |
 | Combined source gate | `make check` passes: 209 Rust, 21 JS, 22 release and five docs tests; fmt/Clippy/rustdoc clean |
 | Explicit native source gate | All four ignored native codec, private virtual-screen and child/owner lifecycle tests pass when invoked explicitly |
 | Independent security follow-up | Static checker finds no remaining concrete defect in publication/revocation/cancellation, owner/borrower lifetime, reserved IPC or immutable archive snapshot paths |
+| Expanded integrated source gate | `make check` passes 255 Rust tests, 38 JS, 22 packaging and five docs tests; fmt/Clippy/rustdoc clean; four native media gates separately invoked and passed |
+| Name consent/revision | Per-poll disclosure gates and 45 profile tests returned; UI API rejects stale ABA revisions without changing bytes; pending/failed conflict refresh now uses a direct successful state read; 38 JS tests pass after that correction |
+| Responsive rendering | Two real Edge profiles: compact rail persists; chat grows from 192 to 337px at 881x786, composer visible and no horizontal overflow; narrow/short viewports not yet qualified |
+| Remaining review findings | Stdio descriptor inheritance, blocked hidden-input notice and borrowed Apple socket-option mutation assigned for correction; metadata filesystem latency/path-authority bounds also under review; these prevent a final acceptance claim |
 
 The first intermediate check caught test-module placement; it was fixed, not
 suppressed. A real-service test run emitted a bounded-close-grace diagnostic;

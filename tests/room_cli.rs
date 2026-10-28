@@ -210,6 +210,53 @@ fn rooms_have_an_actual_cli_enrollment_broadcast_and_cold_resume() {
     let manifest = std::fs::read(alice.join("rooms/team/manifest.json")).unwrap();
     let mut source = Process::start(&alice, &["room", "serve", "team"]);
     source.until("ROOM SERVING");
+    // Export a real invitation, then shut down its owner. Connection refusal
+    // must retain only runtime state, and a fresh invite must reuse that name.
+    let expired = alice.join("unavailable-invitation.json");
+    let mut unavailable = Process::start(
+        &alice,
+        &[
+            "room",
+            "invite",
+            "team",
+            "--bind",
+            &address(),
+            "--invite-out",
+            expired.to_str().unwrap(),
+            "--confirm",
+        ],
+    );
+    unavailable.until("ROOM INVITATION");
+    call(&alice, &["room", "stop", "team"]);
+    source.finish();
+    assert!(!unavailable.child.wait().unwrap().success());
+    let refused = Command::new(env!("CARGO_BIN_EXE_kk"))
+        .arg("--profile")
+        .arg(&bob)
+        .args([
+            "room",
+            "join",
+            "team",
+            "--invitation",
+            expired.to_str().unwrap(),
+            "--bind",
+            &address(),
+            "--confirm",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("Connection refused"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    let reservation = bob.join("rooms/team");
+    assert!(reservation.join("node.lock").is_file());
+    assert!(!reservation.join("manifest.json").exists());
+    assert!(!reservation.join("private").exists());
+    source = Process::start(&alice, &["room", "serve", "team"]);
+    source.until("ROOM SERVING");
     let mut guests = Vec::new();
     for (index, profile) in [&bob, &carol].into_iter().enumerate() {
         let invitation = alice.join(format!("invitation-{index}.json"));

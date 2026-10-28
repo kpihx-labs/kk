@@ -44,10 +44,15 @@ pub(super) enum Action {
     },
     Init,
     Settings {
+        expected_revision: String,
         #[serde(default)]
         display_name: Option<String>,
         #[serde(default)]
         appearance: Option<crate::profile::Appearance>,
+        #[serde(default)]
+        share_display_name: Option<bool>,
+        #[serde(default)]
+        sidebar_mode: Option<crate::profile::SidebarMode>,
     },
     Profiles,
     ProfileCreate {
@@ -372,7 +377,13 @@ pub(super) async fn run(app: App, mut requests: mpsc::Receiver<Request>) -> Resu
                 Action::Transfer(_) => unreachable!("owned transfers run in their bounded task lane"),
                 Action::Copies { .. } => unreachable!("owned copy operations run in their bounded task lane"),
                 Action::Init => Ok(json!({"identity": crate::profile::identity(&app.0.profile, true)?.peer().fingerprint()})),
-                Action::Settings { display_name, appearance } => Ok(json!(crate::profile::Settings::update(&app.0.profile, display_name, appearance)?)),
+                Action::Settings { expected_revision, display_name, appearance, share_display_name, sidebar_mode } => Ok(json!(crate::profile::Settings::update_with_revision(&app.0.profile, crate::profile::Settings::parse_revision(&expected_revision)?, |settings| {
+                    if let Some(name) = display_name { settings.display_name = name; }
+                    if let Some(appearance) = appearance { settings.appearance = appearance; }
+                    if let Some(share) = share_display_name { settings.share_display_name = share; }
+                    if let Some(mode) = sidebar_mode { settings.sidebar_mode = mode; }
+                    Ok(())
+                })?)),
                 Action::Profiles => Ok(json!(crate::profile::catalog::list()?)),
                 Action::ProfileCreate { id, display_name } => Ok(json!(crate::profile::catalog::create(&id, display_name, None)?)),
                 Action::ProfileRegister { id, directory } => Ok(json!(crate::profile::catalog::register(&id, directory)?)),
@@ -546,7 +557,10 @@ pub(super) async fn snapshot(app: &App) -> Result<Value> {
             }
         } else { None };
         let presentation = match (&status, room.room, own) {
-            (Some(status), Some(id), Some(own)) => Some(membership(status, id, own).and_then(|membership| crate::profile::labels::present(&app.0.profile, id.0, own, &membership.members))),
+            (Some(status), Some(id), Some(own)) => Some(membership(status, id, own).and_then(|membership| {
+                let announcements = status.get("profile_names").cloned().map(serde_json::from_value).transpose().map_err(|_| Error::Protocol)?.unwrap_or_default();
+                crate::profile::labels::present_with_announcements(&app.0.profile, id.0, own, &membership.members, &announcements)
+            })),
             _ => None,
         };
         let (presentation, presentation_error) = match presentation { Some(Ok(items)) => (Some(items), None), Some(Err(error)) => (None, Some(error.to_string())), None => (None, None) };
@@ -581,6 +595,6 @@ pub(super) async fn snapshot(app: &App) -> Result<Value> {
         json!({"version": crate::VERSION, "identity": identity, "settings": crate::profile::Settings::load(&app.0.profile)?, "rooms": rooms, "messages": data.messages.iter().map(Message::view).collect::<Vec<_>>(),
         "operations": operations, "phases": data.phases, "history": "bounded-memory-only", "files": {"max_bytes": config::DEFAULT_FILE_LIMIT}, "media": {"width": config::MEDIA_VIDEO_WIDTH, "height": config::MEDIA_VIDEO_HEIGHT, "fps": config::MEDIA_VIDEO_FPS,
         "packet_bytes": config::MEDIA_PACKET_BYTES, "frame_bytes": config::MEDIA_ENCODED_FRAME_BYTES, "datagram_buffer_bytes": config::MEDIA_DATAGRAM_BUFFER_BYTES, "packet_age_ms": config::MEDIA_PACKET_MAX_AGE.as_millis(), "audio_bitrate": config::MEDIA_AUDIO_BITRATE,
-        "max_tracks": config::MEDIA_MAX_STREAMS, "max_subscriptions": config::MEDIA_MAX_STREAMS, "max_users": config::MEDIA_MAX_STREAMS * 2}}),
+        "max_tracks": config::MEDIA_MAX_STREAMS, "max_subscriptions": config::MEDIA_MAX_STREAMS, "max_publications": config::MEDIA_MAX_PUBLICATIONS, "source_kinds": config::MEDIA_SOURCE_KINDS, "max_users": config::MEDIA_MAX_USERS}}),
     )
 }

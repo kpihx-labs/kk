@@ -46,6 +46,7 @@ impl Inbox {
         self.budget
             .fetch_add(receipt.resumed_from, Ordering::SeqCst);
     }
+    #[cfg(any(unix, test))]
     pub fn remaining(&self) -> (u64, u64) {
         (
             self.budget.load(Ordering::Relaxed),

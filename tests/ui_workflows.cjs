@@ -4,6 +4,19 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 const source = fs.readFileSync(__dirname + "/../src/ui/assets/app.js", "utf8");
 
+test("file refusal explains room access and live recipient consent", async () => {
+  const context = {
+    room: () => ({name:"study", status:{owner:"self", members:["self", "peer"]}}),
+    memberChoice: () => "Morgan", $: () => ({checked:false}), toast() {},
+    el: tag => ({options:[], append(...children) { if (tag === "select") this.options.push(...children); }}),
+    modal: (_title, _controls, _label, handler) => { context.submit = handler; },
+  };
+  vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf("function fileDialog("), source.indexOf("async function loadFiles()")), context);
+  context.fileDialog("Send fixture", async () => ({ok:false, code:"DENIED", result:{error:"contact policy"}}));
+  await assert.rejects(context.submit(new Map([["to", "peer"]])), /recipient to enable incoming files/);
+});
+
 test("join import rejects replacement and ignores stale file reads", async () => {
   const controls = [], notices = [];
   const context = { current: {identity: "test"}, joinDraft:{name:"", bind:"", role:"participant"}, toast: text => notices.push(text),
@@ -80,6 +93,93 @@ test("default appearance removes overrides and restores neutral CSS", () => {
   context.applyAppearance({hue:null, clarity:50, saturation:20}); assert.equal(properties.size, 0);
   const css = fs.readFileSync(__dirname + "/../src/ui/assets/style.css", "utf8");
   assert.match(css, /:root\[data-theme=dark\]\{[^}]*--bg:#191919;--surface:#242424;--ink:#ececea;--muted:#aaa9a5/);
+});
+
+test("name sharing requires explicit checkbox consent and labels disclose provenance", async () => {
+  const controls = [], calls = [], theme = {};
+  const context = {current:{settings:{display_name:"Sam",share_display_name:false,appearance:{hue:null,clarity:50,saturation:20}}},
+    $: () => theme,
+    field: (_label, name, _type, value) => { const input = {value}; const wrapper = {name,input,querySelector:()=>input,append(){}}; controls.push(wrapper); return wrapper; },
+    el: (_tag,_cls,text) => ({text, children:[], append(...nodes){this.children.push(...nodes);}}), modal: (_title,items,_submit,handler) => { context.items = items; context.submit = handler; }, act: async action => calls.push(action)};
+  vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf('$("theme").onclick'), source.indexOf('$("profiles").onclick')), context);
+  theme.onclick();
+  assert.equal(controls.find(item => item.name === "share_display_name").input.checked, false);
+  assert.ok(context.items.some(item => item.text?.includes("Previously shared names cannot be erased")));
+  const values = {display_name:"Sam",hue:"",clarity:"50",saturation:"20",sidebar_mode:"auto"};
+  await context.submit({get:key => values[key] ?? null}); assert.equal(Object.hasOwn(calls[0], "share_display_name"), false); assert.equal(calls[0].sidebar_mode, "auto");
+  await context.submit({get:key => key === "share_display_name" ? "on" : values[key]}); assert.equal(calls[1].share_display_name, true);
+  vm.runInContext(source.slice(source.indexOf("function memberProvenance("), source.indexOf("function nicknameDialog(")), context);
+  assert.match(context.memberProvenance({presentation:[{id:"a",source:"self_announcement"}]}, "a"), /not a verified human identity/);
+  assert.match(context.memberProvenance({presentation:[{id:"a",source:"self_profile"}]}, "a"), /visible only here; sharing off/);
+});
+
+test("a stale settings dialog cannot resubmit unchanged name-sharing consent", async () => {
+  const saved = {display_name:"Sam",share_display_name:true,sidebar_mode:"expanded",appearance:{hue:null,clarity:50,saturation:20}};
+  const calls = [], theme = {};
+  const context = {current:{settings:structuredClone(saved)}, $:()=>theme,
+    field:(_label,_name,_type,value)=>({querySelector:()=>({value}),append(){}}),
+    el:()=>({append(){}}), modal:(_title,_items,_submit,handler)=>{context.submit = handler;},
+    act:async action=>{calls.push(action);for(const key of Object.keys(action))if(key!=="action")saved[key]=action[key];context.current.settings=structuredClone(saved);},
+    refresh:async()=>{context.current.settings=structuredClone(saved);}};
+  vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf('$("theme").onclick'), source.indexOf('$("profiles").onclick')), context);
+  theme.onclick();
+  saved.share_display_name=false; saved.display_name="Renamed elsewhere";
+  context.current.settings=structuredClone(saved);
+  const values={display_name:"Sam",share_display_name:"on",sidebar_mode:"compact",hue:"",clarity:"60",saturation:"20"};
+  await context.submit({get:key=>values[key]??null});
+  assert.equal(saved.share_display_name,false);
+  assert.equal(saved.display_name,"Renamed elsewhere");
+  assert.equal(saved.sidebar_mode,"compact"); assert.equal(saved.appearance.clarity,60);
+  assert.equal(Object.hasOwn(calls[0],"share_display_name"),false);
+  assert.equal(Object.hasOwn(calls[0],"display_name"),false);
+  theme.onclick();
+  await context.submit({get:key=>({display_name:saved.display_name,sidebar_mode:"compact",hue:"",clarity:"60",saturation:"20"})[key]??null});
+  assert.equal(calls.length,2,"unchanged settings still check the expected revision");
+  assert.deepEqual(Object.keys(calls[1]).sort(),["action","expected_revision"]);
+});
+
+test("settings conflicts reload consent and retain edits across opt-out, opt-in and ABA", async () => {
+  for (const scenario of ["opt-out", "opt-in", "ABA"]) {
+    const saved={revision:"0",display_name:"Sam",share_display_name:scenario==="opt-out",sidebar_mode:"expanded",appearance:{hue:null,clarity:50,saturation:20}};
+    const controls=new Map(),theme={},calls=[]; let failRead=false;
+    const context={current:{settings:structuredClone(saved)},$:()=>theme,
+      field:(_label,name,_type,value)=>{const input={value};const wrapper={querySelector:()=>input,append(){}};controls.set(name,input);return wrapper;},
+      el:()=>({append(){}}),modal:(_t,_i,_s,handler)=>{context.submit=handler;},
+      refresh:async()=>{throw new Error("background refresh is not a fresh consent read");},
+      api:async path=>{assert.equal(path,"/api/state");if(failRead)throw new Error("read unavailable");return {settings:structuredClone(saved)};},
+      act:async action=>{calls.push(action);if(action.expected_revision!==saved.revision)throw Object.assign(new Error("conflict"),{code:"SETTINGS_CONFLICT"});for(const key of Object.keys(action))if(!["action","expected_revision"].includes(key))saved[key]=action[key];saved.revision=String(BigInt(saved.revision)+1n);context.current.settings=structuredClone(saved);}};
+    vm.createContext(context);
+    vm.runInContext(source.slice(source.indexOf('$("theme").onclick'),source.indexOf('$("profiles").onclick')),context);
+    theme.onclick();
+    controls.get("clarity").value="60";
+    const values={display_name:"Sam",share_display_name:scenario==="opt-in"?null:"on",sidebar_mode:"expanded",hue:"",clarity:"60",saturation:"20"};
+    saved.share_display_name=scenario==="opt-in"; saved.revision=scenario==="ABA"?"2":"1";
+    if(scenario==="opt-in") {
+      failRead=true;
+      await assert.rejects(context.submit({get:key=>values[key]??null}),/current consent could not be refreshed/);
+      assert.equal(saved.appearance.clarity,50);assert.equal(saved.share_display_name,true);
+      failRead=false;
+    }
+    await assert.rejects(context.submit({get:key=>values[key]??null}),/Settings changed elsewhere/);
+    assert.equal(saved.share_display_name,scenario==="opt-in");
+    assert.equal(saved.appearance.clarity,50,"stale submission makes no partial change");
+    assert.equal(controls.get("share_display_name").checked,saved.share_display_name);
+    assert.equal(controls.get("clarity").value,"60","nonsecret draft remains editable");
+    values.share_display_name=controls.get("share_display_name").checked?"on":null;
+    await context.submit({get:key=>values[key]??null});
+    assert.equal(saved.appearance.clarity,60);assert.equal(saved.share_display_name,scenario==="opt-in");
+    assert.equal(calls.at(-1).expected_revision,scenario==="ABA"?"2":"1");
+  }
+});
+
+test("duplicate and confusable self-announcements remain distinct exact-ID choices", () => {
+  const context = {brief:id=>id}; vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf("function memberName("), source.indexOf("function memberProvenance(")), context);
+  const room = {presentation:[{id:"a",display_name:"Sam"},{id:"b",display_name:"Sam"},{id:"c",display_name:"Sаm"}]};
+  assert.equal(new Set(["a","b","c"].map(id=>context.memberChoice(room,id))).size, 3);
+  assert.equal(context.memberName(room,"Sam"), "Unnamed member");
 });
 
 test("every quantized appearance keeps primary and secondary text readable on both surfaces", () => {

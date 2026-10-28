@@ -42,6 +42,7 @@ async fn cached_status_and_cancellation_remain_responsive_without_a_quorum() {
         .unwrap(),
     );
     // Deliberately NEVER initialize this control node: no read quorum is possible.
+    let peer = identity.peer();
     let room = Room::new(
         identity,
         control.clone(),
@@ -66,8 +67,12 @@ async fn cached_status_and_cancellation_remain_responsive_without_a_quorum() {
             let running = tokio::task::spawn_local(actor.run());
             handle.ready(Duration::from_secs(1)).await.unwrap();
             let caller = handle.clone();
-            let pending =
-                tokio::spawn(async move { caller.synchronize(Duration::from_secs(5)).await });
+            let pending_peer = peer.clone();
+            let pending = tokio::spawn(async move {
+                caller
+                    .authorize_profile_metadata(pending_peer, Duration::from_secs(5))
+                    .await
+            });
             let mut observed = handle.status.clone();
             drop(
                 tokio::time::timeout(
@@ -98,6 +103,12 @@ async fn cached_status_and_cancellation_remain_responsive_without_a_quorum() {
             let cached = handle.status(Duration::from_millis(20)).await.unwrap();
             assert_eq!(cached.epoch, 0);
             assert!(cached.applied.is_none());
+            assert!(matches!(
+                handle
+                    .authorize_profile_metadata(peer, Duration::from_millis(100))
+                    .await,
+                Err(Error::Timeout) | Err(Error::Node(_))
+            ));
             handle.shutdown(Duration::from_secs(1)).await.unwrap();
             let returned = running.await.unwrap();
             assert!(matches!(

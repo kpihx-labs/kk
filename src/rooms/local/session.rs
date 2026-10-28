@@ -100,7 +100,9 @@ pub enum Command {
 }
 impl Command {
     fn deadline(&self) -> Duration {
-        if matches!(
+        if matches!(self, Self::Invite(_)) {
+            config::ROOM_INVITATION_WAIT + DEADLINE
+        } else if matches!(
             self,
             Self::File { .. } | Self::FileShare { .. } | Self::FileFetch { .. }
         ) {
@@ -213,11 +215,12 @@ where
     Fut: std::future::Future<Output = Result<bool>>,
 {
     let directory = directory(profile, name)?;
-    tokio::time::timeout(DEADLINE + Duration::from_secs(5), async {
+    let command = Command::Invite(options);
+    tokio::time::timeout(command.deadline() + Duration::from_secs(5), async {
         let mut stream = ipc::connect(&directory)
             .await?
             .ok_or(Error::Node("no active room"))?;
-        ipc::write(&mut stream, &Command::Invite(options)).await?;
+        ipc::write(&mut stream, &command).await?;
         loop {
             match ipc::read(&mut stream).await? {
                 ReplyEvent::Ready { address } => eprintln!("ROOM INVITATION {address}"),
@@ -260,11 +263,18 @@ async fn dispatch(
     match command {
         Command::Status => {
             let status = handle.status(DEADLINE).await?;
+            // Pass one complete membership snapshot, never a filtered recipient
+            // list. This schedules refresh work without awaiting peer traffic.
+            let (profile_names, profile_names_error) =
+                match control.cached_peer_profiles(status.epoch, &status.members) {
+                    Ok(names) => (names, None),
+                    Err(error) => (std::collections::BTreeMap::new(), Some(error.to_string())),
+                };
             Ok(
                 json!({"room": raft::PeerId(status.room), "owner": status.owner, "epoch": status.epoch,
                 "active": status.active, "running": status.running, "busy": status.busy, "members": status.members,
                 "freshness": "local-durable-cache", "leader_hint": control.current_leader().await, "media": control.media_status()?,
-                 "files": {"accepted": control.files_enabled()?},
+                  "files": {"accepted": control.files_enabled()?}, "profile_names": profile_names, "profile_names_error": profile_names_error,
                  "voters": control.control_membership().membership().voter_ids().collect::<Vec<_>>(), "address": control.local_addr()?}),
             )
         }
@@ -398,7 +408,12 @@ async fn dispatch(
             )
         }
         Command::Invite(options) => {
-            let server = PairServer::bind_room(options.listen, DEADLINE, control.room_id()).await?;
+            let server = PairServer::bind_room(
+                options.listen,
+                config::ROOM_INVITATION_WAIT,
+                control.room_id(),
+            )
+            .await?;
             Invite::from_server(&server, identity)?.export(&options.output)?;
             ipc::write(
                 &mut *stream.lock().await,
@@ -537,6 +552,7 @@ async fn connection(
 
 async fn run(
     identity: Arc<Identity>,
+    profile: &Path,
     directory: &Path,
     room: Room,
     control: Arc<ControlNode>,
@@ -549,10 +565,12 @@ async fn run(
     let (handle, actor, mut events) = Actor::new(room);
     let task = tokio::task::spawn_local(actor.run());
     let registered = control.register_room(handle.clone()).await;
-    let configured = match options.inbox {
-        Some(inbox) => control.enable_files(inbox, options.max_bytes, options.file_budget),
-        None => Ok(()),
-    };
+    let configured = control
+        .configure_profile_directory(Some(profile.to_owned()))
+        .and_then(|()| match options.inbox {
+            Some(inbox) => control.enable_files(inbox, options.max_bytes, options.file_budget),
+            None => Ok(()),
+        });
     let (event_sink, ready, mut external) = match options.observer {
         Some(observer) => (Some(observer.events), observer.ready, Some(observer.stop)),
         None => (None, None, None),
@@ -667,12 +685,16 @@ async fn run(
 pub async fn serve(profile: &Path, name: &str, options: Options) -> Result<()> {
     let identity = Arc::new(profile::identity(profile, false)?);
     let directory = directory(profile, name)?;
+    let _lease = lease(&directory)?;
     let definition = Definition::load(&directory, &identity)?;
     let listener = ipc::Listener::bind(&directory).await?;
     let (room, control) = definition
         .resume(identity.clone(), &directory, profile, options.bind)
         .await?;
-    run(identity, &directory, room, control, listener, options).await
+    run(
+        identity, profile, &directory, room, control, listener, options,
+    )
+    .await
 }
 
 pub async fn join<F, Fut>(
@@ -693,7 +715,7 @@ where
     let Scope::Room(room_id) = invite.scope else {
         return Err(Error::Pairing);
     };
-    let directory = reserve(profile, name, listen)?;
+    let (directory, _lease) = reserve(profile, name, listen, true)?;
     let listener = ipc::Listener::bind(&directory).await?;
     let options = pairing::RoomJoinOptions {
         room: room_id,
@@ -702,7 +724,7 @@ where
         expected_fingerprint: Some(invite.fingerprint.clone()),
         code: invite.code().clone(),
         data_port: listen.port(),
-        deadline: DEADLINE,
+        deadline: config::ROOM_INVITATION_WAIT,
     };
     let mut external = service
         .observer
@@ -748,6 +770,7 @@ where
     let joined = prepared.join_until(cancelled(&mut external)).await?;
     run(
         identity.clone(),
+        profile,
         &directory,
         joined.room,
         joined.control,
@@ -760,6 +783,32 @@ where
 #[cfg(test)]
 mod lane_tests {
     use super::*;
+
+    #[test]
+    fn invitation_deadlines_cover_wait_and_bounded_admission_only() {
+        let invitation = Command::Invite(InvitationOptions {
+            listen: "127.0.0.1:12345".parse().unwrap(),
+            output: PathBuf::from("invite.json"),
+            rights: Rights::PARTICIPANT,
+        });
+        assert_eq!(config::ROOM_INVITATION_WAIT, Duration::from_secs(300));
+        assert!(config::ROOM_INVITATION_WAIT <= config::MAX_TIMEOUT);
+        assert_eq!(
+            invitation.deadline(),
+            config::ROOM_INVITATION_WAIT + DEADLINE
+        );
+        let client_deadline = invitation.deadline() + Duration::from_secs(5);
+        assert!(client_deadline > invitation.deadline());
+        assert_eq!(Command::Status.deadline(), Duration::from_secs(90));
+        assert_eq!(
+            Command::FileFetch {
+                hash: [0; 32],
+                peer: raft::PeerId([0; 32])
+            }
+            .deadline(),
+            config::DEFAULT_FILE_TIMEOUT
+        );
+    }
 
     #[test]
     fn withdrawal_bypasses_saturated_work_and_invitation_lanes() {

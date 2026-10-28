@@ -8,6 +8,7 @@ pub enum TrackKind {
     Camera,
     Screen,
 }
+#[cfg(unix)]
 impl TrackKind {
     fn kind(self) -> kk::media::Kind {
         match self {
@@ -56,6 +57,7 @@ pub enum RoomCommand {
     },
 }
 
+#[cfg(any(unix, test))]
 fn playback_exit(exit: kk::media::Exit) -> Result<()> {
     if !exit.diagnostic.is_empty() {
         writeln!(
@@ -74,6 +76,36 @@ fn playback_exit(exit: kk::media::Exit) -> Result<()> {
 
 #[cfg(test)]
 mod exit_tests {
+    #[cfg(not(unix))]
+    #[tokio::test]
+    async fn room_media_refuses_without_local_ipc() {
+        for command in [
+            super::RoomCommand::Publish {
+                kind: super::TrackKind::Audio,
+                device: None,
+                rtp_file: None,
+                window: 0,
+                to: Vec::new(),
+                consent: true,
+            },
+            super::RoomCommand::Listen {
+                kind: super::TrackKind::Audio,
+                from: String::new(),
+                inspect: true,
+                x11: false,
+                consent: true,
+            },
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let profile = root.path().join("absent-profile");
+            assert!(matches!(
+                super::room(command, &profile, "room").await,
+                Err(kk::Error::UnsupportedPlatform)
+            ));
+            assert!(!profile.exists());
+        }
+    }
+
     #[test]
     fn a_failed_decoder_is_not_reported_as_intentional_playback_shutdown() {
         assert!(
@@ -106,6 +138,16 @@ mod exit_tests {
     }
 }
 
+#[cfg(not(unix))]
+pub(super) async fn room(
+    _command: RoomCommand,
+    _profile: &std::path::Path,
+    _name: &str,
+) -> Result<()> {
+    Err(Error::UnsupportedPlatform)
+}
+
+#[cfg(unix)]
 pub(super) async fn room(
     command: RoomCommand,
     profile: &std::path::Path,

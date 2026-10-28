@@ -69,6 +69,10 @@ enum Command {
         inbound: bool,
         reply: oneshot::Sender<Result<()>>,
     },
+    ProfileMetadataAuthority {
+        peer: Peer,
+        reply: oneshot::Sender<Result<u64>>,
+    },
     Admit {
         package: Vec<u8>,
         reply: oneshot::Sender<Result<Proposal>>,
@@ -115,6 +119,7 @@ impl Command {
             Self::Encrypt { reply, .. } => reply.is_closed(),
             Self::Accept { reply, .. } | Self::Acknowledge { reply, .. } => reply.is_closed(),
             Self::FileAuthority { reply, .. } => reply.is_closed(),
+            Self::ProfileMetadataAuthority { reply, .. } => reply.is_closed(),
             Self::Admit { reply, .. }
             | Self::Remove { reply, .. }
             | Self::ScopedAdmit { reply, .. } => reply.is_closed(),
@@ -253,6 +258,15 @@ impl Handle {
         self.call(deadline, |reply| Command::FileAuthority {
             peer,
             inbound,
+            reply,
+        })
+        .await
+    }
+    /// Quorum-current metadata authorization. The returned epoch is a snapshot;
+    /// callers must reauthorize at disclosure and response acceptance boundaries.
+    pub async fn authorize_profile_metadata(&self, peer: Peer, timeout: Duration) -> Result<u64> {
+        self.call(timeout, |reply| Command::ProfileMetadataAuthority {
+            peer,
             reply,
         })
         .await
@@ -461,6 +475,9 @@ impl Actor {
                 reply,
             } => {
                 let _ = reply.send(self.room.authorize_file(&peer, inbound, deadline).await);
+            }
+            Command::ProfileMetadataAuthority { peer, reply } => {
+                let _ = reply.send(self.room.authorize_profile_metadata(&peer, deadline).await);
             }
             Command::Admit { package, reply } => {
                 let _ = reply.send(self.room.prepare_admission(&package, deadline).await);

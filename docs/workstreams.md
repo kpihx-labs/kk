@@ -6,13 +6,13 @@ tests and delivery status remain in their owners; this is not a release claim.
 | ID | Owner / peer | Files / boundary | Acceptance |
 | --- | --- | --- | --- |
 | W1 cleanup | Main, done | Managed installations only | Obsolete 0.8.0 trashed; active 0.8.2 and all profiles intact |
-| W2 file consent | Main, working | Room receive policy, IPC, CLI/UI | Live opt-in/out; active-transfer revocation; actual backend state shown |
+| W2 file consent | Main, Linux regression/GUI slice verified | Room receive policy, IPC, CLI/UI | Live toggles, saturated-lane withdrawal and publication revocation pass; native cross-platform qualification remains separate |
 | W3 profiles | Main integration; profile executor | `src/profile/`, CLI/UI settings | Human names, explicit catalog, safe selection, no key regeneration |
 | W4 UX workflows | UI executor | Invitation/join forms and feedback | Editable errors, retained non-secret drafts, clear private invitation actions |
 | W5 appearance | UI executor | Profile settings and rendered theme | Quantified hue/clarity; default neutral grey exactly at midpoint |
 | W6 media | Backend-test and UI-media executors | Shared media core and adapters | Concurrent participant screens, device controls, lifecycle/load tests |
 | W7 platforms | Main, native foundation returned | Storage/IPC/process/capture ports | Actual native Windows/macOS/WSL execution and packaging |
-| W8 distribution | Packaging executor, ZIP slice | Portable archives/installers | Verified tar/zip and reproducible installation across supported targets |
+| W8 distribution | Main, native installer returned | Portable archives/installers | TAR/ZIP transaction and rollback regressions pass; real gh provenance/bootstrap assets/exact-artifact and non-Linux gates remain open |
 | W9 product review | Unassigned | Profiles/history/search/calls/accessibility | Review useful comparable-app patterns; define and test end-to-end cases |
 
 ## Peer Rules
@@ -29,20 +29,8 @@ tests and delivery status remain in their owners; this is not a release claim.
 Both fast models are configured canonically and executed read-only tasks successfully after restart.
 Do not silently substitute Nvidia/Ollama or use a forbidden delegation tool.
 
-| Peer | Current ownership | Verification / result |
-| --- | --- | --- |
-| `ses_e8190452bffe5Wg9qRmeiFT2Ei` (Terra fast, checker) | Read-only independent review | Wrong implementation assignment withdrawn, no edits; follow-up found publication/admission/archive races |
-| `ses_e818fa5a8ffesTjZxwmtaA47DE` (Sol fast, explore, returned) | Read-only CLI/UI/media scout | Integration map and existing multi-peer semantics returned; no edits |
-| `ses_e8188f7e6ffesHsfAjUS4Mv0cI` (Sol fast, explore) | Read-only member-name/history architecture map | Native platform blocker map returned; now maps sender-bound labels and opt-in messaging |
-| `ses_e81846e76ffeT9lASkR7Gp0d8U` (Sol fast, executor) | Only `network/media/tests.rs`; profile ownership released | Concurrent peer-screen isolation/capacity regressions; profile concurrency/callback work returned |
-| `ses_e8183ed38ffePpWpchnCiSVA4B` (Sol fast, executor) | Only `scripts/release.py`, `tests/test_release.py`, `tests/packaging.rs`, `docs/distribution.md` | Reproducible ZIP and bounded hostile-archive verification; preserve tar/install gates; report workflow integration |
-| `ses_e8182b88affeHfPnXbftPqnFTa` (Terra fast, executor, returned) | `ui.rs`, `ui/{driver,tests}.rs`, assets app/index/style, `tests/ui_workflows.cjs` | Profile/settings/themes/editable join/issuance lifecycle; media files released |
-| `ses_e817d843dfferuMi1u5xbyJk8L` (Sol fast, executor) | `files/{stream,storage}.rs`, `files.rs` caller, network file/replica, service tests | Publication/revocation barrier and regression; first five real-service consent tests returned |
-| `ses_e81798465ffew0wctP5N67uJ5g` (Sol fast, executor) | Only new `.github/workflows/native.yml`, `tests/platform_foundation.rs`, `docs/platforms.md` | Nonpublishing native Windows/macOS foundation lanes; local test checks; no unexecuted native-support claim |
-| `ses_e816cf899ffe3TUELK2k32c65c` (Sol fast, executor) | Only `src/ui/assets/media.js`, `src/ui/media.rs`, new `tests/ui_media.mjs` | Keyed multi-peer sessions, independent stop/cleanup, duplicate/capacity feedback; synthetic tests, no real capture |
-| `ses_e81637a99ffeexoxNqI6OsapKf` (Sol fast, executor) | `profile.rs`, shared name validator in settings, new `profile/labels.rs` and tests | Private exact-room/member local aliases; bounded/concurrent/corrupt-state tests; no trust or remote-name claim |
-| `ses_e815c09dcffen412a0MimzD28f` (Sol fast, executor, returned) | Only transport lifetime tests; production cleanup unchanged | Quinn drain exceeds grace; deterministic drain/socket-release regressions pass, no demonstrated leak |
-| `ses_e8150c10bffe861gsFIxoGaFfo` (Sol fast, executor) | Only canonical `Proxies/desk-proxy` code/tests/docs | Repair confirmed AT-SPI-to-XID focus bug; stable window targeting and editable-install verification; no HITL weakening |
+Current and archived IDs, exact file boundaries, returned results and CI pointers
+are preserved in the [peer register](peers.md). Do not infer ownership from memory.
 
 UI executor released both media implementation files before that handoff; its
 remaining test ownership is `tests/ui_workflows.cjs`, not a test asset in the UI.

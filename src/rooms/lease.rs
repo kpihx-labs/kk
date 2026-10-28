@@ -1,6 +1,8 @@
 //! The shared filesystem boundary for distinct room databases. Only their file
 //! protection is shared: public control data and private MLS data remain separate.
-use crate::{Error, Result, profile};
+#[cfg(unix)]
+use crate::profile;
+use crate::{Error, Result};
 use std::{
     fs::File,
     path::{Path, PathBuf},

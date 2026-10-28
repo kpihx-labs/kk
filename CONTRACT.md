@@ -107,3 +107,8 @@ audit. Local account compromise, malicious browser extensions, an authorized
 compromised controller majority, physical radio behavior and unsupported native
 platforms are not solved by these checks. See [platforms](docs/platforms.md) and
 [security review](docs/security-review.md) for the precise evidence boundary.
+
+## Profile Publication Boundary
+
+See the [profile publication contract](docs/profile-publication.md) for per-write
+consent fences, filesystem availability assumptions and stable-path authority.

@@ -20,11 +20,7 @@ browser-adapter:
   image: node:24-bookworm
   timeout: 5m
   script:
-    - node --check src/ui/assets/app.js
-    - node --check src/ui/assets/media.js
-    - node --check src/ui/assets/rtp.js
-    - node --check src/ui/assets/audio-worklet.js
-    - node --test tests/ui_rtp.mjs tests/ui_client.mjs
+    - make ui-check
 
 release-integrity:
   stage: check

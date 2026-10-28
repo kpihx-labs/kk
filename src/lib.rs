@@ -8,6 +8,7 @@ mod error;
 pub mod files;
 mod identity;
 pub mod input;
+pub mod install;
 pub mod media;
 #[cfg(unix)]
 pub mod node;
@@ -17,6 +18,8 @@ pub mod profile;
 pub mod rooms;
 mod session;
 mod signed;
+#[cfg(unix)]
+pub mod stdio_worker;
 mod transport;
 #[cfg(unix)]
 pub mod ui;

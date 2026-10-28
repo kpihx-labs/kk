@@ -55,6 +55,7 @@ struct Track {
 }
 struct State {
     users: usize,
+    publications: usize,
     refresh: Option<JoinHandle<()>>,
     listeners: BTreeMap<(PeerId, Kind), Listener>,
     tracks: BTreeMap<(PeerId, [u8; 16]), Track>,
@@ -75,6 +76,7 @@ pub(super) struct Hub {
 pub(super) struct Usage {
     hub: Arc<Hub>,
     generation: u64,
+    publication: bool,
 }
 pub struct Subscription {
     usage: Usage,
@@ -90,6 +92,7 @@ impl Hub {
         Arc::new(Self {
             state: StdMutex::new(State {
                 users: 0,
+                publications: 0,
                 refresh: None,
                 listeners: BTreeMap::new(),
                 tracks: BTreeMap::new(),
@@ -103,14 +106,23 @@ impl Hub {
         })
     }
     fn use_media(self: &Arc<Self>, shared: Weak<Shared>) -> Result<Usage> {
+        self.reserve(shared, true)
+    }
+    fn reserve(self: &Arc<Self>, shared: Weak<Shared>, publication: bool) -> Result<Usage> {
         if self.closed.load(Ordering::SeqCst) {
             return Err(Error::Cancelled);
         }
         let mut state = self.state.lock().map_err(|_| Error::Protocol)?;
-        if state.users >= config::MEDIA_MAX_STREAMS * 2 {
+        if state.users >= config::MEDIA_MAX_USERS
+            || (publication && state.publications >= config::MEDIA_MAX_PUBLICATIONS)
+            || (!publication && state.users - state.publications >= config::MEDIA_MAX_STREAMS)
+        {
             return Err(Error::Node("media session capacity exhausted"));
         }
         state.users += 1;
+        if publication {
+            state.publications += 1;
+        }
         if state.refresh.is_none() {
             let weak = Arc::downgrade(self);
             state.refresh = Some(tokio::spawn(async move {
@@ -169,6 +181,7 @@ impl Hub {
         Ok(Usage {
             hub: self.clone(),
             generation: self.generation.load(Ordering::SeqCst),
+            publication,
         })
     }
     async fn ready(&self, shared: &Shared) -> Result<()> {
@@ -324,6 +337,11 @@ impl Hub {
             .filter(|listener| !listener.sender.is_closed())
             .ok_or(Error::Denied)?
             .token;
+        if state.tracks.contains_key(&(peer, offer.id)) {
+            return Err(Error::Node(
+                "this media track already has an active session",
+            ));
+        }
         if state.tracks.iter().any(|((source, id), track)| {
             *source == peer && track.kind == offer.kind && *id != offer.id
         }) {
@@ -331,9 +349,7 @@ impl Hub {
                 "a source already occupies this media subscription",
             ));
         }
-        if !state.tracks.contains_key(&(peer, offer.id))
-            && state.tracks.len() >= config::MEDIA_MAX_STREAMS
-        {
+        if state.tracks.len() >= config::MEDIA_MAX_STREAMS {
             return Err(Error::Node("media track capacity exhausted"));
         }
         state.tracks.insert(
@@ -419,6 +435,9 @@ impl Drop for Usage {
     fn drop(&mut self) {
         if let Ok(mut state) = self.hub.state.lock() {
             state.users = state.users.saturating_sub(1);
+            if self.publication {
+                state.publications = state.publications.saturating_sub(1);
+            }
         }
     }
 }
@@ -488,7 +507,7 @@ impl Factory {
     }
     pub(crate) async fn subscribe_media(&self, peer: PeerId, kind: Kind) -> Result<Subscription> {
         let hub = &self.shared.media;
-        let usage = hub.use_media(Arc::downgrade(&self.shared))?;
+        let usage = hub.reserve(Arc::downgrade(&self.shared), false)?;
         hub.ready(&self.shared).await?;
         if !hub.allowed(
             peer,

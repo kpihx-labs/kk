@@ -6,6 +6,7 @@ let token = sessionStorage.getItem("kk-session") || "";
 let current = null, selected = sessionStorage.getItem("kk-room") || "", refreshing = false, mediaControl = null;
 let shownRoom = "", rendered = new Map(), revealed = new Map(), toastTimer;
 let fileConsentPending = false;
+let operationView = "";
 let joinDraft = {name:"", bind:"", role:"participant"};
 const joinDrafts = new Map();
 const dismissedOperations = new Set();
@@ -22,20 +23,25 @@ async function api(path, body) {
     throw new Error(message);
   }
   let value; try { value = await response.json(); } catch { throw new Error("The local service returned an invalid response."); }
-  if (!response.ok || value.ok === false) throw new Error(value.error || value.code || "Operation refused.");
+  if (!response.ok || value.ok === false) { const error = new Error(value.error || value.code || "Operation refused."); error.code = typeof value.code === "string" ? value.code : undefined; throw error; }
   return value;
 }
 async function act(action) { const value = await api("/api/action", action); await refresh(); return value.result; }
 function room() { return current?.rooms.find((entry) => entry.name === selected); }
 function memberName(target, id) { return target?.presentation?.find(member => member.id === id)?.display_name || "Unnamed member"; }
 function memberChoice(target, id) { return memberName(target, id) + " / " + brief(id); }
+function memberProvenance(target, id) {
+  const source = target?.presentation?.find(member => member.id === id)?.source;
+  return source === "self_announcement" ? "Self-announced name / not a verified human identity" : source === "local_override" ? "Local nickname / visible only here" : source === "self_profile" ? (current.settings.share_display_name ? "Your profile / sharing enabled" : "Your profile / visible only here; sharing off") : "Name not shared";
+}
 function nicknameDialog(target, peer) {
   const entry = target.presentation?.find(member => member.id === peer);
   const name = field("Local nickname (leave blank to clear)", "display_name", "text", entry?.source === "local_override" ? entry.display_name : "");
   name.querySelector("input").maxLength = 64;
   modal("Local member nickname", [el("p", "dialog-note", "This nickname is LOCAL ONLY. It is not a verified remote profile name, is not announced to the member, and does not change trust or permissions."), el("code", "fingerprint", peer), name], "Save nickname", async data => { const value = data.get("display_name").trim(); await act({action:"member-label", name:target.name, member:peer, display_name:value || null}); });
 }
-function select(name) { if (selected !== name) { mediaControl?.stopAll(); $("copy-panel").hidden = true; $("copies").replaceChildren(); } selected = name; sessionStorage.setItem("kk-room", name); $("sidebar").classList.remove("open"); render(); }
+function closeSidebar() { $("sidebar").classList.remove("open"); $("sidebar").removeAttribute("role"); $("sidebar").removeAttribute("aria-modal"); $("sidebar-backdrop").hidden = true; $("menu").setAttribute("aria-expanded", "false"); const main = $("workspace")?.querySelector("main"); if (main) main.inert = false; }
+function select(name) { if (selected !== name) { mediaControl?.stopAll(); $("copy-panel").hidden = true; $("copies").replaceChildren(); } selected = name; sessionStorage.setItem("kk-room", name); const wasOpen = $("sidebar").classList.contains("open"); closeSidebar(); if (wasOpen) $("menu").focus(); render(); }
 function field(label, name, type = "text", value = "", note) {
   const wrapper = el("label", "field", label); const input = el(type === "textarea" ? "textarea" : "input"); input.name = name;
   if (type !== "textarea") input.type = type; if (value) input.value = value;
@@ -90,7 +96,7 @@ function fileDialog(label, send) {
   for (const peer of target.status.members.filter((peer) => peer !== target.status.owner)) { const option = el("option", "", memberChoice(target, peer)); option.value = peer; option.title = peer; peers.append(option); }
   if (!peers.options.length) { toast("Invite a recipient first."); return; } wrapper.append(peers);
   const privacy = el("label", "check"); const sensitive = el("input"); sensitive.type = "checkbox"; sensitive.name = "sensitive"; sensitive.checked = $("sensitive").checked; privacy.append(sensitive, el("span", "", "Sensitive local receipt"));
-  modal(label, [wrapper, privacy, el("p", "dialog-note", "The recipient must explicitly consent to file storage. Retrying the same content verifies its prefix; a receipt is not a future availability promise.")], "Send to this recipient", async (data) => { const result = await send(target.name, data.get("to"), data.get("sensitive") === "on"); if (!result.ok) throw new Error(result.result?.error || result.code || "The recipient refused the file."); toast("Verified durable recipient storage."); });
+  modal(label, [wrapper, privacy, el("p", "dialog-note", "The recipient must explicitly consent to file storage. Retrying the same content verifies its prefix; a receipt is not a future availability promise.")], "Send to this recipient", async (data) => { const result = await send(target.name, data.get("to"), data.get("sensitive") === "on"); if (!result.ok) throw new Error(result.code === "DENIED" ? "Transfer not allowed. Check your room permissions and ask the recipient to enable incoming files." : result.result?.error || result.code || "The recipient refused the file."); toast("Verified durable recipient storage."); });
 }
 async function loadFiles() {
   const name = selected; if (!name || !room()) return;
@@ -137,13 +143,15 @@ function findCopiesDialog() {
 function render() {
   if (!current) return;
   applyAppearance(current.settings.appearance);
+  $("workspace").dataset.sidebar = current.settings.sidebar_mode || "expanded";
   $("version").textContent = current.version; $("profile-name").textContent = current.settings.display_name; $("identity").textContent = brief(current.identity); $("identity").title = current.identity || "Not initialized";
   $("welcome").hidden = Boolean(current.identity); $("create").disabled = !current.identity; $("join").disabled = !current.identity;
   if (!selected && current.rooms.length) selected = current.rooms[0].name;
-  $("rooms").replaceChildren(...current.rooms.map((entry) => { const button = el("button", "room-link" + (entry.name === selected ? " selected" : "")); const text = el("span"); text.append(el("strong", "", entry.title || entry.name), el("small", "", entry.status ? "foreground / online" : entry.problem ? "recovery required" : "offline")); button.append(el("span", "room-icon", "#"), text); button.onclick = () => select(entry.name); return button; }));
+  $("rooms").replaceChildren(...current.rooms.map((entry) => { const button = el("button", "room-link" + (entry.name === selected ? " selected" : "")); button.setAttribute("aria-label", entry.title || entry.name); button.title = entry.title || entry.name; const text = el("span"); text.append(el("strong", "", entry.title || entry.name), el("small", "", entry.status ? "foreground / online" : entry.problem ? "recovery required" : "offline")); button.append(el("span", "room-icon", "#"), text); button.onclick = () => select(entry.name); return button; }));
   const target = room(); $("room-view").hidden = !current.identity || !target; $("choose-room").hidden = !current.identity || Boolean(target);
   if (target) {
-    $("room-title").textContent = target.title || target.name; $("room-id").textContent = target.id || "Unavailable"; $("room-problem").textContent = target.problem || (target.presentation_error ? "Local member names unavailable: " + target.presentation_error : ""); $("room-problem").hidden = !target.problem && !target.presentation_error;
+    const namesError = target.presentation_error || target.status?.profile_names_error;
+    $("room-title").textContent = target.title || target.name; $("room-id").textContent = target.id || "Unavailable"; $("room-problem").textContent = target.problem || (namesError ? "Member names unavailable: " + namesError : ""); $("room-problem").hidden = !target.problem && !namesError;
     $("room-state").textContent = target.status ? "FOREGROUND / ONLINE" : (current.phases[target.name]?.state || "OFFLINE").toUpperCase();
     $("start").hidden = Boolean(target.status); $("stop").hidden = !target.status; $("invite").disabled = !target.status; $("controllers").disabled = !target.status; $("find-copies").disabled = !target.status; $("share-media").disabled = !target.status || !mediaControl; $("receive-media").disabled = !target.status || !mediaControl;
     $("text").disabled = !target.status; $("send").disabled = !target.status; $("attach").disabled = !target.status; $("allow-files").disabled = fileConsentPending;
@@ -151,6 +159,7 @@ function render() {
     $("quorum").textContent = target.status ? target.status.members.length + " MEMBERS / " + target.status.voters.length + " VOTERS / EPOCH " + target.status.epoch : "PERSISTENT KEYS / NO BACKGROUND SERVICE";
     const openPeers = new Set([...$("peers").querySelectorAll(".peer")].filter(card => card.querySelector("details")?.open).map(card => card.dataset.peer));
     $("peers").replaceChildren(...(target.status?.members || []).map((peer) => { const card = el("div", "peer"), self = peer === target.status.owner; card.dataset.peer = peer; const label = el("span"); const name = memberName(target, peer); const details = el("details", "technical-details"); details.open = openPeers.has(peer); details.append(el("summary", "", "Fingerprint"), el("code", "fingerprint", peer)); label.append(el("strong", "", name), el("small", "", (self ? "This device / " : "") + (target.status.voters.includes(peer) ? "Voting controller" : "Data member")), details); card.append(el("span", "peer-avatar", name === "Unnamed member" ? "?" : Array.from(name.trim()).slice(0, 2).join("").toUpperCase()), label);
+      label.append(el("small", "muted", memberProvenance(target, peer)));
       if (!self) { const nickname = el("button", "outline compact", "Nickname"); nickname.onclick = () => nicknameDialog(target, peer); card.append(nickname); const remove = el("button", "peer-remove", "x"); remove.title = "Remove data membership"; remove.onclick = () => modal("Remove data membership?", [el("p", "dialog-note", "Retire this peer's vote separately if necessary. Data removal rotates the private group epoch."), el("code", "fingerprint", peer)], "Remove data access", async () => { await act({ action: "remove", name: target.name, peer }); }); card.append(remove); } return card; }));
     mediaControl?.refreshLabels();
     if (shownRoom !== selected) { shownRoom = selected; rendered.clear(); revealed.clear(); $("messages").replaceChildren(); $("files").replaceChildren(); }
@@ -166,18 +175,33 @@ function render() {
     }
     const retained = new Set(messages.map((message) => message.id)); for (const [id, node] of rendered) if (!retained.has(id)) { node.remove(); rendered.delete(id); revealed.delete(id); }
   }
+  renderOperations();
+}
+function renderOperations() {
   const operationIds = new Set(current.operations.map((operation) => operation.id));
   for (const operation of current.operations) if (operation.kind === "join" && ["joined", "stopped"].includes(operation.state)) joinDrafts.delete(operation.id);
   for (const id of joinDrafts.keys()) if (!operationIds.has(id)) joinDrafts.delete(id);
   for (const id of dismissedOperations) if (!operationIds.has(id)) dismissedOperations.delete(id);
-  $("operations").replaceChildren(...current.operations.filter((operation) => !dismissedOperations.has(operation.id) && !["complete", "stopped", "joined"].includes(operation.state)).map((operation) => {
-    const card = el("section", "operation"); card.append(el("h3", "", operation.room + " / " + operation.state));
+  const visibleOperations = current.operations.filter(operation => !dismissedOperations.has(operation.id));
+  $("action-count").textContent = String(visibleOperations.length);
+  const view = JSON.stringify([visibleOperations, [...joinDrafts.keys()]]);
+  if (view === operationView) return;
+  operationView = view;
+  const active = document.activeElement, focusedCard = active?.closest?.(".operation");
+  const focusKey = focusedCard && $("operations").contains(active) ? [focusedCard.dataset.operation, active.dataset.action] : null;
+  $("operations").replaceChildren(...visibleOperations.map((operation) => {
+    const card = el("section", "operation"); card.dataset.operation = String(operation.id); card.append(el("h3", "", operation.room + " / " + operation.state));
     if (operation.error) card.append(el("p", "error", operation.error));
-    if (["failed", "declined"].includes(operation.state)) { if (operation.kind === "join" && joinDrafts.has(operation.id)) { const retry = el("button", "primary compact", "Edit joining details"); retry.onclick = () => retryJoin(operation); card.append(el("p", "", "The invitation is not retained. Paste or select a valid private invitation again."), retry); } const dismiss = el("button", "outline compact", "Dismiss"); dismiss.onclick = () => { dismissedOperations.add(operation.id); joinDrafts.delete(operation.id); render(); }; card.append(dismiss); }
-    if (operation.proposal) { card.append(el("p", "", "Compare this CONFIRM value on both devices."), el("div", "sas", operation.proposal.confirmation), el("code", "", operation.proposal.fingerprint)); const actions = el("div", "operation-actions"); for (const accept of [true, false]) { const button = el("button", accept ? "primary compact" : "outline compact", accept ? "Matches / approve" : "Reject"); button.onclick = async () => { try { await act({ action: "confirm", id: operation.id, accept }); } catch (error) { toast(error.message); } }; actions.append(button); } card.append(actions); }
-    else if (operation.invitation_ready && !["failed", "working", "declined"].includes(operation.state)) { card.append(el("p", "", "Send this private single-use JSON to the intended device. A public fingerprint alone is not an invitation. It does not grant a vote.")); const button = el("button", "outline compact", "Download invitation"); button.onclick = async () => { try { const response = await fetch("/api/operations/" + operation.id + "/invitation", { headers: { Authorization: "Bearer " + token } }); if (!response.ok) throw new Error("Invitation is unavailable or expired."); const url = URL.createObjectURL(await response.blob()); const anchor = el("a"); anchor.href = url; anchor.download = "kk-invitation.json"; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); } catch (error) { toast(error.message); } }; card.append(button); }
+    if (["failed", "declined", "complete", "stopped", "joined"].includes(operation.state) && !operation.proposal && !operation.invitation_ready) { if (operation.kind === "join" && joinDrafts.has(operation.id)) { const retry = el("button", "primary compact", "Edit joining details"); retry.dataset.action = "retry"; retry.onclick = () => retryJoin(operation); card.append(el("p", "", "The invitation is not retained. Paste or select a valid private invitation again."), retry); } const dismiss = el("button", "outline compact", "Dismiss"); dismiss.dataset.action = "dismiss"; dismiss.onclick = () => { dismissedOperations.add(operation.id); joinDrafts.delete(operation.id); render(); }; card.append(dismiss); }
+    if (operation.proposal) { card.append(el("p", "", "Compare this CONFIRM value on both devices."), el("div", "sas", operation.proposal.confirmation), el("code", "", operation.proposal.fingerprint)); const actions = el("div", "operation-actions"); for (const accept of [true, false]) { const button = el("button", accept ? "primary compact" : "outline compact", accept ? "Matches / approve" : "Reject"); button.dataset.action = accept ? "approve" : "reject"; button.onclick = async () => { try { await act({ action: "confirm", id: operation.id, accept }); } catch (error) { toast(error.message); } }; actions.append(button); } card.append(actions); }
+    else if (operation.invitation_ready && !["failed", "working", "declined"].includes(operation.state)) { card.append(el("p", "", "Send this private single-use JSON to the intended device. A public fingerprint alone is not an invitation. It does not grant a vote.")); const button = el("button", "outline compact", "Download invitation"); button.dataset.action = "download"; button.onclick = async () => { try { const response = await fetch("/api/operations/" + operation.id + "/invitation", { headers: { Authorization: "Bearer " + token } }); if (!response.ok) throw new Error("Invitation is unavailable or expired."); const url = URL.createObjectURL(await response.blob()); const anchor = el("a"); anchor.href = url; anchor.download = "kk-invitation.json"; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); } catch (error) { toast(error.message); } }; card.append(button); }
     return card;
   }));
+  if (focusKey) {
+    const card = [...$("operations").children].find(node => node.dataset.operation === focusKey[0]);
+    const replacement = card && [...card.querySelectorAll("button")].find(node => node.dataset.action === focusKey[1]);
+    (replacement || $("action-center").querySelector("summary"))?.focus();
+  }
 }
 async function refresh() { if (!token || refreshing) return; refreshing = true; try { current = await api("/api/state"); $("connection").textContent = "LOCAL / CONNECTED"; render(); await loadFiles(); } catch (error) { $("connection").textContent = "LOCAL / UNAVAILABLE"; mediaControl?.stopAll(); } finally { refreshing = false; } }
 function applyAppearance(appearance) {
@@ -209,11 +233,37 @@ function applyAppearance(appearance) {
   style.setProperty("--accent-soft", color(surface));
 }
 $("theme").onclick = () => {
+  const baseline = {revision:current.settings.revision ?? "0", display_name:current.settings.display_name, share_display_name:current.settings.share_display_name === true, sidebar_mode:current.settings.sidebar_mode || "expanded", appearance:{...current.settings.appearance}};
   const settings = current.settings, name = field("Display name", "display_name", "text", settings.display_name); name.querySelector("input").required = true; name.querySelector("input").maxLength = 64;
+  const share = field("Share this display name with room members", "share_display_name", "checkbox"); share.querySelector("input").checked = settings.share_display_name === true;
+  const sidebar = el("label", "field", "Sidebar mode"), sidebarSelect = el("select"); sidebarSelect.name = "sidebar_mode";
+  for (const mode of ["expanded", "compact", "auto"]) { const option = el("option", "", mode); option.value = mode; sidebarSelect.append(option); }
+  sidebarSelect.value = settings.sidebar_mode || "expanded"; sidebar.append(sidebarSelect);
   const hue = field("Hue (0-350 in steps of 10; blank for neutral)", "hue", "number", settings.appearance.hue === null ? "" : String(settings.appearance.hue)); const hueInput = hue.querySelector("input"); hueInput.min = 0; hueInput.max = 350; hueInput.step = 10;
   const clarity = field("Clarity (0-100)", "clarity", "range", String(settings.appearance.clarity)); const saturation = field("Saturation (0-100)", "saturation", "range", String(settings.appearance.saturation));
   for (const wrapper of [clarity, saturation]) { const input = wrapper.querySelector("input"); input.min = 0; input.max = 100; input.step = 10; const value = el("small", "muted", input.value); input.oninput = () => { value.textContent = input.value; }; wrapper.append(value); }
-  modal("Profile settings", [name, hue, clarity, saturation, el("p", "dialog-note", "Neutral hue, clarity 50 and saturation 20 restore the original dark grey palette. Settings belong to the running profile.")], "Save settings", async data => { const raw = data.get("hue"); await act({action:"settings", display_name:data.get("display_name"), appearance:{hue:raw === "" ? null : Number(raw), clarity:Number(data.get("clarity")), saturation:Number(data.get("saturation"))}}); });
+  modal("Profile settings", [name, share, sidebar, el("p", "dialog-note", "Sharing is off by default. When off, your own name remains visible only here. Previously shared names cannot be erased from other members' knowledge or local nicknames. Names are not verified human identities."), hue, clarity, saturation, el("p", "dialog-note", "Neutral hue, clarity 50 and saturation 20 restore the original dark grey palette. Settings belong to the running profile.")], "Save settings", async data => {
+    const raw = data.get("hue"), action = {action:"settings", expected_revision:baseline.revision};
+    const values = {display_name:data.get("display_name"), share_display_name:data.get("share_display_name") === "on", sidebar_mode:data.get("sidebar_mode")};
+    for (const key of Object.keys(values)) if (values[key] !== baseline[key]) action[key] = values[key];
+    const appearance = {hue:raw === "" ? null : Number(raw), clarity:Number(data.get("clarity")), saturation:Number(data.get("saturation"))};
+    if (Object.keys(appearance).some(key => appearance[key] !== baseline.appearance[key])) action.appearance = appearance;
+    try { await act(action); } catch (error) {
+      if (error.code !== "SETTINGS_CONFLICT") throw error;
+      let latest;
+      try { latest = (await api("/api/state")).settings; }
+      catch { throw new Error("Settings changed elsewhere, but current consent could not be refreshed. No changes were saved. Retry to reload consent before saving."); }
+      current.settings = latest;
+      if (values.display_name === baseline.display_name) name.querySelector("input").value = latest.display_name;
+      if (values.sidebar_mode === baseline.sidebar_mode) sidebarSelect.value = latest.sidebar_mode;
+      for (const [key, wrapper] of [["hue", hue], ["clarity", clarity], ["saturation", saturation]]) {
+        if (appearance[key] === baseline.appearance[key]) { const input = wrapper.querySelector("input"); input.value = latest.appearance[key] === null ? "" : String(latest.appearance[key]); input.oninput?.(); }
+      }
+      share.querySelector("input").checked = latest.share_display_name === true;
+      Object.assign(baseline, {revision:latest.revision, display_name:latest.display_name, share_display_name:latest.share_display_name === true, sidebar_mode:latest.sidebar_mode, appearance:{...latest.appearance}});
+      throw new Error("Settings changed elsewhere. Current sharing consent has been reloaded; review it and your retained edits, then save again.");
+    }
+  });
 };
 $("profiles").onclick = async () => { try {
   const profiles = await act({action:"profiles"}), list = el("div");
@@ -221,7 +271,30 @@ $("profiles").onclick = async () => { try {
   const id = field("New profile ID", "id"), display = field("New display name", "display_name"), directory = field("Existing profile directory (register only)", "directory");
   modal("Profiles", [el("p", "dialog-note", "Selection affects the next foreground launch only. Existing running rooms never change identity."), list, id, display, directory], "Create or register", async data => { const id = data.get("id").trim(), directory = data.get("directory").trim(); await act(directory ? {action:"profile-register", id, directory} : {action:"profile-create", id, display_name:data.get("display_name")}); toast("Profile registered. Select it and restart to use it."); });
 } catch(error) { toast(error.message); } };
-$("menu").onclick = () => $("sidebar").classList.toggle("open"); $("dialog-close").onclick = () => $("dialog").close();
+$("menu").onclick = async () => {
+  if (matchMedia("(max-width: 700px)").matches) {
+    const open = !$("sidebar").classList.contains("open");
+    if (!open) { closeSidebar(); return; }
+    $("sidebar").classList.add("open"); $("sidebar").setAttribute("role", "dialog"); $("sidebar").setAttribute("aria-modal", "true"); $("sidebar-backdrop").hidden = false; $("menu").setAttribute("aria-expanded", "true"); const main = $("workspace")?.querySelector("main"); if (main) main.inert = true; $("sidebar").querySelector("a, button")?.focus();
+  } else {
+    const modes = ["expanded", "compact", "auto"], mode = modes[(modes.indexOf(current.settings.sidebar_mode || "expanded") + 1) % modes.length];
+    try { await act({action:"settings", expected_revision:current.settings.revision, sidebar_mode:mode}); toast("Sidebar: " + mode); } catch (error) { toast(error.message); }
+  }
+};
+$("sidebar-backdrop").onclick = () => { closeSidebar(); $("menu").focus(); };
+addEventListener("keydown", event => {
+  if (!$("sidebar").classList.contains("open") || $("dialog")?.open) return;
+  if (event.key === "Escape") { event.preventDefault(); closeSidebar(); $("menu").focus(); }
+  else if (event.key === "Tab" && matchMedia("(max-width: 700px)").matches) {
+    const items = [$("sidebar-backdrop"), ...$("sidebar").querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')].filter(item => !item.hidden && item.getClientRects().length);
+    if (!items.length) return;
+    const first = items[0], last = items.at(-1), active = document.activeElement;
+    if (event.shiftKey && (active === first || !items.includes(active))) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && (active === last || !items.includes(active))) { event.preventDefault(); first.focus(); }
+  }
+});
+matchMedia("(max-width: 700px)").addEventListener?.("change", event => { if (!event.matches) closeSidebar(); });
+$("dialog-close").onclick = () => $("dialog").close();
 $("create").onclick = $("create-empty").onclick = createDialog; $("join").onclick = $("join-empty").onclick = joinDialog;
 $("invite").onclick = inviteDialog; $("controllers").onclick = controllersDialog; $("address").onclick = addressDialog;
 $("find-copies").onclick = findCopiesDialog; $("close-copies").onclick = () => { $("copy-panel").hidden = true; $("copies").replaceChildren(); };

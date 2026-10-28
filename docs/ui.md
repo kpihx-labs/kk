@@ -63,3 +63,17 @@ Errors stay visible in document flow; content scrolls independently of the compo
 Responsive layout checks are not physical-phone or permission-portal qualification.
 
 Current delivery: [TODO.md](../TODO.md). Evidence: [progress.md](progress.md).
+
+## Sharing A Display Name
+
+Settings includes **Share this display name with room members**, off by default.
+Your own name remains visible locally when it is off. Remote names appear only
+after explicit opt-in and a background metadata refresh. Member cards distinguish
+self-announced names from local nicknames; neither verifies a human identity.
+Fingerprints remain available, and every action still uses the exact member ID.
+
+Turning sharing off cannot erase names already learned by another member and does
+not clear their local nicknames. Settings updates change only submitted fields
+atomically. Optional name-cache errors are shown separately; they do not stop the
+room or make its basic status offline. The UI status path never waits for remote
+name requests. See [profiles](profiles.md#explicit-name-sharing) for CLI controls.

@@ -130,21 +130,33 @@ async fn file_inspection_obeys_the_platform_contract() {
 
 #[cfg(unix)]
 #[tokio::test(flavor = "current_thread")]
-async fn atomic_message_publication_is_linux_only() {
+async fn atomic_message_publication_obeys_the_platform_contract() {
     let root = tempfile::tempdir().unwrap();
     let profile = root.path().join("profile");
     kk::profile::private_directory(&profile, true).unwrap();
     let identity = kk::Identity::create(&profile.join("identity")).unwrap();
     let destination = profile.join("message");
     let result = kk::files::save_bytes(&destination, b"abc", &identity.peer(), false).await;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         result.unwrap();
         assert_eq!(std::fs::read(destination).unwrap(), b"abc");
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         assert!(matches!(result, Err(kk::Error::UnsupportedPlatform)));
         assert!(!destination.exists());
     }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[test]
+fn unsupported_file_receive_policy_refuses_without_creating_state() {
+    let root = tempfile::tempdir().unwrap();
+    let destination = root.path().join("must-not-exist");
+    assert!(matches!(
+        kk::files::ReceivePolicy::accept(destination.clone(), 3),
+        Err(kk::Error::UnsupportedPlatform)
+    ));
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
 }

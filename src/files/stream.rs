@@ -144,13 +144,7 @@ where
         return Err(Error::Integrity);
     }
     authorize().await?;
-    #[cfg(target_os = "linux")]
     store.commit_with_publication(publication).await?;
-    #[cfg(not(target_os = "linux"))]
-    let () = {
-        let _ = publication;
-        store.commit().await?
-    };
     response.write_all(&expected).await?;
     response.finish().map_err(|_| Error::Network)?;
     Ok(Receipt {

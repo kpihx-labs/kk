@@ -15,9 +15,9 @@ use tokio::{
 use crate::{Error, Identity, Peer, Result, config, error::connection_error, transport};
 use zeroize::Zeroizing;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod storage;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use storage::Store;
 
 pub(crate) const ALPN: &[u8] = b"kk-file/2";
@@ -85,7 +85,7 @@ impl ReceivePolicy {
         if max_bytes > config::MAX_FILE_BYTES {
             return Err(Error::FileTooLarge);
         }
-        if !cfg!(target_os = "linux") {
+        if !cfg!(any(target_os = "linux", target_os = "macos")) {
             return Err(Error::UnsupportedPlatform);
         }
         Ok(Self {
@@ -308,12 +308,12 @@ pub(crate) fn source_file(_path: &Path) -> Result<File> {
     Err(Error::UnsupportedPlatform)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 struct Store {
     file: File,
     complete: bool,
 }
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 impl Store {
     async fn open(_destination: &Path, _binding: &[u8; 73]) -> Result<Self> {
         Err(Error::UnsupportedPlatform)
@@ -321,7 +321,52 @@ impl Store {
     async fn commit(&mut self) -> Result<()> {
         Err(Error::UnsupportedPlatform)
     }
+    async fn commit_with_publication(self, publication: impl stream::Publication) -> Result<()> {
+        // Keep the revocation gate contract even on unsupported storage. The
+        // closure cannot publish, and even a gate that skips it cannot succeed.
+        publication.publish(|| Err(Error::UnsupportedPlatform))?;
+        Err(Error::UnsupportedPlatform)
+    }
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests;
+
+#[cfg(all(test, not(any(target_os = "linux", target_os = "macos"))))]
+mod unsupported_store_tests {
+    use super::*;
+
+    struct Gate {
+        called: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        invoke: bool,
+    }
+
+    impl stream::Publication for Gate {
+        fn publish(self, rename: impl FnOnce() -> Result<()>) -> Result<()> {
+            self.called.store(true, std::sync::atomic::Ordering::SeqCst);
+            if self.invoke { rename() } else { Ok(()) }
+        }
+    }
+
+    #[tokio::test]
+    async fn publication_gate_cannot_turn_unsupported_storage_into_success() {
+        for invoke in [false, true] {
+            let temporary = tempfile::tempfile().unwrap();
+            let store = Store {
+                file: File::from_std(temporary),
+                complete: false,
+            };
+            let called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            assert!(matches!(
+                store
+                    .commit_with_publication(Gate {
+                        called: called.clone(),
+                        invoke
+                    })
+                    .await,
+                Err(Error::UnsupportedPlatform)
+            ));
+            assert!(called.load(std::sync::atomic::Ordering::SeqCst));
+        }
+    }
+}

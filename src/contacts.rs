@@ -4,12 +4,17 @@ use crate::{Error, Identity, Peer, Result, profile};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::File,
-    io::{Read, Write},
     net::SocketAddr,
     path::{Path, PathBuf},
 };
 
+#[cfg(unix)]
+use std::{
+    fs::File,
+    io::{Read, Write},
+};
+
+#[cfg(unix)]
 const MAX_REGISTRY: u64 = 1_048_576;
 const MAX_CONTACTS: usize = 64;
 

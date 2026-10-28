@@ -127,7 +127,7 @@ impl Drop for Consent {
 impl Factory {
     /// Pause one publication after final authorization and verification, on its
     /// blocking worker and before acquiring the revocation/rename gate.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn pause_file_publication(
         &self,
     ) -> Result<(

@@ -90,7 +90,11 @@ async fn three_private_rooms_use_quorum_order_durable_nonce_and_local_veto_witho
             &[],
             &identities[0],
             &identities[index].peer(),
-            Rights::MODERATOR,
+            if index == 1 {
+                Rights::READER
+            } else {
+                Rights::PARTICIPANT
+            },
         )
         .unwrap();
         let mut candidate = CryptoMember::create_private(
@@ -193,6 +197,42 @@ async fn three_private_rooms_use_quorum_order_durable_nonce_and_local_veto_witho
         assert_eq!(room.peers().len(), 3);
         assert_eq!(room.epoch(), 2);
     }
+    // Owner, reader and participant may all exchange metadata. This does not
+    // confer the publisher right needed for files or text.
+    for (local, remote) in [(0, 1), (0, 2), (1, 0), (1, 2), (2, 0), (2, 1)] {
+        assert_eq!(
+            rooms[local]
+                .authorize_profile_metadata(&identities[remote].peer(), Duration::from_secs(5))
+                .await
+                .unwrap(),
+            2
+        );
+    }
+    assert!(matches!(
+        rooms[0]
+            .authorize_file(&identities[1].peer(), true, Duration::from_secs(5))
+            .await,
+        Err(Error::Denied)
+    ));
+    assert!(matches!(
+        rooms[1]
+            .encrypt_text("reader cannot publish", false, Duration::from_secs(5))
+            .await,
+        Err(Error::Denied)
+    ));
+    let outsider = Identity::create(&directory.path().join("outsider")).unwrap();
+    assert!(matches!(
+        rooms[0]
+            .authorize_profile_metadata(&outsider.peer(), Duration::from_secs(5))
+            .await,
+        Err(Error::Denied)
+    ));
+    assert!(matches!(
+        rooms[0]
+            .authorize_profile_metadata(&identities[0].peer(), Duration::from_secs(5))
+            .await,
+        Err(Error::Denied)
+    ));
     let ciphertext = rooms[0]
         .encrypt_text("three member private payload", true, Duration::from_secs(5))
         .await
@@ -231,6 +271,32 @@ async fn three_private_rooms_use_quorum_order_durable_nonce_and_local_veto_witho
         media: false,
     };
     let policy = Registry::open(profile_path).unwrap();
+    for (incoming, outgoing) in [(false, true), (true, false)] {
+        policy
+            .put(
+                "bob",
+                Contact {
+                    certificate: identities[1].peer().certificate.as_ref().to_vec(),
+                    local_identity: identities[0].peer().fingerprint(),
+                    incoming: Permissions {
+                        rooms: incoming,
+                        ..permissions
+                    },
+                    outgoing: Permissions {
+                        rooms: outgoing,
+                        ..permissions
+                    },
+                    endpoints: vec![],
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            rooms[0]
+                .authorize_profile_metadata(&identities[1].peer(), Duration::from_secs(5))
+                .await,
+            Err(Error::Denied)
+        ));
+    }
     policy
         .put(
             "bob",
@@ -243,7 +309,21 @@ async fn three_private_rooms_use_quorum_order_durable_nonce_and_local_veto_witho
             },
         )
         .unwrap();
+    // The Rooms permission alone suffices even when Files and Media are denied.
+    assert_eq!(
+        rooms[0]
+            .authorize_profile_metadata(&identities[1].peer(), Duration::from_secs(5))
+            .await
+            .unwrap(),
+        2
+    );
     policy.revoke("bob").unwrap();
+    assert!(matches!(
+        rooms[0]
+            .authorize_profile_metadata(&identities[1].peer(), Duration::from_secs(5))
+            .await,
+        Err(Error::Revoked)
+    ));
     // Sending only to Charlie would still expose the old epoch to revoked Bob.
     assert!(matches!(
         rooms[0]
@@ -262,6 +342,18 @@ async fn three_private_rooms_use_quorum_order_durable_nonce_and_local_veto_witho
             .unwrap()
             .accepted
     );
+    assert!(matches!(
+        rooms[0]
+            .authorize_profile_metadata(&identities[1].peer(), Duration::from_secs(5))
+            .await,
+        Err(Error::Denied)
+    ));
+    assert!(matches!(
+        rooms[1]
+            .authorize_profile_metadata(&identities[0].peer(), Duration::from_secs(5))
+            .await,
+        Err(Error::Revoked)
+    ));
     let next = rooms[0]
         .encrypt_text(
             "new epoch excludes revoked Bob",
@@ -310,6 +402,19 @@ async fn three_private_rooms_use_quorum_order_durable_nonce_and_local_veto_witho
                 handle.status(Duration::from_secs(5)).await.unwrap().epoch,
                 3
             );
+            assert_eq!(
+                handle
+                    .authorize_profile_metadata(identities[2].peer(), Duration::from_secs(5))
+                    .await
+                    .unwrap(),
+                3
+            );
+            assert!(matches!(
+                handle
+                    .authorize_profile_metadata(identities[1].peer(), Duration::from_secs(5))
+                    .await,
+                Err(Error::Denied)
+            ));
             controls[0].register_room(handle.clone()).await.unwrap();
             assert!(controls[1].register_room(handle.clone()).await.is_err());
             let target = PeerId::from_peer(&identities[0].peer());

@@ -12,6 +12,34 @@ fn profile() -> tempfile::TempDir {
     root
 }
 
+#[test]
+fn announcements_are_validated_and_local_aliases_override_them() {
+    let root = profile();
+    let room = [1; 32];
+    let me = raft::PeerId([2; 32]);
+    let remote = raft::PeerId([3; 32]);
+    let named = raft::PeerId([4; 32]);
+    let announcements = BTreeMap::from([
+        (me, "Not my local name".into()),
+        (remote, "Remote name".into()),
+        (named, "Announced name".into()),
+    ]);
+    set(root.path(), room, remote, Some("Nickname".into())).unwrap();
+    let result =
+        present_with_announcements(root.path(), room, me, &[me, remote, named], &announcements)
+            .unwrap();
+    assert_eq!(result[0].source, PresentationSource::SelfProfile);
+    assert_eq!(result[1].display_name, "Nickname");
+    assert_eq!(result[1].source, PresentationSource::LocalOverride);
+    assert_eq!(result[2].display_name, "Announced name");
+    assert_eq!(
+        serde_json::to_value(result[2].source).unwrap(),
+        "self_announcement"
+    );
+    let invalid = BTreeMap::from([(named, "x".repeat(65))]);
+    assert!(present_with_announcements(root.path(), room, me, &[named], &invalid).is_err());
+}
+
 fn write_raw(profile: &Path, bytes: &[u8]) {
     fs::write(profile.join(FILE), bytes).unwrap();
     fs::set_permissions(profile.join(FILE), fs::Permissions::from_mode(0o600)).unwrap();

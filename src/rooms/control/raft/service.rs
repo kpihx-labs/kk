@@ -153,6 +153,56 @@ impl ControlNode {
     pub fn unregister_room(&self) -> Result<()> {
         self.network.unregister_room()
     }
+    /// Explicit SDK name source, independent of local profile/settings wiring.
+    pub fn configure_profile_name(&self, name: String, share: bool) -> Result<()> {
+        self.network.configure_profile_name(name, share)
+    }
+    /// Existing profile source, verified against this service's public identity.
+    /// None disables disclosure; no private key is loaded or data created.
+    pub fn configure_profile_directory(&self, directory: Option<std::path::PathBuf>) -> Result<()> {
+        self.network.configure_profile_directory(directory)
+    }
+    /// Bounded optional room metadata. Never cached; identity and epoch are
+    /// verified before acceptance. Names are presentation text, not trust.
+    pub async fn peer_profile(
+        &self,
+        target: PeerId,
+        timeout: Duration,
+    ) -> Result<network::ProfileMetadata> {
+        self.network
+            .peer_profile(target, &self.configured_node(target)?, timeout)
+            .await
+    }
+    /// Memory-only, synchronous snapshot. Pass the complete current private-room
+    /// membership and epoch, not an additive interest list. Missing/expired names
+    /// are omitted; bounded refresh is scheduled through the transport owner.
+    /// This never waits for network, quorum or a private-room actor.
+    pub fn cached_peer_profiles(
+        &self,
+        epoch: u64,
+        members: &[PeerId],
+    ) -> Result<BTreeMap<PeerId, String>> {
+        if members.len() > config::ROOM_MAX_MEMBERS {
+            return Err(Error::Limit {
+                resource: "profile cache members",
+                max: config::ROOM_MAX_MEMBERS,
+            });
+        }
+        let metrics = self.raft.metrics();
+        let membership = metrics.borrow().membership_config.clone();
+        let routes = members
+            .iter()
+            .filter(|peer| **peer != self.id)
+            .filter_map(|peer| {
+                membership
+                    .membership()
+                    .get_node(peer)
+                    .map(|node| (*peer, node.clone()))
+            })
+            .collect();
+        self.network
+            .cached_peer_profiles(epoch, members, *membership.log_id(), routes)
+    }
     pub fn enable_files(
         &self,
         directory: std::path::PathBuf,
@@ -768,6 +818,7 @@ impl ControlNode {
         .map_err(|_| Error::Timeout)?
     }
     pub async fn shutdown(mut self) -> Result<()> {
+        self.network.suspend_profile_cache();
         let media = self.network.shutdown_media().await;
         // Finish bounded in-flight store work before releasing its owner lease;
         // aborting an async waiter does not cancel spawn_blocking SQLite work.
@@ -843,5 +894,7 @@ impl Drop for ControlNode {
     }
 }
 
+#[cfg(all(test, unix))]
+mod profile_tests;
 #[cfg(all(test, unix))]
 mod tests;

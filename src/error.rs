@@ -25,6 +25,8 @@ pub enum Error {
     Cancelled,
     #[error("invalid configuration: {0}")]
     Configuration(&'static str),
+    #[error("settings changed; reload current settings before retrying")]
+    SettingsConflict,
     #[error("local discovery failed: {0}")]
     Discovery(&'static str),
     #[error("file integrity check failed")]
@@ -37,7 +39,7 @@ pub enum Error {
     Encryption,
     #[error("pairing failed or invitation is no longer available")]
     Pairing,
-    #[error("operation is not authorized by the contact policy")]
+    #[error("operation is not allowed by the current permissions or consent")]
     Denied,
     #[error("peer identity is revoked")]
     Revoked,
@@ -62,6 +64,7 @@ impl Error {
             Self::Limit { .. } => "LIMIT",
             Self::Cancelled => "CANCELLED",
             Self::Configuration(_) => "CONFIGURATION",
+            Self::SettingsConflict => "SETTINGS_CONFLICT",
             Self::Discovery(_) => "DISCOVERY",
             Self::Integrity => "INTEGRITY",
             Self::Destination(_) => "DESTINATION",

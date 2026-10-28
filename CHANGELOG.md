@@ -16,6 +16,16 @@ current state and Git history for detailed implementation checkpoints.
   workflows and independent keyed media controls with concurrency regressions.
 - Add deterministic ZIP archives and bounded immutable-snapshot verification.
 - Add nonpublishing native foundation jobs; these are not product qualification.
+- Add default-off, authenticated room profile-name metadata with bounded refresh,
+  explicit provenance and disclosure fencing against cooperating opt-out writers.
+- Reject stale Settings saves through lossless revisions; retain editable drafts
+  and reload consent explicitly before retrying a conflict.
+- Add retractable sidebars, bounded panels, transient overlay notices and a compact
+  action center; preserve message space rather than accumulating permanent cards.
+- Derive concurrent media capacity from room membership and source kinds; add
+  screen/window/tab hints, actual-surface reporting and explicit device choices.
+- Permit safe pre-enrollment reservation retry without replacing partial identity
+  or room state; distinguish human invitation waiting from ordinary RPC deadlines.
 
 ## 0.8.2 - 2026-10-27
 

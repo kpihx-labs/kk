@@ -1,4 +1,4 @@
-name: Native Foundation (Not Product Qualification)
+name: Native Foundation and macOS Storage (Not Product Qualification)
 
 on:
   push:
@@ -46,6 +46,11 @@ jobs:
           cargo --version
       - name: Fetch locked dependencies for the native target
         run: cargo fetch --locked --target $env:TARGET
+      - name: Provision the owned-PTY test interpreter
+        if: runner.os == 'macOS'
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2; same pin as check.yml
+        with:
+          python-version: '3.13'
       - name: Build native binary and compile all test/example targets (not execution)
         run: cargo build --locked --offline --target $env:TARGET --all-targets
       - name: Lint native targets without warning suppression
@@ -54,13 +59,28 @@ jobs:
         run: cargo test --locked --offline --target $env:TARGET --test platform_foundation binary_smoke -- --nocapture
       - name: Assert the native platform contract, including intentional refusals
         run: cargo test --locked --offline --target $env:TARGET --test platform_foundation -- --nocapture
+      - name: Execute macOS file transfer and envelope storage regressions
+        if: runner.os == 'macOS'
+        run: cargo test --locked --offline --target $env:TARGET --test files --test envelope -- --nocapture
+      - name: Execute macOS pipe/socket stdio and supervised worker regressions
+        if: runner.os == 'macOS'
+        run: cargo test --locked --offline --target $env:TARGET --test stdio_pipe --test stdio_socket --test stdio_worker --test stdio_terminal -- --nocapture
+      - name: Execute macOS private staging and atomic publication unit regressions
+        if: runner.os == 'macOS'
+        run: cargo test --locked --offline --target $env:TARGET --lib files:: -- --nocapture
+      - name: Execute macOS publication consent, owner revocation and cancellation regressions
+        if: runner.os == 'macOS'
+        run: cargo test --locked --offline --target $env:TARGET --lib rooms::control::raft::service::tests::consent -- --nocapture
+      - name: Execute macOS publication grant lock regressions
+        if: runner.os == 'macOS'
+        run: cargo test --locked --offline --target $env:TARGET --lib rooms::control::raft::network::file::tests -- --nocapture
       - name: Report scope even when a foundation gate fails
         if: always()
         run: |
           @'
-          ## Native foundation only
-          Compilation/lint, minimum binary smoke and explicit platform-contract tests are the only gates in this lane. Read each step result; this summary is not a passing result.
-          Product integration suites and library unit suites are NOT executed here. See docs/platforms.md for the Linux/Unix gating inventory.
-          Windows protected storage/IPC and non-Linux atomic file publication are not qualified. Expected refusals are tested, not presented as working product features.
+          ## Native foundation and bounded macOS storage
+          Compilation/lint, minimum binary smoke and explicit platform-contract tests run on all hosts. macOS additionally executes selected storage, transfer, envelope and publication/consent unit regressions. Read each step result; this summary is not a passing result.
+          Other product integration and library unit suites are NOT executed here. See docs/platforms.md for the exact gating inventory and filesystem/durability scope.
+          Windows protected storage/IPC remains refused. macOS storage tests do not qualify native IPC, capture, UI, installers or the whole product. Expected refusals are tested, not presented as working product features.
           No release, installer, artifact upload, signing, physical capture or native product-support claim is made. This workflow is not a dependency of the existing release job.
           '@ | Add-Content -Path $env:GITHUB_STEP_SUMMARY

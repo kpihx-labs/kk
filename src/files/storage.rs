@@ -1,4 +1,4 @@
-//! Linux descriptor-relative private staging and atomic no-replace publication.
+//! Linux/macOS descriptor-relative private staging and atomic no-replace publication.
 
 use std::{ffi::OsString, fs::File as StdFile, os::unix::fs::MetadataExt, path::Path};
 
@@ -171,6 +171,8 @@ impl Store {
 
     fn publish(&mut self) -> Result<()> {
         if !self.complete {
+            // rustix maps NOREPLACE to Linux RENAME_NOREPLACE or macOS
+            // renameatx_np(RENAME_EXCL). Never fall back to clobbering rename.
             fs::renameat_with(
                 &self.directory,
                 &self.partial,
@@ -193,5 +195,123 @@ impl Store {
         }
         fs::fsync(&self.directory)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::files::stream::Publication;
+    use std::os::unix::fs::PermissionsExt;
+
+    struct Gate<F>(F);
+
+    impl<F> Publication for Gate<F>
+    where
+        F: FnOnce() -> Result<()> + Send + 'static,
+    {
+        fn publish(self, rename: impl FnOnce() -> Result<()>) -> Result<()> {
+            (self.0)()?;
+            rename()
+        }
+    }
+
+    async fn staged() -> (tempfile::TempDir, std::path::PathBuf, Store) {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let output = root.path().join("output");
+        let mut store = Store::open(&output, &[0; 73]).await.unwrap();
+        store.file.write_all(b"verified fixture").await.unwrap();
+        store.file.sync_all().await.unwrap();
+        (root, output, store)
+    }
+
+    #[tokio::test]
+    async fn refused_publication_keeps_private_staging() {
+        let (_root, output, store) = staged().await;
+        assert!(matches!(
+            store
+                .commit_with_publication(Gate(|| Err(Error::Cancelled)))
+                .await,
+            Err(Error::Cancelled)
+        ));
+        assert!(!output.exists());
+        assert_eq!(
+            std::fs::read(output.with_file_name("output.kk-part")).unwrap(),
+            b"verified fixture"
+        );
+        assert!(output.with_file_name("output.kk-meta").exists());
+    }
+
+    #[tokio::test]
+    async fn destination_created_at_publication_is_never_clobbered() {
+        let (_root, output, store) = staged().await;
+        let competing = output.clone();
+        assert!(matches!(
+            store
+                .commit_with_publication(Gate(move || {
+                    std::fs::write(competing, b"competing output")?;
+                    Ok(())
+                }))
+                .await,
+            Err(Error::Destination(_))
+        ));
+        assert_eq!(std::fs::read(output).unwrap(), b"competing output");
+    }
+
+    #[tokio::test]
+    async fn renamed_parent_keeps_publication_bound_to_the_open_directory() {
+        let (root, output, store) = staged().await;
+        let container = tempfile::tempdir().unwrap();
+        let moved = container.path().join("moved");
+        std::fs::rename(root.path(), &moved).unwrap();
+        // Both paths remain inside owned temporary directories for cleanup.
+        std::fs::create_dir(root.path()).unwrap();
+        store.commit_with_publication(()).await.unwrap();
+        assert!(!output.exists());
+        assert_eq!(
+            std::fs::read(moved.join("output")).unwrap(),
+            b"verified fixture"
+        );
+        assert!(!moved.join("output.kk-meta").exists());
+    }
+
+    struct PausedPublication {
+        entered: tokio::sync::oneshot::Sender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+        finished: tokio::sync::oneshot::Sender<bool>,
+    }
+
+    impl Publication for PausedPublication {
+        fn publish(self, rename: impl FnOnce() -> Result<()>) -> Result<()> {
+            self.entered.send(()).unwrap();
+            self.release.recv().unwrap();
+            let result = rename();
+            self.finished
+                .send(matches!(result, Err(Error::Cancelled)))
+                .unwrap();
+            result
+        }
+    }
+
+    #[tokio::test]
+    async fn dropping_async_waiter_revokes_a_queued_blocking_publication() {
+        let (_root, output, store) = staged().await;
+        let (entered, entered_rx) = tokio::sync::oneshot::channel();
+        let (release, release_rx) = std::sync::mpsc::channel();
+        let (finished, finished_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(store.commit_with_publication(PausedPublication {
+            entered,
+            release: release_rx,
+            finished,
+        }));
+        entered_rx.await.unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        release.send(()).unwrap();
+        assert!(finished_rx.await.unwrap());
+        assert!(!output.exists());
+        assert!(output.with_file_name("output.kk-part").exists());
+        assert!(output.with_file_name("output.kk-meta").exists());
     }
 }

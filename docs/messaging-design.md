@@ -82,3 +82,24 @@ failed migration; full event queues; profile/room isolation; history-off and
 sensitive exclusion; replay deduplication; reaction ownership; Unicode search,
 pagination and injection strings. Browser tests must use ordinary names and
 demonstrate the actual member presentation, not decorative wording.
+
+## Implemented Announcement Boundary
+
+The current name slice uses a private authenticated Profile metadata request,
+not a new MLS chat payload. The typed-payload/history sections above remain future
+design requirements, not implemented support. Each foreground serve/join binds its
+explicit selected profile root to the control service before signaling readiness;
+the backend verifies that root's public certificate against its own identity.
+
+Sharing is default-off and read from the selected profile's atomic settings.
+Local status obtains one complete room membership/epoch snapshot and supplies it
+unchanged to the synchronous cache API. The cache owner handles bounded background
+refresh, source binding and invalidation; adapters neither await remote names nor
+invent their own name cache. JSON exposes `profile_names` and an independent
+`profile_names_error`. CLI and UI call `present_with_announcements` for identical
+local-override precedence. Remote metadata failures do not invalidate basic status.
+
+`self_announcement` is provenance, not verification of a human. Equal or confusable
+text cannot merge peer IDs or authorize an action. The own member row is always
+local-profile presentation even while sharing is off. Disabling disclosure does
+not erase prior knowledge, refresh-delayed cache entries or explicit local aliases.

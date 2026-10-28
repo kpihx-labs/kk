@@ -52,6 +52,7 @@ fn named_profiles_select_rename_and_unregister_without_deleting_identity() {
         &["profile", "create", "alice", "--name", "Alice"],
     );
     assert_eq!(created["settings"]["display_name"], "Alice");
+    assert_eq!(created["settings"]["share_display_name"], false);
     let directory = created["directory"].as_str().unwrap();
     let certificate = std::fs::read(Path::new(directory).join("identity/certificate.der")).unwrap();
     let disguised = format!("{directory}/../alice");
@@ -80,6 +81,24 @@ fn named_profiles_select_rename_and_unregister_without_deleting_identity() {
     );
     assert_eq!(appearance["appearance"]["hue"], 210);
     assert_eq!(appearance["appearance"]["clarity"], 65);
+    for invalid in [
+        vec!["profile", "share-name"],
+        vec!["profile", "share-name", "--enable", "--disable"],
+    ] {
+        assert!(!run(root.path(), &invalid).status.success());
+    }
+    let shared = success(root.path(), &["profile", "share-name", "--enable"]);
+    assert_eq!(shared["share_display_name"], true);
+    assert_eq!(shared["display_name"], "Alice Work");
+    assert_eq!(shared["appearance"], appearance["appearance"]);
+    assert_eq!(
+        success(root.path(), &["profile", "rename", "Renamed"])["share_display_name"],
+        true
+    );
+    let disabled = success(root.path(), &["profile", "share-name", "--disable"]);
+    assert_eq!(disabled["share_display_name"], false);
+    assert_eq!(disabled["display_name"], "Renamed");
+    assert_eq!(disabled["appearance"], appearance["appearance"]);
     assert!(
         !run(root.path(), &["profile", "unregister", "alice"])
             .status

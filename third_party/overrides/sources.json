@@ -1,6 +1,7 @@
 {
   "format": 1,
   "packages": {
+    "nix@0.31.3": {"repository": "https://github.com/nix-rust/nix", "revision": "b5933ca178802b558a667514f717a86b3a1cedcc", "registry_version": "0.31.3", "changes": ["Check positive POSIX spawn error numbers in attribute/file-action wrappers, including initialization", "Avoid dropping destroyed objects after failed reinitialization; upstream unsafe blocks unchanged"]},
     "age@0.12.1": {"repository": "https://github.com/str4d/rage", "revision": "b5b68c4f4f7ea5c368bc060f6fe0237549c3a13f", "changes": ["CLI helper feature gate"]},
     "age-core@0.12.0": {"repository": "https://github.com/str4d/rage", "revision": "b5b68c4f4f7ea5c368bc060f6fe0237549c3a13f", "changes": []},
     "openmls_basic_credential@0.6.0": {"repository": "https://github.com/openmls/openmls", "revision": "be248d4b1306d87a641ce24ed0ffcab2b27967f6", "changes": []},

@@ -6,9 +6,12 @@ use std::{
     process::ExitCode,
 };
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> ExitCode {
-    let result = cli::run().await;
+fn main() -> ExitCode {
+    #[cfg(unix)]
+    if let Some(status) = kk::stdio_worker::dispatch() {
+        return status;
+    }
+    let result = run();
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -22,4 +25,13 @@ async fn main() -> ExitCode {
             })
         }
     }
+}
+
+fn run() -> kk::Result<()> {
+    #[cfg(target_vendor = "apple")]
+    kk::stdio_worker::configure(std::env::current_exe()?)?;
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(cli::run())
 }

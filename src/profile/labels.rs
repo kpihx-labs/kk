@@ -21,6 +21,7 @@ const MAX_LABELS: usize = 512;
 pub enum PresentationSource {
     SelfProfile,
     LocalOverride,
+    SelfAnnouncement,
     Unknown,
 }
 
@@ -45,12 +46,31 @@ pub fn present(
     self_peer: raft::PeerId,
     members: &[raft::PeerId],
 ) -> Result<Vec<MemberPresentation>> {
+    present_with_announcements(profile, room, self_peer, members, &BTreeMap::new())
+}
+
+/// Present caller-supplied authenticated, room-scoped announcements. The caller
+/// must discard stale membership/epoch data before passing it here. Names never
+/// establish identity or authorization, and local overrides take precedence.
+pub fn present_with_announcements(
+    profile: &Path,
+    room: [u8; 32],
+    self_peer: raft::PeerId,
+    members: &[raft::PeerId],
+    announcements: &BTreeMap<raft::PeerId, String>,
+) -> Result<Vec<MemberPresentation>> {
     if members.len() > crate::config::ROOM_MAX_MEMBERS {
         return Err(Error::Configuration("too many presentation members"));
     }
     let mut unique = BTreeSet::new();
     if members.iter().any(|id| !unique.insert(*id)) {
         return Err(Error::Configuration("duplicate presentation member"));
+    }
+    if announcements.len() > crate::config::ROOM_MAX_MEMBERS {
+        return Err(Error::Configuration("too many profile announcements"));
+    }
+    for name in announcements.values() {
+        super::settings::validate_name(name)?;
     }
     let settings = super::Settings::load(profile)?;
     let aliases = list(profile, room)?;
@@ -65,6 +85,8 @@ pub fn present(
                 )
             } else if let Some(name) = aliases.get(&id) {
                 (name.clone(), PresentationSource::LocalOverride)
+            } else if let Some(name) = announcements.get(&id) {
+                (name.clone(), PresentationSource::SelfAnnouncement)
             } else {
                 ("Unnamed member".into(), PresentationSource::Unknown)
             };

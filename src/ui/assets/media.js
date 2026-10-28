@@ -23,7 +23,7 @@ export function setupMedia(ui) {
     for (const session of sessions.values()) if (session.room !== room.name) session.stop();
     const key = JSON.stringify([room.name, direction, peer, kind]);
     if (sessions.has(key)) { ui.toast("This source is already active or awaiting permission. Use its tile to stop it."); return null; }
-    const cfg = ui.config(), limit = direction === "publish" ? cfg.max_tracks : cfg.max_subscriptions;
+    const cfg = ui.config(), limit = direction === "publish" ? cfg.max_publications : cfg.max_subscriptions;
     if (!Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(cfg.max_users) || cfg.max_users < 1) throw new Error("Media capacity is unavailable. Refresh before trying again.");
     if (sessions.size >= cfg.max_users || [...sessions.values()].filter((session) => session.direction === direction).length >= limit) throw new Error("Media capacity reached. Stop a sharing or playback tile before adding another source.");
     const card = tile(direction === "publish" ? "SHARING / " + kind.toUpperCase() : kind.toUpperCase() + " / " + ui.memberName(room, peer));
@@ -51,21 +51,40 @@ export function setupMedia(ui) {
       socket.addEventListener("message", ready); socket.addEventListener("close", closed, { once: true });
     });
   }
-  async function publish(room, kind, quality, consentGeneration) {
+  async function publish(room, kind, quality, consentGeneration, choice, refreshDevices) {
     const session = reserve(room, "publish", room?.status?.owner, kind, consentGeneration); if (!session) return;
     const cfg = ui.config();
     try {
     if (kind === "audio" ? !window.AudioEncoder || !window.AudioContext || !window.AudioWorkletNode || !window.AudioData : !window.VideoEncoder || !window.VideoFrame || !window.MediaStreamTrackProcessor || !window.OffscreenCanvas) throw new Error("This browser lacks the required media encoding APIs. No capture was requested.");
     if (kind === "screen" ? !navigator.mediaDevices?.getDisplayMedia : !navigator.mediaDevices?.getUserMedia) throw new Error("Capture of this source is unavailable in this browser context.");
+    if (![256000, 800000, 1500000].includes(quality)) throw new Error("Choose a listed video quality.");
+    const surface = { any: null, monitor: "monitor", window: "window", browser: "browser" };
+    if (!Object.hasOwn(surface, choice.surface)) throw new Error("Choose a listed display source.");
+    if (choice.device && !navigator.mediaDevices.getSupportedConstraints?.().deviceId) throw new Error("This browser cannot select a specific capture device. Choose Default device.");
+    const device = choice.device ? { deviceId: { exact: choice.device } } : {};
     // These calls run directly from the user's gesture and use native browser
     // permission dialogs, including the Wayland screen-selection portal.
-    const request = kind === "screen" ? navigator.mediaDevices.getDisplayMedia({ video: { frameRate: cfg.fps }, audio: false })
-      : navigator.mediaDevices.getUserMedia(kind === "audio" ? { audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 }, video: false }
-        : { video: { width: cfg.width, height: cfg.height, frameRate: cfg.fps }, audio: false });
-    const stream = await request;
+    // displaySurface is a preference, never an exact/min constraint or a promise
+    // about the OS chooser. No title, device ID or requested surface enters RTP.
+    const request = kind === "screen" ? navigator.mediaDevices.getDisplayMedia({ video: { frameRate: cfg.fps, ...(surface[choice.surface] ? { displaySurface: surface[choice.surface] } : {}) }, audio: false })
+      : navigator.mediaDevices.getUserMedia(kind === "audio" ? { audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1, ...device }, video: false }
+        : { video: { width: cfg.width, height: cfg.height, frameRate: cfg.fps, ...device }, audio: false });
+    let stream;
+    try { stream = await request; }
+    catch (error) {
+      if (["NotFoundError", "OverconstrainedError"].includes(error.name)) throw new Error("The selected capture device/source is unavailable. Refresh devices or choose Default device; no substitute was opened.");
+      if (["NotAllowedError", "SecurityError"].includes(error.name)) throw new Error("Capture was cancelled or permission was denied. Nothing is shared; submit again only when ready.");
+      throw error;
+    }
     session.cleanup(() => { for (const track of stream.getTracks()) { track.onended = null; track.stop(); } });
     if (!session.active()) return;
+    if (kind !== "screen") void refreshDevices();
     for (const track of stream.getTracks()) track.onended = session.stop;
+    if (kind === "screen") {
+      const actual = stream.getVideoTracks()[0]?.getSettings?.().displaySurface;
+      const label = { monitor: "Entire screen", window: "Window/application window", browser: "Browser tab" };
+      session.card.element.append(ui.el("small", "muted", "Captured source: " + (Object.hasOwn(label, actual) ? label[actual] : "Not reported by browser")));
+    }
       const card = session.card, socket = websocket(room.name, kind, "publish"); session.transport(socket);
       const ready = await opened(socket); if (!session.active()) return; card.status.textContent = ready.peers.length + " accepting peers / encrypted transport";
       const packetizer = new Packetizer(kind, cfg.packet_bytes);
@@ -160,7 +179,38 @@ export function setupMedia(ui) {
     if (!navigator.mediaDevices) { ui.toast("Native capture is unavailable in this browser context."); return; }
     const kind = ui.el("select"); kind.name = "kind"; for (const value of ["audio", "camera", "screen"]) { const option = ui.el("option", "", value); option.value = value; kind.append(option); }
     const quality = ui.el("select"); quality.name = "quality"; for (const [label, value] of [["Low bandwidth / 256 kbit/s", 256000], ["Balanced / 800 kbit/s", 800000], ["Detailed / 1.5 Mbit/s", 1500000]]) { const option = ui.el("option", "", label); option.value = value; option.selected = value === 800000; quality.append(option); }
-    ui.modal("Share a native source", [ui.el("p", "dialog-note", "Only peers that explicitly accept this source can receive it. Browser/OS permission is still required. No media recording is enabled."), kind, quality], "Choose source and authorize capture", async (data) => publish(room, data.get("kind"), Number(data.get("quality")), consentGeneration));
+    const surface = ui.el("select"); surface.name = "surface";
+    for (const [value, label] of [["any", "Browser/OS chooser (any source)"], ["monitor", "Entire screen (preference)"], ["window", "Window/application window (preference)"], ["browser", "Browser tab (preference)"]]) { const option = ui.el("option", "", label); option.value = value; surface.append(option); }
+    const device = ui.el("select"); device.name = "device";
+    const feedback = ui.el("p", "dialog-note"), refresh = ui.el("button", "outline compact", "Refresh devices"); refresh.type = "button";
+    const field = (label, control) => { const wrapper = ui.el("label", "", label); wrapper.append(control); return wrapper; };
+    const surfaceField = field("Display source preference", surface), deviceField = field("Local capture device", device);
+    let devices = [], revision = 0;
+    function renderDevices() {
+      const previous = device.value, type = kind.value === "camera" ? "videoinput" : "audioinput";
+      const fallback = ui.el("option", "", "Default device (browser/OS)"); fallback.value = ""; device.replaceChildren(fallback);
+      for (const [index, entry] of devices.filter((entry) => entry.kind === type).entries()) { const option = ui.el("option", "", entry.label || "Unlabelled " + (type === "videoinput" ? "camera " : "microphone ") + (index + 1)); option.value = entry.deviceId; device.append(option); }
+      device.value = [...device.options].some((option) => option.value === previous) ? previous : "";
+      surfaceField.hidden = kind.value !== "screen"; deviceField.hidden = kind.value === "screen"; refresh.hidden = kind.value === "screen";
+      quality.disabled = kind.value === "audio";
+    }
+    async function refreshDevices() {
+      const request = ++revision;
+      if (!navigator.mediaDevices.enumerateDevices) { feedback.textContent = "Device listing is unavailable. Default device remains available if capture is supported."; return; }
+      try {
+        const entries = await navigator.mediaDevices.enumerateDevices();
+        if (request !== revision || generation !== consentGeneration) return;
+        // Browser IDs belong only to this dialog/origin session, never profile storage.
+        devices = entries.slice(0, 64).filter((entry) => ["audioinput", "videoinput"].includes(entry.kind) && typeof entry.deviceId === "string" && entry.deviceId.length > 0 && entry.deviceId.length <= 1024).map((entry) => ({ kind: entry.kind, deviceId: entry.deviceId, label: String(entry.label || "").slice(0, 160) }));
+        renderDevices(); feedback.textContent = "Device labels may be hidden until you explicitly grant capture. Default device needs no listed ID. Showing at most 64 browser entries.";
+      } catch { if (request === revision) feedback.textContent = "Device listing failed. Use Default device or refresh after checking browser permissions."; }
+    }
+    kind.onchange = renderDevices; refresh.onclick = () => { void refreshDevices(); }; renderDevices(); void refreshDevices();
+    ui.modal("Share a native source", [ui.el("p", "dialog-note", "Only peers that explicitly accept this source can receive it. Browser/OS permission is still required. No media recording is enabled."), field("Source kind", kind), surfaceField, deviceField, refresh, feedback, ui.el("p", "dialog-note", "Display choices are hints only; the browser/OS makes the final choice. A window means one chosen window, not all windows of an application. No custom window enumeration or previews are available."), field("Video quality", quality)], "Choose source and authorize capture", async (data) => {
+      const selectedKind = data.get("kind"), selectedDevice = selectedKind === "screen" ? "" : (data.get("device") || "");
+      if (selectedDevice && !devices.some((entry) => entry.deviceId === selectedDevice && entry.kind === (selectedKind === "camera" ? "videoinput" : "audioinput"))) throw new Error("The selected device is no longer listed. Refresh devices or choose Default device.");
+      return publish(room, selectedKind, selectedKind === "audio" ? 800000 : Number(data.get("quality")), consentGeneration, { surface: data.get("surface") || "any", device: selectedDevice }, refreshDevices);
+    });
   }
   function receiveDialog() {
     const room = ui.room(), consentGeneration = generation; if (!room?.status) return;

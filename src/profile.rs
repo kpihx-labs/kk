@@ -6,7 +6,7 @@ pub mod catalog;
 pub mod labels;
 mod settings;
 mod storage;
-pub use settings::{Appearance, Settings};
+pub use settings::{Appearance, Settings, SettingsPublication, SidebarMode, validate_name};
 
 #[cfg(unix)]
 pub fn private_directory(path: &Path, create: bool) -> Result<()> {

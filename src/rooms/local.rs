@@ -16,7 +16,7 @@ use std::{
     collections::BTreeMap,
     io::{Read, Write},
     net::SocketAddr,
-    os::unix::fs::{DirBuilderExt, MetadataExt},
+    os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -147,16 +147,70 @@ fn room_path(profile: &Path, name: &str, create_parent: bool) -> Result<PathBuf>
     Ok(rooms.join(name))
 }
 
-fn reserve(profile: &Path, name: &str, listen: SocketAddr) -> Result<PathBuf> {
+/// Lock the directory inode, not a replaceable pathname or an enrollment file.
+/// Every local lifecycle writer holds this lease until its writes have stopped.
+fn lease(directory: &Path) -> Result<std::fs::File> {
+    use rustix::fs::{self, Mode, OFlags};
+    profile::private_directory(directory, false)?;
+    let lease = std::fs::File::from(fs::open(
+        directory,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?);
+    let metadata = lease.metadata()?;
+    if metadata.uid() != rustix::process::geteuid().as_raw() || metadata.mode() & 0o777 != 0o700 {
+        return Err(Error::Storage("unsafe room reservation"));
+    }
+    fs::flock(&lease, fs::FlockOperation::NonBlockingLockExclusive)
+        .map_err(|_| Error::Node("room reservation already has an active owner"))?;
+    Ok(lease)
+}
+
+/// No manifest, draft, private, control, admission, temporary or unknown data
+/// can be adopted. These are the only artifacts an unstarted join can leave.
+fn pre_enrollment(directory: &Path) -> Result<()> {
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        let metadata = std::fs::symlink_metadata(entry.path())?;
+        let runtime = match entry.file_name().to_str() {
+            Some("node.lock") => metadata.is_file() && metadata.nlink() == 1 && metadata.len() == 0,
+            Some("node.sock") => metadata.file_type().is_socket() && metadata.nlink() == 1,
+            _ => false,
+        };
+        if !runtime
+            || metadata.uid() != rustix::process::geteuid().as_raw()
+            || metadata.mode() & 0o777 != 0o600
+        {
+            return Err(Error::Storage(
+                "room reservation contains state; verified resume or a different name required",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn reserve(
+    profile: &Path,
+    name: &str,
+    listen: SocketAddr,
+    retry: bool,
+) -> Result<(PathBuf, std::fs::File)> {
     if listen.port() == 0 || listen.ip().is_unspecified() || listen.ip().is_multicast() {
         return Err(Error::Configuration(
             "rooms require an explicit reachable IP and nonzero port",
         ));
     }
     let directory = directory(profile, name)?;
-    // Exclusive creation: interrupted enrollment is retained, never regenerated.
-    std::fs::DirBuilder::new().mode(0o700).create(&directory)?;
-    Ok(directory)
+    match std::fs::DirBuilder::new().mode(0o700).create(&directory) {
+        Ok(()) => {}
+        Err(error) if retry && error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.into()),
+    }
+    // A racing creator/joiner may have made the directory. Classify only after
+    // winning its lease, including on the successful mkdir path.
+    let lease = lease(&directory)?;
+    pre_enrollment(&directory)?;
+    Ok((directory, lease))
 }
 
 impl Definition {
@@ -364,7 +418,9 @@ pub async fn create(
     let identity = Arc::new(profile::identity(profile, false)?);
     let root = RootBundle::create(&identity, title)?;
     let anchor = root.verify(&identity.peer())?;
-    let directory = reserve(profile, name, listen)?;
+    let (directory, _lease) = reserve(profile, name, listen, false)?;
+    // Also exclude foreground owners using the existing IPC ownership lock.
+    let _listener = crate::node::ipc::Listener::bind(&directory).await?;
     save_public(
         &directory.join("root.json"),
         &RootDraft {
@@ -418,4 +474,107 @@ pub async fn create(
     result?;
     stopped?;
     Ok(room)
+}
+
+#[cfg(test)]
+mod reservation_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn profile() -> tempfile::TempDir {
+        let profile = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(profile.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        profile
+    }
+
+    #[tokio::test]
+    async fn runtime_only_retry_is_exclusive_and_preserves_the_lock_inode() {
+        let profile = profile();
+        let listen = "127.0.0.1:12345".parse().unwrap();
+        let (directory, owner) = reserve(profile.path(), "retry", listen, true).unwrap();
+        let listener = crate::node::ipc::Listener::bind(&directory).await.unwrap();
+        let inode = std::fs::metadata(directory.join("node.lock"))
+            .unwrap()
+            .ino();
+        assert!(reserve(profile.path(), "retry", listen, true).is_err());
+        assert!(reserve(profile.path(), "retry", listen, false).is_err());
+        drop(owner);
+        // An older foreground process may hold only the IPC lock.
+        let (_, owner) = reserve(profile.path(), "retry", listen, true).unwrap();
+        assert!(crate::node::ipc::Listener::bind(&directory).await.is_err());
+        drop(listener);
+        drop(owner);
+        let (_, _owner) = reserve(profile.path(), "retry", listen, true).unwrap();
+        let _listener = crate::node::ipc::Listener::bind(&directory).await.unwrap();
+        assert_eq!(
+            std::fs::metadata(directory.join("node.lock"))
+                .unwrap()
+                .ino(),
+            inode
+        );
+    }
+
+    #[test]
+    fn partial_and_unknown_state_is_never_adopted_or_changed() {
+        let profile = profile();
+        let listen = "127.0.0.1:12345".parse().unwrap();
+        for (index, entry) in [
+            "manifest.json",
+            "root.json",
+            "private",
+            "control",
+            "admission",
+            "unknown",
+            ".tmp-incomplete",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let name = format!("partial-{index}");
+            let (directory, owner) = reserve(profile.path(), &name, listen, true).unwrap();
+            let path = directory.join(entry);
+            std::fs::write(&path, b"must remain byte-for-byte").unwrap();
+            drop(owner);
+            assert!(reserve(profile.path(), &name, listen, true).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), b"must remain byte-for-byte");
+            assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
+        }
+    }
+
+    #[test]
+    fn unsafe_runtime_entries_and_roots_are_refused() {
+        let profile = profile();
+        let listen = "127.0.0.1:12345".parse().unwrap();
+        let (directory, owner) = reserve(profile.path(), "unsafe", listen, true).unwrap();
+        let outside = profile.path().join("retained");
+        std::fs::write(&outside, b"retained").unwrap();
+        std::os::unix::fs::symlink(&outside, directory.join("node.lock")).unwrap();
+        drop(owner);
+        assert!(reserve(profile.path(), "unsafe", listen, true).is_err());
+        assert_eq!(std::fs::read(&outside).unwrap(), b"retained");
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(reserve(profile.path(), "unsafe", listen, true).is_err());
+    }
+
+    #[tokio::test]
+    async fn stale_socket_is_runtime_but_nonempty_lock_is_not() {
+        let profile = profile();
+        let listen = "127.0.0.1:12345".parse().unwrap();
+        let (directory, owner) = reserve(profile.path(), "stale", listen, true).unwrap();
+        let socket = directory.join("node.sock");
+        let stale = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).unwrap();
+        drop(stale);
+        drop(owner);
+        let (_, owner) = reserve(profile.path(), "stale", listen, true).unwrap();
+        let listener = crate::node::ipc::Listener::bind(&directory).await.unwrap();
+        drop(listener);
+        std::fs::write(directory.join("node.lock"), b"not runtime data").unwrap();
+        drop(owner);
+        assert!(reserve(profile.path(), "stale", listen, true).is_err());
+        assert_eq!(
+            std::fs::read(directory.join("node.lock")).unwrap(),
+            b"not runtime data"
+        );
+    }
 }

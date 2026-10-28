@@ -2,6 +2,57 @@ use super::*;
 use std::{sync::mpsc, thread, time::Duration};
 
 #[test]
+fn sharing_defaults_off_for_legacy_settings_and_survives_partial_updates() {
+    let legacy: Settings = serde_json::from_str(
+        r#"{"display_name":"Legacy","appearance":{"hue":null,"clarity":50,"saturation":20}}"#,
+    )
+    .unwrap();
+    assert!(!legacy.share_display_name);
+    assert_eq!(legacy.sidebar_mode, SidebarMode::Expanded);
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("profile");
+    assert!(!Settings::load(&directory).unwrap().share_display_name);
+    Settings::update_with(&directory, |settings| {
+        settings.share_display_name = true;
+        Ok(())
+    })
+    .unwrap();
+    assert!(
+        Settings::update(&directory, Some("New".into()), None)
+            .unwrap()
+            .share_display_name
+    );
+    Settings::update_with(&directory, |settings| {
+        settings.share_display_name = false;
+        Ok(())
+    })
+    .unwrap();
+    assert!(!Settings::load(&directory).unwrap().share_display_name);
+}
+
+#[test]
+fn sidebar_modes_are_typed_and_preserve_other_settings() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("profile");
+    for mode in [
+        SidebarMode::Expanded,
+        SidebarMode::Compact,
+        SidebarMode::Auto,
+    ] {
+        Settings::update_with(&directory, |settings| {
+            settings.sidebar_mode = mode;
+            Ok(())
+        })
+        .unwrap();
+        Settings::update(&directory, Some("Retained".into()), None).unwrap();
+        let saved = Settings::load(&directory).unwrap();
+        assert_eq!(saved.sidebar_mode, mode);
+        assert_eq!(saved.display_name, "Retained");
+    }
+    assert!(serde_json::from_str::<SidebarMode>("\"invalid\"").is_err());
+}
+
+#[test]
 fn supplied_fields_update_together_and_absent_fields_are_preserved() {
     let root = tempfile::tempdir().unwrap();
     let directory = root.path().join("profile");

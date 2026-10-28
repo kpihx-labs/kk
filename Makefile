@@ -3,12 +3,13 @@ SHELL := /bin/sh
 GITHUB_SSH_COMMAND ?= ssh
 GITLAB_SSH_COMMAND ?= ssh
 
-.PHONY: help check docs-check ui-check packaging-check sdk-check hax-check bundle verify-bundle install tag-release publish-tag build fmt run push lab-check lab-test lab-crypto-test lab-control-test lab-room-test lab-enrollment-test lab-room-cli-test lab-native-media-test lab-stop
+.PHONY: help check docs-check ui-check fixture-check packaging-check sdk-check hax-check bundle verify-bundle install tag-release publish-tag build fmt run push lab-check lab-test lab-crypto-test lab-control-test lab-room-test lab-enrollment-test lab-room-cli-test lab-native-media-test lab-stop
 
 help: ## Show available tasks
 	@printf '%s\n' \
 	  'make check           Format, lint, tests and documentation' \
 	  'make docs-check      Current guide links, tables, wire tokens and examples' \
+	  'make fixture-check   Offline static-layout generator and guard regressions' \
 	  'make sdk-check       Upstream expansion vectors and independent OPAQUE interoperability' \
 	  'make hax-check       Explicit upstream-nightly macro check, not a formal proof' \
 	  'make build           Build the release CLI' \
@@ -36,6 +37,7 @@ check: ## Validate offline with local loopback network tests
 	cargo test --offline --locked --all-targets
 	RUSTDOCFLAGS="-D warnings" cargo doc --offline --locked --no-deps
 	$(MAKE) ui-check
+	$(MAKE) fixture-check
 	$(MAKE) packaging-check
 	$(MAKE) docs-check
 
@@ -44,6 +46,10 @@ docs-check: ## Pure-Python current documentation consistency checks; no network 
 
 packaging-check: ## Release integrity, archive safety and clean-source policy tests
 	uv run --no-project python -m unittest discover -s tests -p 'test_release.py'
+	uv run --no-project python -m unittest discover -s tests -p 'test_installers.py'
+
+fixture-check: ## Static layout payload generation and safety guards; no browser execution
+	uv run --no-project python -m unittest discover -s tests -p 'test_layout_fixture.py'
 
 sdk-check: ## Historical reference packages may need network/cache; not part of offline product checks
 	cargo test --locked --manifest-path third_party/overrides/elliptic-curve-xmd/Cargo.toml
@@ -82,7 +88,7 @@ ui-check: ## Offline browser-adapter syntax and standard RTP unit tests
 	node --check src/ui/assets/media.js
 	node --check src/ui/assets/rtp.js
 	node --check src/ui/assets/audio-worklet.js
-	node --test tests/ui_rtp.mjs tests/ui_client.mjs tests/ui_workflows.cjs tests/ui_media.mjs
+	node --test tests/ui_rtp.mjs tests/ui_client.mjs tests/ui_workflows.cjs tests/ui_media.mjs tests/ui_layout.cjs
 
 build: ## Build the release CLI
 	cargo build --offline --locked --release

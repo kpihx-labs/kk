@@ -167,6 +167,42 @@ impl Room {
         let view = self.synchronize(deadline).await?;
         self.stream_policy(&view, peer, inbound, Action::Files)
     }
+    /// Authorize bidirectional profile metadata for a current private member.
+    /// The caller must bind `peer` to the pinned TLS certificate and repeat this
+    /// check immediately before disclosure and again when accepting a response.
+    pub async fn authorize_profile_metadata(
+        &mut self,
+        peer: &Peer,
+        deadline: Duration,
+    ) -> Result<u64> {
+        let view = self.synchronize(deadline).await?;
+        let local = self.identity.peer().fingerprint_bytes();
+        let remote = peer.fingerprint_bytes();
+        if local == remote
+            || !view
+                .member_rights(&local)
+                .is_some_and(|rights| rights.valid())
+            || !view
+                .member_rights(&remote)
+                .is_some_and(|rights| rights.valid())
+            || !self
+                .group
+                .peers()
+                .iter()
+                .any(|member| member.fingerprint_bytes() == remote)
+        {
+            return Err(Error::Denied);
+        }
+        let revision = self.profile.revision()?;
+        self.profile
+            .authorize_peer(peer, &self.identity, Action::Rooms, true)?;
+        self.profile
+            .authorize_peer(peer, &self.identity, Action::Rooms, false)?;
+        if self.profile.revision()? != revision {
+            return Err(Error::Denied);
+        }
+        Ok(view.epoch())
+    }
     fn stream_policy(&self, view: &View, peer: &Peer, inbound: bool, action: Action) -> Result<()> {
         let publisher = if inbound {
             peer.fingerprint_bytes()

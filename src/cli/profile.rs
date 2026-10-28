@@ -1,6 +1,6 @@
 //! Thin local profile/settings adapter; private identity material is never read.
 use super::*;
-use kk::profile::{Settings, catalog};
+use kk::profile::{Settings, SidebarMode, catalog};
 use serde::Serialize;
 use std::path::Path;
 
@@ -26,6 +26,18 @@ pub(super) enum Command {
     Unregister { id: String },
     /// Change this profile's human-readable local name
     Rename { name: String },
+    /// Set the sidebar layout for this profile
+    Sidebar {
+        #[arg(value_parser = ["expanded", "compact", "auto"])]
+        mode: String,
+    },
+    /// Explicitly share this display name with room members, or stop sharing it
+    ShareName {
+        #[arg(long, required_unless_present = "disable", conflicts_with = "disable")]
+        enable: bool,
+        #[arg(long)]
+        disable: bool,
+    },
     /// Set a local room nickname; it never changes identity or trust
     #[cfg(unix)]
     Label {
@@ -86,6 +98,27 @@ pub(super) fn run(command: Command, selected: Option<&Path>) -> Result<()> {
             let directory = profile_directory(selected)?;
             kk::profile::private_directory(&directory, false)?;
             print(&Settings::update(&directory, Some(name), None)?)
+        }
+        Command::Sidebar { mode } => {
+            let directory = profile_directory(selected)?;
+            kk::profile::private_directory(&directory, false)?;
+            print(&Settings::update_with(&directory, |settings| {
+                settings.sidebar_mode = match mode.as_str() {
+                    "expanded" => SidebarMode::Expanded,
+                    "compact" => SidebarMode::Compact,
+                    "auto" => SidebarMode::Auto,
+                    _ => return Err(Error::Configuration("invalid sidebar mode")),
+                };
+                Ok(())
+            })?)
+        }
+        Command::ShareName { enable, disable: _ } => {
+            let directory = profile_directory(selected)?;
+            kk::profile::private_directory(&directory, false)?;
+            print(&Settings::update_with(&directory, |settings| {
+                settings.share_display_name = enable;
+                Ok(())
+            })?)
         }
         #[cfg(unix)]
         Command::Label {
@@ -208,8 +241,9 @@ pub(super) async fn status(directory: &Path, json: bool) -> Result<()> {
                     let presentation = (|| -> Result<Vec<kk::profile::labels::MemberPresentation>> {
                         let Some(raw) = observation["status"].get("members") else { return Ok(Vec::new()); };
                         let members: Vec<kk::rooms::control::raft::PeerId> = serde_json::from_value(raw.clone()).map_err(|_| Error::Protocol)?;
-                        kk::profile::labels::present(directory, summary.room.ok_or(Error::Protocol)?.0,
-                            self_peer.ok_or(Error::Protocol)?, &members)
+                        let announcements = observation["status"].get("profile_names").cloned().map(serde_json::from_value).transpose().map_err(|_| Error::Protocol)?.unwrap_or_default();
+                        kk::profile::labels::present_with_announcements(directory, summary.room.ok_or(Error::Protocol)?.0,
+                            self_peer.ok_or(Error::Protocol)?, &members, &announcements)
                     })();
                     let (presentation, presentation_error) = match presentation {
                         Ok(members) => (members, None), Err(error) => (Vec::new(), Some(error.to_string())),
@@ -242,6 +276,15 @@ pub(super) async fn status(directory: &Path, json: bool) -> Result<()> {
             .as_array()
             .map(|items| items.len().to_string())
             .unwrap_or_else(|| "unavailable".into())
+    )?;
+    writeln!(
+        io::stdout(),
+        "  Display name sharing: {}",
+        if settings.share_display_name {
+            "enabled for room members; not a verified human identity"
+        } else {
+            "off; your own name is local-only (previously learned names cannot be erased)"
+        }
     )?;
     if let Some(fingerprint) = fingerprint {
         writeln!(io::stdout(), "  Fingerprint: {fingerprint}")?;
@@ -278,12 +321,20 @@ pub(super) async fn status(directory: &Path, json: bool) -> Result<()> {
                     io::stdout(),
                     "    {} / {}",
                     member["display_name"].as_str().unwrap_or("Unnamed member"),
-                    member["source"].as_str().unwrap_or("unknown")
+                    match member["source"].as_str() {
+                        Some("self_announcement") =>
+                            "self_announcement (not a verified human identity)",
+                        Some(source) => source,
+                        None => "unknown",
+                    }
                 )?;
             }
         }
         if let Some(error) = room["presentation_error"].as_str() {
             writeln!(io::stdout(), "    Names problem: {error}")?;
+        }
+        if let Some(error) = room["observation"]["status"]["profile_names_error"].as_str() {
+            writeln!(io::stdout(), "    Remote names problem: {error}")?;
         }
     }
     if let Some(error) = rooms_error {
