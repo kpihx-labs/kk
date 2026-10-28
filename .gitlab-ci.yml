@@ -22,12 +22,15 @@ rust-foundation:
       useradd --user-group --no-create-home --home-dir "$CI_PROJECT_DIR/.ci-home" kk-ci
       install -d -o kk-ci -g kk-ci "$CI_PROJECT_DIR/.ci-home" "$CARGO_HOME"
       chown -R kk-ci:kk-ci "$CI_PROJECT_DIR"
+      export PATH="$CI_PROJECT_DIR/.ci-home/.local/bin:$PATH"
     - runuser -u kk-ci -- id
     - runuser -u kk-ci -- uv python install 3.12
     - runuser -u kk-ci -- cargo fetch --locked
     - runuser -u kk-ci -- cargo fmt --package kk -- --check
     - runuser -u kk-ci -- cargo clippy --locked --all-targets -- -D warnings
-    - runuser -u kk-ci -- cargo test --locked --all-targets
+    # The unprivileged shell must own the pipe reopened by cancellable stdio.
+    # pipefail preserves a Cargo failure instead of reporting cat's success.
+    - runuser -u kk-ci -- bash -o pipefail -c 'cargo test --locked --all-targets 2>&1 | cat'
     - runuser -u kk-ci -- cargo doc --locked --no-deps
   variables:
     RUSTDOCFLAGS: -D warnings
