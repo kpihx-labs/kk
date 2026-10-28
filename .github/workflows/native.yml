@@ -67,7 +67,8 @@ jobs:
         run: cargo test --locked --offline --target $env:TARGET --test stdio_pipe --test stdio_socket --test stdio_worker --test stdio_terminal -- --nocapture
       - name: Execute macOS private staging and atomic publication unit regressions
         if: runner.os == 'macOS'
-        run: cargo test --locked --offline --target $env:TARGET --lib files:: -- --nocapture
+        run: |
+          cargo test --locked --offline --target $env:TARGET --lib files:: -- --nocapture
       - name: Execute macOS publication consent, owner revocation and cancellation regressions
         if: runner.os == 'macOS'
         run: cargo test --locked --offline --target $env:TARGET --lib rooms::control::raft::service::tests::consent -- --nocapture

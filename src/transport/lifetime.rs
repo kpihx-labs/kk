@@ -53,9 +53,9 @@ impl DriverOwner {
             owner: self.clone(),
             id,
         };
-        let task = runtime.spawn(async move {
-            future.await;
-            drop(active);
+        let task = runtime.spawn(Tracked {
+            future: Box::pin(future),
+            _active: active,
         });
         let abort = task.abort_handle();
         children.insert(
@@ -100,6 +100,21 @@ impl DriverOwner {
         })
         .await
         .map_err(|_| Error::Node("QUIC driver did not release its owned socket"))
+    }
+}
+// Struct fields drop in declaration order, including when cancellation destroys
+// a pending future. Never publish release before that future's captures drop.
+struct Tracked {
+    future: Pin<Box<dyn Future<Output = ()> + Send>>,
+    _active: Active,
+}
+impl Future for Tracked {
+    type Output = ();
+    fn poll(
+        self: Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        self.get_mut().future.as_mut().poll(context)
     }
 }
 struct Active {
@@ -165,6 +180,50 @@ pub(crate) fn server(
 mod tests {
     use super::*;
     use quinn::Runtime;
+    #[tokio::test]
+    async fn release_registry_outlives_future_destruction_on_success_and_cancellation() {
+        struct ObserveDrop {
+            owner: DriverOwner,
+            dropped: Arc<AtomicBool>,
+            ready: bool,
+        }
+        impl Future for ObserveDrop {
+            type Output = ();
+            fn poll(self: Pin<&mut Self>, _: &mut std::task::Context<'_>) -> std::task::Poll<()> {
+                if self.ready {
+                    std::task::Poll::Ready(())
+                } else {
+                    std::task::Poll::Pending
+                }
+            }
+        }
+        impl Drop for ObserveDrop {
+            fn drop(&mut self) {
+                assert!(
+                    !self.owner.diagnostics().is_empty(),
+                    "release preceded capture destruction"
+                );
+                self.dropped.store(true, Ordering::SeqCst);
+            }
+        }
+        for ready in [false, true] {
+            let owner = DriverOwner(Arc::new(Tasks::default()));
+            let dropped = Arc::new(AtomicBool::new(false));
+            let abort = owner
+                .spawn(ObserveDrop {
+                    owner: owner.clone(),
+                    dropped: dropped.clone(),
+                    ready,
+                })
+                .unwrap();
+            if !ready {
+                abort.abort();
+            }
+            owner.released().await.unwrap();
+            assert!(dropped.load(Ordering::SeqCst));
+            assert!(owner.diagnostics().is_empty());
+        }
+    }
     #[tokio::test]
     async fn application_spawn_reuses_the_recorded_runtime_and_joins_capture_destruction() {
         let owner = DriverOwner(Arc::new(Tasks {
