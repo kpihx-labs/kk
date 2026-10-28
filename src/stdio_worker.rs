@@ -252,22 +252,6 @@ impl Drop for Reap {
     }
 }
 
-#[cfg(test)]
-mod ownership_tests {
-    use super::*;
-
-    #[test]
-    fn external_reaping_clears_ownership_before_drop() {
-        let mut child = std::process::Command::new("true").spawn().unwrap();
-        let pid = rustix::process::Pid::from_raw(child.id() as i32).unwrap();
-        child.wait().unwrap(); // Deliberate violation of the documented contract.
-        let mut owner = Reap(Some(pid));
-        assert!(matches!(owner.try_wait(), Err(Error::Configuration(_))));
-        assert!(owner.0.is_none(), "ECHILD must disarm cancellation signals");
-        drop(owner);
-    }
-}
-
 #[cfg(target_vendor = "apple")]
 fn spawn(
     executable: &std::path::Path,
@@ -418,6 +402,22 @@ fn read_bounded(data: &mut File) -> Result<Zeroizing<Vec<u8>>> {
             return Err(Error::MessageTooLarge);
         }
         bytes.extend_from_slice(&chunk[..count]);
+    }
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+
+    #[test]
+    fn external_reaping_clears_ownership_before_drop() {
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = rustix::process::Pid::from_raw(child.id() as i32).unwrap();
+        child.wait().unwrap(); // Deliberate violation of the documented contract.
+        let mut owner = Reap(Some(pid));
+        assert!(matches!(owner.try_wait(), Err(Error::Configuration(_))));
+        assert!(owner.0.is_none(), "ECHILD must disarm cancellation signals");
+        drop(owner);
     }
 }
 

@@ -51,6 +51,7 @@ jobs:
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2; same pin as check.yml
         with:
           python-version: '3.13'
+          enable-cache: false # These stdlib-only fixtures have no Python dependency lock.
       - name: Build native binary and compile all test/example targets (not execution)
         run: cargo build --locked --offline --target $env:TARGET --all-targets
       - name: Lint native targets without warning suppression

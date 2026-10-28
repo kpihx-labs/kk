@@ -115,6 +115,6 @@ with mocked discovery/helper tools. `cargo test --test install` exercises actual
 TAR/ZIP parsing, hostile archives and managed filesystem/rollback transactions with
 explicitly MOCKED gh/curl. It is not real GitHub provenance or download evidence.
 PowerShell execution tests run only if `pwsh` is already available; skips are explicit.
-Public raw assets, actual gh offline setup, replay and full crash injection remain gates.
+Real Linux TAR/online/same-version replay: [evidence](install-qualification.md). Raw bootstrap, offline trust and full crash injection remain gates.
 Dependencies: tar 0.4.46 (MIT/Apache, MSRV 1.63), flate2 1.1.10 (MIT/Apache, 1.67),
 zip 9.1.3 (MIT, 1.88). RustSec fixes reviewed; cargo-audit/pwsh are unavailable locally.

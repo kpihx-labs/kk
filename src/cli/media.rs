@@ -138,7 +138,7 @@ mod exit_tests {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(all(test, not(unix)))]
 pub(super) async fn room(
     _command: RoomCommand,
     _profile: &std::path::Path,
