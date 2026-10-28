@@ -180,6 +180,41 @@ pub(crate) fn server(
 mod tests {
     use super::*;
     use quinn::Runtime;
+
+    async fn isolated_socket_case(case: &str) {
+        // Unrelated fork/exec fixtures can temporarily inherit even CLOEXEC
+        // sockets. Keep physical rebinding assertions in a process that creates
+        // its sockets only after exec, without weakening the release assertions.
+        let mut child = tokio::process::Command::new(std::env::current_exe().unwrap())
+            .env("KK_TEST_SOCKET_LIFETIME_CHILD", "1")
+            .args([
+                "--exact",
+                &format!("transport::lifetime::tests::{case}"),
+                "--ignored",
+                "--nocapture",
+            ])
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let status =
+            match tokio::time::timeout(config::DEFAULT_TIMEOUT.saturating_mul(4), child.wait())
+                .await
+            {
+                Ok(status) => status.unwrap(),
+                Err(_) => {
+                    child
+                        .kill()
+                        .await
+                        .expect("kill and reap timed-out socket fixture");
+                    panic!("isolated socket lifetime case exceeded its deadline: {case}");
+                }
+            };
+        assert!(
+            status.success(),
+            "isolated socket lifetime case failed: {case}"
+        );
+    }
+
     #[tokio::test]
     async fn release_registry_outlives_future_destruction_on_success_and_cancellation() {
         struct ObserveDrop {
@@ -226,6 +261,15 @@ mod tests {
     }
     #[tokio::test]
     async fn application_spawn_reuses_the_recorded_runtime_and_joins_capture_destruction() {
+        isolated_socket_case("application_spawn_socket_child").await;
+    }
+
+    #[tokio::test]
+    #[ignore = "subprocess only: physical socket rebinding must not share unrelated fork aliases"]
+    async fn application_spawn_socket_child() {
+        if std::env::var("KK_TEST_SOCKET_LIFETIME_CHILD").as_deref() != Ok("1") {
+            return;
+        }
         let owner = DriverOwner(Arc::new(Tasks {
             runtime: Some(tokio::runtime::Handle::current()),
             ..Tasks::default()
@@ -267,6 +311,15 @@ mod tests {
     }
     #[tokio::test]
     async fn close_grace_can_expire_during_peer_drain_without_leaking_the_owned_socket() {
+        isolated_socket_case("close_grace_socket_child").await;
+    }
+
+    #[tokio::test]
+    #[ignore = "subprocess only: physical socket rebinding must not share unrelated fork aliases"]
+    async fn close_grace_socket_child() {
+        if std::env::var("KK_TEST_SOCKET_LIFETIME_CHILD").as_deref() != Ok("1") {
+            return;
+        }
         let directory = tempfile::tempdir().unwrap();
         let identity = crate::Identity::create(&directory.path().join("owner")).unwrap();
         let peer = identity.peer();
@@ -328,6 +381,15 @@ mod tests {
     }
     #[tokio::test]
     async fn a_sealed_owner_drops_late_driver_resources_before_spawn_returns() {
+        isolated_socket_case("sealed_owner_socket_child").await;
+    }
+
+    #[tokio::test]
+    #[ignore = "subprocess only: physical socket rebinding must not share unrelated fork aliases"]
+    async fn sealed_owner_socket_child() {
+        if std::env::var("KK_TEST_SOCKET_LIFETIME_CHILD").as_deref() != Ok("1") {
+            return;
+        }
         let owner = DriverOwner(Arc::new(Tasks::default()));
         let runtime = OwnedRuntime {
             runtime: quinn::TokioRuntime,
@@ -350,6 +412,15 @@ mod tests {
     #[tokio::test]
     async fn owner_terminates_and_joins_unfinished_transport_children_without_waiting_on_peer_timers()
      {
+        isolated_socket_case("terminated_owner_socket_child").await;
+    }
+
+    #[tokio::test]
+    #[ignore = "subprocess only: physical socket rebinding must not share unrelated fork aliases"]
+    async fn terminated_owner_socket_child() {
+        if std::env::var("KK_TEST_SOCKET_LIFETIME_CHILD").as_deref() != Ok("1") {
+            return;
+        }
         let owner = DriverOwner(Arc::new(Tasks::default()));
         let runtime = OwnedRuntime {
             runtime: quinn::TokioRuntime,

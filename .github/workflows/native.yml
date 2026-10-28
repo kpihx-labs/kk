@@ -74,9 +74,12 @@ jobs:
       - name: Execute macOS private shared IPC ownership and recovery regressions
         if: runner.os == 'macOS'
         run: cargo test --locked --offline --target $env:TARGET --lib node::ipc::path_tests -- --nocapture
-      - name: Execute macOS SQLite ancestor refusal and committed-state preservation
+      - name: Execute macOS SQLite ancestor refusal, committed-state preservation and actor ownership
         if: runner.os == 'macOS'
-        run: cargo test --locked --offline --target $env:TARGET --lib rooms::store::tests::symlinked_database_ancestors_are_refused_without_changing_committed_state -- --exact --nocapture
+        run: |
+          cargo test --locked --offline --target $env:TARGET --lib rooms::store::tests -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --offline --target $env:TARGET --lib rooms::lease::tests -- --nocapture
       - name: Execute macOS actual long-path contact, room and HTTP workflows
         if: runner.os == 'macOS'
         run: cargo test --locked --offline --target $env:TARGET --test ipc_long_paths -- --nocapture

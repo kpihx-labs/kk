@@ -128,26 +128,33 @@ impl Device {
         )
         .unwrap()
     }
-    async fn until(&self, predicate: impl Fn(&Value) -> bool) -> Value {
-        let result = tokio::time::timeout(config::UI_REQUEST_TIMEOUT, async {
-            let mut timer = tokio::time::interval(std::time::Duration::from_millis(25));
-            loop {
-                timer.tick().await;
-                let state = self.state().await;
-                if predicate(&state) {
-                    return state;
+    #[track_caller]
+    fn until<'a>(
+        &'a self,
+        predicate: impl Fn(&Value) -> bool + 'a,
+    ) -> impl std::future::Future<Output = Value> + 'a {
+        let caller = std::panic::Location::caller();
+        async move {
+            let result = tokio::time::timeout(config::UI_REQUEST_TIMEOUT, async {
+                let mut timer = tokio::time::interval(std::time::Duration::from_millis(25));
+                loop {
+                    timer.tick().await;
+                    let state = self.state().await;
+                    if predicate(&state) {
+                        return state;
+                    }
                 }
-            }
-        })
-        .await;
-        match result {
-            Ok(state) => state,
-            Err(_) => {
-                let state = self.state().await;
-                panic!(
-                    "UI workflow timed out: rooms={} phases={} operations={}",
-                    state["rooms"], state["phases"], state["operations"]
-                );
+            })
+            .await;
+            match result {
+                Ok(state) => state,
+                Err(_) => {
+                    let state = self.state().await;
+                    panic!(
+                        "UI workflow timed out at {caller}: rooms={} phases={} operations={}",
+                        state["rooms"], state["phases"], state["operations"]
+                    );
+                }
             }
         }
     }

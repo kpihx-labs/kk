@@ -36,7 +36,7 @@ blockers, not permission to skip a step or claim product support.
 | Explicit binary smoke | Actual native executable runs `--version`, `--help`, and refuses an unknown argument with exit 2 | Initialized profiles, networking, UI or media |
 | Offline locked foundation tests | Public digest parsing; Unix protected identity and inspection, or exact non-Unix refusals; Linux/macOS publication or unsupported-target refusal | Full integration/unit suites, cross-device interoperability or physical devices |
 | macOS-only selected integrations | File/envelope transfers and nonclobber; `ipc_long_paths` real contact/room/HTTP paths; `history_keys` protected binding/recovery regressions | Cross-device exchange, crypto redesign or complete product qualification |
-| macOS-only selected library tests | `files::`, shared IPC ownership/recovery, room reservations, publication consent/revocation/cancellation and grant-lock regressions; explicit SQLite ancestor-symlink refusal with committed state preserved | Unselected library suites, complete foreground lifecycle, native UI or capture qualification |
+| macOS-only selected library tests | `files::`, shared IPC ownership/recovery, room reservations, publication consent/revocation/cancellation and grant-lock regressions; explicit SQLite ancestor-symlink refusal with committed state preserved; full store and [actor-lease ownership](database-ownership.md) regressions | Unselected library suites, complete foreground lifecycle, native UI or capture qualification |
 
 There are no uploads, installers, release calls, signing credentials or write
 permissions in this lane. It does not change the existing release job's gates.

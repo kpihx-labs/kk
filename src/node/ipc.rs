@@ -1072,6 +1072,44 @@ mod path_tests {
 
     #[tokio::test]
     async fn stale_socket_requires_owner_lock_and_shutdown_never_unlinks_a_replacement() {
+        // Other library tests fork children. CLOEXEC does not close a copied
+        // listener until exec, so a raw-listener close fixture needs its own
+        // harness process rather than assuming it owns every description.
+        let mut child = tokio::process::Command::new(std::env::current_exe().unwrap())
+            .env("KK_TEST_IPC_LIFECYCLE_CHILD", "1")
+            .args([
+                "--exact",
+                "node::ipc::path_tests::stale_socket_lifecycle_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let status = match tokio::time::timeout(
+            crate::config::DEFAULT_TIMEOUT.saturating_mul(4),
+            child.wait(),
+        )
+        .await
+        {
+            Ok(status) => status.unwrap(),
+            Err(_) => {
+                child
+                    .kill()
+                    .await
+                    .expect("kill and reap timed-out IPC fixture");
+                panic!("isolated IPC lifecycle fixture exceeded its deadline");
+            }
+        };
+        assert!(status.success());
+    }
+
+    #[tokio::test]
+    #[ignore = "subprocess only: raw listener close must own all descriptor aliases"]
+    async fn stale_socket_lifecycle_child() {
+        if std::env::var("KK_TEST_IPC_LIFECYCLE_CHILD").as_deref() != Ok("1") {
+            return;
+        }
         let (_root, profile) = fixture();
         let listener = Listener::bind(&profile).await.unwrap();
         let socket = listener.path.clone();
@@ -1088,7 +1126,16 @@ mod path_tests {
             socket.exists(),
             "the refused bind must preserve the live socket"
         );
+        let retained = rustix::io::dup(&replacement).unwrap();
         drop(replacement);
+        // An inherited/duplicated description is still a live listener, not a
+        // stale socket. Both client connectivity and bind refusal must remain.
+        assert!(connect(&profile).await.unwrap().is_some());
+        assert!(matches!(
+            Listener::bind(&profile).await,
+            Err(Error::Node("active node socket without lock"))
+        ));
+        drop(retained);
         assert!(
             socket.exists(),
             "dropping the raw listener must leave its path"
