@@ -105,3 +105,9 @@ The backend invitation body and keys were not printed. Existing Downloads entrie
 were from the previous day and were not treated as a successful new UI download.
 The completed cases above supersede earlier blocked observations, not native
 picker, hardware capture, network traversal or cross-platform qualification.
+
+## Continued functional evidence
+
+The subsequent file-consent, byte-integrity and simultaneous generated-screen
+results are preserved in [the focused data/media report](reboot-data-media-qualification.md),
+including source-stop isolation, cleanup and the limits of those observations.
