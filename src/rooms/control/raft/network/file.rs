@@ -363,7 +363,14 @@ pub(super) async fn receive(
         |info| inbox.choose(&peer, info),
         inbox.clone(),
     )
-    .await?;
+    .await;
+    // The wire peer only observes EOF on rejection; preserve the actual receiver
+    // failure in test output rather than diagnosing it from FinishedEarly alone.
+    #[cfg(test)]
+    if let Err(error) = &receipt {
+        eprintln!("room file receive failed: {error:?}");
+    }
+    let receipt = receipt?;
     inbox.complete(&receipt);
     Ok(())
 }

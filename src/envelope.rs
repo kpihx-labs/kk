@@ -1,5 +1,7 @@
 //! Standard age envelopes. Only ciphertext is staged while encrypting.
 
+pub mod record;
+
 use std::{
     path::{Path, PathBuf},
     time::Duration,

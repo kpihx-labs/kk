@@ -38,7 +38,8 @@ retain their sessions/results but have no active file ownership. Main integrates
 | `ses_e7e690e0bffeflfrhkX38U0cGh` (Sol fast, executor, returned) | None; stdio follow-up released | Prompt/newline avoid echo guard; owned PTY/full-stderr cancellation passes. Production Darwin parent-death fixture added; exclusive host wait/reap precondition documented. Main verified all eight stdio integration entries |
 | `ses_e7e659fcaffeOTCafBKyUVrhre` (Terra fast, checker) | Read-only installer review | Four concrete early findings assigned to installer owner; final snapshot requires re-review |
 | `ses_e7e603c4affe9LzWPMLszi4Fhb` (Sol fast, executor, returned) | None; layout ownership released | CSS corrected; main replayed all 34 unchanged static rendered cases successfully. Native/interactive mobile remains distinct; latest report and CSS digest in ui-qualification.md |
-| `ses_e7e09a202ffeJa5oXNwoHN050g` (Sol fast, executor) | input/output/stdio worker and stdio tests | Diagnose/fix actual Apple runtime failures at 220bd39 native jobs 122742661892/122742661970; no timeout increases or skips; main owns workflow/deployment |
+| `ses_e7e09a202ffeJa5oXNwoHN050g` (Sol fast, executor, returned) | None; stdio ownership released | Darwin broken-output fixture now closes the endpoint rather than read-half-shutdown; strict BrokenPipe preserved, bounded diagnostics retained; committed 1e81009, hosted rerun pending |
+| `ses_e7dfe8f78ffexG325Rn86oA0In` (Sol fast, executor) | New envelope/record.rs, minimal envelope export/config limits, envelope_records tests and focused guide | Bounded standard age record codec only; no history key provisioning, database, runtime or UI edits; tests must cover authentication, work/input bounds and zeroizing failures |
 
 ## Integration Boundaries
 

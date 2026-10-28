@@ -8,6 +8,13 @@ pub const MESSAGE_HEADER_BYTES: usize = 5;
 pub const MAX_AGE_HEADER_BYTES: usize = 65_536;
 /// Bound before parsing any certificate or private-key file.
 pub const MAX_IDENTITY_BYTES: usize = 16_384;
+/// Records fit in one standard AGE STREAM plaintext frame (including empty records).
+pub const MAX_RECORD_PLAINTEXT_BYTES: usize = 65_536;
+/// Small binary header: one X25519 stanza and at most one inert AGE grease stanza.
+pub const MAX_RECORD_HEADER_BYTES: usize = 1024;
+/// One AGE payload nonce and one authenticated STREAM frame, without the header.
+pub const MAX_RECORD_PAYLOAD_BYTES: usize = 16 + MAX_RECORD_PLAINTEXT_BYTES + 16;
+pub const MAX_RECORD_CIPHERTEXT_BYTES: usize = MAX_RECORD_HEADER_BYTES + MAX_RECORD_PAYLOAD_BYTES;
 /// Default whole-operation deadline, including handshake and receipt.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Upper limit for callers; shorter deadlines are useful for cancellation tests.

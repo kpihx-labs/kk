@@ -1,6 +1,10 @@
 #![cfg(unix)]
 
-use std::{io::Write, process::Command, time::Duration};
+use std::{
+    io::{Read, Write},
+    process::Command,
+    time::Duration,
+};
 
 // Python's standard library allocates ONLY owned synthetic PTYs. Terminal
 // acquisition/inspection in the SDK child uses safe rustix APIs. No Cargo
@@ -77,10 +81,21 @@ for mode in ('prompt', 'read', 'newline'):
                     assert child.poll() is None, 'child exited before newline cancellation'
                     assert time.monotonic() < deadline, 'echo held during blocked final newline'
                     time.sleep(.005)
-        output, _ = child.communicate(timeout=10)
+        # A Darwin session leader's exit revokes the controlling PTY, including
+        # our still-open slave fd. Inspect restoration AFTER runtime shutdown
+        # but BEFORE allowing the session leader to exit, not on a revoked fd.
+        output = b''
+        while not output.endswith(b'runtime joined\n'):
+            line = child.stdout.readline(1024)
+            assert line, (mode, 'child exited before runtime joined', output)
+            output += line
+            assert len(output) <= 4096, (mode, 'unexpected fixture output', output)
+        assert termios.tcgetattr(slave) == original, mode + ': attributes changed'
+        os.write(master, b'exit\n')
+        remaining, _ = child.communicate(timeout=10)
+        output += remaining
         assert child.returncode == 0, (mode, child.returncode, output)
         assert b'runtime joined' in output, (mode, output)
-        assert termios.tcgetattr(slave) == original, mode + ': attributes changed'
     finally:
         signal.alarm(0)
         if child.poll() is None:
@@ -146,5 +161,11 @@ fn terminal_child() {
         stderr_flags
     );
     writeln!(std::io::stdout(), "runtime joined").unwrap();
+    std::io::stdout().flush().unwrap();
+    // Keep the controlling session alive until the parent has inspected the
+    // restored attributes. Darwin revokes the PTY when this session leader exits.
+    let mut release = [0; 5];
+    std::io::stdin().read_exact(&mut release).unwrap();
+    assert_eq!(&release, b"exit\n");
     std::process::exit(0);
 }

@@ -3,13 +3,14 @@ SHELL := /bin/sh
 GITHUB_SSH_COMMAND ?= ssh
 GITLAB_SSH_COMMAND ?= ssh
 
-.PHONY: help check docs-check ui-check fixture-check packaging-check sdk-check hax-check bundle verify-bundle install tag-release publish-tag build fmt run push lab-check lab-test lab-crypto-test lab-control-test lab-room-test lab-enrollment-test lab-room-cli-test lab-native-media-test lab-stop
+.PHONY: help check docs-check ui-check fixture-check packaging-check workflow-check sdk-check hax-check bundle verify-bundle install tag-release publish-tag build fmt run push lab-check lab-test lab-crypto-test lab-control-test lab-room-test lab-enrollment-test lab-room-cli-test lab-native-media-test lab-stop
 
 help: ## Show available tasks
 	@printf '%s\n' \
 	  'make check           Format, lint, tests and documentation' \
 	  'make docs-check      Current guide links, tables, wire tokens and examples' \
 	  'make fixture-check   Offline static-layout generator and guard regressions' \
+	  'make workflow-check  Pinned workflow syntax/lint gate (Go tool required)' \
 	  'make sdk-check       Upstream expansion vectors and independent OPAQUE interoperability' \
 	  'make hax-check       Explicit upstream-nightly macro check, not a formal proof' \
 	  'make build           Build the release CLI' \
@@ -35,6 +36,7 @@ check: ## Validate offline with local loopback network tests
 	cargo fmt --package kk -- --check
 	cargo clippy --offline --locked --all-targets -- -D warnings
 	cargo test --offline --locked --all-targets
+	cargo test --offline --locked --doc
 	RUSTDOCFLAGS="-D warnings" cargo doc --offline --locked --no-deps
 	$(MAKE) ui-check
 	$(MAKE) fixture-check
@@ -50,6 +52,9 @@ packaging-check: ## Release integrity, archive safety and clean-source policy te
 
 fixture-check: ## Static layout payload generation and safety guards; no browser execution
 	uv run --no-project python -m unittest discover -s tests -p 'test_layout_fixture.py'
+
+workflow-check: ## Pinned actionlint validation; separate from the offline product check
+	go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/*.yml
 
 sdk-check: ## Historical reference packages may need network/cache; not part of offline product checks
 	cargo test --locked --manifest-path third_party/overrides/elliptic-curve-xmd/Cargo.toml
