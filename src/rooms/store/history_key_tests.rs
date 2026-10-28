@@ -43,6 +43,162 @@ fn pending_file_is_not_adopted_or_changed_by_load() {
 }
 
 #[test]
+fn empty_partial_and_complete_pending_block_every_initialization_retry() {
+    let (source, source_anchor) = fixture();
+    source_anchor.initialize().unwrap();
+    let complete = zeroize::Zeroizing::new(stdfs::read(source.path().join(NAME)).unwrap());
+    for bytes in [b"".as_slice(), b"synthetic partial identity", &complete[..]] {
+        let (dir, anchor) = fixture();
+        let pending = dir
+            .path()
+            .join(".history-key-0123456789abcdef0123456789abcdef.pending");
+        stdfs::write(&pending, bytes).unwrap();
+        stdfs::set_permissions(&pending, stdfs::Permissions::from_mode(0o600)).unwrap();
+        let before = stdfs::metadata(&pending).unwrap();
+        for _ in 0..3 {
+            let fresh = HistoryKeyAnchor::open(dir.path(), [1; 32], [2; 32]).unwrap();
+            for candidate in [&anchor, &fresh] {
+                assert!(matches!(
+                    candidate.initialize(),
+                    Err(Error::Destination(message)) if message.contains("explicit recovery required")
+                ));
+                assert!(candidate.load().is_err());
+            }
+        }
+        let after = stdfs::metadata(&pending).unwrap();
+        assert_eq!((before.dev(), before.ino()), (after.dev(), after.ino()));
+        let after_bytes = zeroize::Zeroizing::new(stdfs::read(&pending).unwrap());
+        assert!(after_bytes.as_slice() == bytes); // Never print private bytes on failure.
+        assert!(!dir.path().join(NAME).exists());
+        assert_eq!(stdfs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+}
+
+#[test]
+fn failed_empty_and_partial_writes_require_explicit_recovery() {
+    for length in [0, 17] {
+        let (dir, anchor) = fixture();
+        assert!(
+            anchor
+                .initialize_with_io(
+                    |file, bytes| {
+                        file.write_all(&bytes[..length])?;
+                        Err(std::io::Error::other("synthetic write failure"))
+                    },
+                    |_| panic!("failed write must not reach sync or publication"),
+                )
+                .is_err()
+        );
+        let pending = stdfs::read_dir(dir.path())
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let before = stdfs::metadata(&pending).unwrap();
+        assert_eq!(before.len(), length as u64);
+        let bytes = zeroize::Zeroizing::new(stdfs::read(&pending).unwrap());
+        for _ in 0..3 {
+            assert!(
+                matches!(anchor.initialize(), Err(Error::Destination(message)) if message.contains("explicit recovery required"))
+            );
+        }
+        let after = stdfs::metadata(&pending).unwrap();
+        assert_eq!((before.dev(), before.ino()), (after.dev(), after.ino()));
+        let after_bytes = zeroize::Zeroizing::new(stdfs::read(&pending).unwrap());
+        assert!(after_bytes.as_slice() == bytes.as_slice());
+        assert!(!dir.path().join(NAME).exists());
+        assert_eq!(stdfs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+}
+
+#[test]
+fn unsafe_pending_names_types_links_and_modes_are_preserved() {
+    for kind in [
+        "name",
+        "symlink",
+        "directory",
+        "hardlink",
+        "mode",
+        "oversize",
+        "fifo",
+    ] {
+        let (dir, anchor) = fixture();
+        let name = if kind == "name" {
+            ".history-key-malformed.pending"
+        } else {
+            ".history-key-0123456789abcdef0123456789abcdef.pending"
+        };
+        let pending = dir.path().join(name);
+        match kind {
+            "symlink" => symlink("absent", &pending).unwrap(),
+            "directory" => stdfs::create_dir(&pending).unwrap(),
+            "fifo" => {
+                #[cfg(target_os = "linux")]
+                fs::mknodat(
+                    anchor.directory(),
+                    name,
+                    fs::FileType::Fifo,
+                    Mode::RUSR | Mode::WUSR,
+                    0,
+                )
+                .unwrap();
+                #[cfg(not(target_os = "linux"))]
+                continue;
+            }
+            _ => {
+                let bytes = vec![b'x'; if kind == "oversize" { LIMIT + 1 } else { 7 }];
+                stdfs::write(&pending, bytes).unwrap();
+                stdfs::set_permissions(
+                    &pending,
+                    stdfs::Permissions::from_mode(if kind == "mode" { 0o644 } else { 0o600 }),
+                )
+                .unwrap();
+                if kind == "hardlink" {
+                    stdfs::hard_link(&pending, dir.path().join("retained-link")).unwrap();
+                }
+            }
+        }
+        let before = stdfs::symlink_metadata(&pending).unwrap();
+        assert!(anchor.initialize().is_err());
+        let after = stdfs::symlink_metadata(&pending).unwrap();
+        assert_eq!(
+            (
+                before.dev(),
+                before.ino(),
+                before.mode(),
+                before.nlink(),
+                before.len()
+            ),
+            (
+                after.dev(),
+                after.ino(),
+                after.mode(),
+                after.nlink(),
+                after.len()
+            )
+        );
+        assert!(!dir.path().join(NAME).exists());
+    }
+}
+
+#[test]
+fn initialization_scan_refuses_exhaustion_even_for_unrelated_entries() {
+    let (dir, anchor) = fixture();
+    for index in 0..INITIALIZE_SCAN_ENTRIES {
+        stdfs::write(dir.path().join(format!("unrelated-{index}")), b"").unwrap();
+    }
+    assert!(
+        matches!(anchor.initialize(), Err(Error::Destination(message)) if message.contains("explicit recovery required"))
+    );
+    assert!(!dir.path().join(NAME).exists());
+    assert_eq!(
+        stdfs::read_dir(dir.path()).unwrap().count(),
+        INITIALIZE_SCAN_ENTRIES
+    );
+}
+
+#[test]
 fn explicit_only_and_round_trip_with_codec() {
     let (dir, anchor) = fixture();
     assert!(anchor.load().is_err());
@@ -135,6 +291,7 @@ fn dangling_link_and_nonregular_file_refuse() {
     assert!(anchor.load().is_err());
     assert!(anchor.initialize().is_err());
     stdfs::remove_dir(&path).unwrap();
+    #[cfg(not(target_vendor = "apple"))]
     fs::mknodat(
         anchor.directory(),
         NAME,
@@ -143,6 +300,29 @@ fn dangling_link_and_nonregular_file_refuse() {
         0,
     )
     .unwrap();
+    // Darwin has neither mknodat nor mkfifoat in rustix. Use its native FIFO
+    // utility only in this owned temporary directory, with a bounded lifetime.
+    #[cfg(target_vendor = "apple")]
+    {
+        let mut child = std::process::Command::new("mkfifo")
+            .args(["-m", "600"])
+            .arg(&path)
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success(), "owned FIFO creation failed: {status}");
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("owned FIFO creation exceeded five seconds");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
     assert!(anchor.load().is_err()); // NONBLOCK prevents FIFO hangs.
     assert!(anchor.initialize().is_err());
 }
@@ -169,6 +349,41 @@ fn concurrent_initializers_have_exactly_one_winner() {
     assert_eq!(winners.len(), 1);
     let anchor = HistoryKeyAnchor::open(dir.path(), [1; 32], [2; 32]).unwrap();
     assert_eq!(anchor.load().unwrap().recipient(), winners[0]);
+    assert_eq!(stdfs::read_dir(dir.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn same_anchor_and_fresh_anchors_cannot_share_the_initialization_lock() {
+    let (dir, anchor) = fixture();
+    std::thread::scope(|scope| {
+        let (staged, staged_rx) = std::sync::mpsc::sync_channel(1);
+        let (release, release_rx) = std::sync::mpsc::sync_channel(1);
+        let anchor_ref = &anchor;
+        let worker = scope.spawn(move || {
+            anchor_ref.initialize_with_sync(|_| {
+                staged.send(()).unwrap();
+                release_rx
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                Err(std::io::Error::other("synthetic retained pending"))
+            })
+        });
+        staged_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let fresh = HistoryKeyAnchor::open(dir.path(), [1; 32], [2; 32]).unwrap();
+        for candidate in [&anchor, &fresh] {
+            assert!(candidate.initialize().is_err());
+        }
+        assert_eq!(stdfs::read_dir(dir.path()).unwrap().count(), 1);
+        release.send(()).unwrap();
+        assert!(worker.join().unwrap().is_err());
+    });
+    assert!(
+        matches!(anchor.initialize(), Err(Error::Destination(message)) if message.contains("explicit recovery required"))
+    );
+    assert_eq!(stdfs::read_dir(dir.path()).unwrap().count(), 1);
+    assert!(!dir.path().join(NAME).exists());
 }
 
 #[test]
@@ -243,7 +458,11 @@ fn sync_failures_preserve_pending_or_published_key_and_never_overwrite() {
                 .unwrap()
                 .path();
             let before = stdfs::metadata(&pending).unwrap();
+            let bytes = zeroize::Zeroizing::new(stdfs::read(&pending).unwrap());
             assert!(anchor.load().is_err());
+            assert!(
+                matches!(anchor.initialize(), Err(Error::Destination(message)) if message.contains("explicit recovery required"))
+            );
             assert!(!dir.path().join(NAME).exists());
             let after = stdfs::metadata(&pending).unwrap();
             use std::os::unix::fs::MetadataExt;
@@ -251,6 +470,8 @@ fn sync_failures_preserve_pending_or_published_key_and_never_overwrite() {
                 (before.dev(), before.ino(), before.len()),
                 (after.dev(), after.ino(), after.len())
             );
+            let after_bytes = zeroize::Zeroizing::new(stdfs::read(&pending).unwrap());
+            assert!(bytes.as_slice() == after_bytes.as_slice());
             assert_eq!(stdfs::read_dir(dir.path()).unwrap().count(), 1);
         } else {
             let recipient = anchor.load().unwrap().recipient();

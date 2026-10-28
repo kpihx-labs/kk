@@ -73,6 +73,7 @@ impl Group {
             pending: loaded.checkpoint.pending,
             poisoned: false,
             applied: loaded.checkpoint.applied,
+            history: None,
         })
     }
     fn load(actor: &CryptoMember) -> Result<Loaded> {
@@ -167,13 +168,23 @@ impl Group {
         &mut self,
         operation: impl FnOnce(&mut Self) -> Result<T>,
     ) -> Result<T> {
+        self.transactional_with_tx(|group, _| operation(group))
+    }
+    pub(super) fn transactional_with_tx<T>(
+        &mut self,
+        operation: impl FnOnce(&mut Self, &super::super::store::Transaction) -> Result<T>,
+    ) -> Result<T> {
+        if self.poisoned {
+            return Err(Error::Storage("failed commit requires verified reopen"));
+        }
         let transaction = self.actor.provider.transaction()?;
         let prior_members = self.members.clone();
         let prior_epoch = self.committed_epoch;
         let prior_outgoing = self.outgoing.clone();
         let prior_applied = self.applied;
-        let outcome = operation(self).and_then(|output| {
+        let outcome = operation(self, &transaction).and_then(|output| {
             self.save_checkpoint()?;
+            self.verify_history_anchor()?;
             Ok(output)
         });
         match outcome {

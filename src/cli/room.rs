@@ -1,4 +1,5 @@
 use clap::{Args, Subcommand, ValueEnum};
+mod history;
 use kk::{
     Error, Result,
     rooms::{Rights, control::raft::PeerId, local},
@@ -29,6 +30,12 @@ impl Role {
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Opt-in encrypted future-only text history owned by the foreground room
+    History {
+        name: String,
+        #[command(subcommand)]
+        command: history::Command,
+    },
     /// Explicit audience-bound replica offers and verified local copy retrieval
     Files {
         name: String,
@@ -180,6 +187,7 @@ fn report(reply: local::Reply) -> Result<()> {
 pub(super) async fn run(command: Command, selected: Option<&Path>) -> Result<()> {
     let profile = super::profile_directory(selected)?;
     match command {
+        Command::History { name, command } => report(history::run(command, &profile, &name).await?),
         Command::Files { name, command } => {
             report(super::replica::run(command, &profile, &name).await?)
         }

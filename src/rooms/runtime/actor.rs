@@ -20,6 +20,7 @@ pub struct Status {
     pub members: Vec<super::super::control::raft::PeerId>,
     pub running: bool,
     pub busy: bool,
+    pub history: history::Summary,
 }
 impl Status {
     fn snapshot(room: &Room, running: bool, busy: bool) -> Self {
@@ -36,6 +37,7 @@ impl Status {
                 .collect(),
             running,
             busy,
+            history: room.history_summary.clone(),
         }
     }
 }
@@ -50,8 +52,32 @@ pub struct Publication {
     pub wire: Vec<u8>,
     pub members: Vec<crate::rooms::control::raft::PeerId>,
 }
+pub struct ReferencedPublication {
+    pub publication: Publication,
+    pub reference: crate::rooms::group::StableReference,
+}
+
+const HISTORY_QUEUE: usize = 2;
 
 enum Command {
+    History {
+        operation: history::Operation,
+        reply: oneshot::Sender<Result<history::Summary>>,
+    },
+    HistorySearch {
+        search: history::Search,
+        reply: oneshot::Sender<Result<history::Page>>,
+    },
+    EncryptReferenced {
+        text: Zeroizing<String>,
+        sensitive: bool,
+        reply: oneshot::Sender<Result<ReferencedPublication>>,
+    },
+    AcceptReferenced {
+        peer: Peer,
+        wire: Vec<u8>,
+        reply: oneshot::Sender<Result<crate::rooms::group::StableReference>>,
+    },
     MediaPolicy(oneshot::Sender<Result<MediaPolicy>>),
     Synchronize(oneshot::Sender<Result<()>>),
     Encrypt {
@@ -114,6 +140,10 @@ enum Command {
 impl Command {
     fn cancelled(&self) -> bool {
         match self {
+            Self::History { reply, .. } => reply.is_closed(),
+            Self::HistorySearch { reply, .. } => reply.is_closed(),
+            Self::EncryptReferenced { reply, .. } => reply.is_closed(),
+            Self::AcceptReferenced { reply, .. } => reply.is_closed(),
             Self::MediaPolicy(reply) => reply.is_closed(),
             Self::Synchronize(reply) | Self::Shutdown(reply) => reply.is_closed(),
             Self::Encrypt { reply, .. } => reply.is_closed(),
@@ -147,16 +177,123 @@ impl Drop for CancelOnDrop {
 #[derive(Clone)]
 pub struct Handle {
     sender: mpsc::Sender<Request>,
+    history_sender: mpsc::Sender<Request>,
     status: watch::Receiver<Status>,
 }
 pub struct Actor {
     room: Room,
     requests: mpsc::Receiver<Request>,
+    history_requests: mpsc::Receiver<Request>,
     events: mpsc::Sender<Event>,
     status: watch::Sender<Status>,
 }
 
 impl Handle {
+    /// Cached public summary only. Use history_refresh for an authorized fresh read.
+    pub async fn history_status(&self, deadline: Duration) -> Result<history::Summary> {
+        Ok(self.status(deadline).await?.history)
+    }
+    pub async fn history_enable_file(
+        &self,
+        policy: history::Policy,
+        deadline: Duration,
+    ) -> Result<history::Summary> {
+        policy.validate()?;
+        self.history_operation(history::Operation::Enable(policy), deadline)
+            .await
+    }
+    pub async fn history_open_file(&self, deadline: Duration) -> Result<history::Summary> {
+        self.history_operation(history::Operation::Open, deadline)
+            .await
+    }
+    pub async fn history_recover_file(
+        &self,
+        expected: age::x25519::Recipient,
+        policy: history::Policy,
+        deadline: Duration,
+    ) -> Result<history::Summary> {
+        policy.validate()?;
+        self.history_operation(history::Operation::Recover(expected, policy), deadline)
+            .await
+    }
+    /// Typed SDK key, never Debug/Serialize or an HTTP string parameter.
+    pub async fn history_use_identity(
+        &self,
+        identity: age::x25519::Identity,
+        deadline: Duration,
+    ) -> Result<history::Summary> {
+        self.history_operation(history::Operation::Identity(identity), deadline)
+            .await
+    }
+    pub async fn history_enable(
+        &self,
+        policy: history::Policy,
+        deadline: Duration,
+    ) -> Result<history::Summary> {
+        policy.validate()?;
+        self.history_operation(history::Operation::EnableIdentity(policy), deadline)
+            .await
+    }
+    pub async fn history_disable(&self, deadline: Duration) -> Result<history::Summary> {
+        self.history_operation(history::Operation::Disable, deadline)
+            .await
+    }
+    pub async fn history_clear(&self, deadline: Duration) -> Result<history::Summary> {
+        self.history_operation(history::Operation::Clear, deadline)
+            .await
+    }
+    pub async fn history_refresh(&self, deadline: Duration) -> Result<history::Summary> {
+        self.history_operation(history::Operation::Status, deadline)
+            .await
+    }
+    async fn history_operation(
+        &self,
+        operation: history::Operation,
+        deadline: Duration,
+    ) -> Result<history::Summary> {
+        self.call(deadline, |reply| Command::History { operation, reply })
+            .await
+    }
+    pub async fn history_search(
+        &self,
+        search: history::Search,
+        deadline: Duration,
+    ) -> Result<history::Page> {
+        search.validate()?;
+        self.call(deadline, |reply| Command::HistorySearch { search, reply })
+            .await
+    }
+    pub async fn publication_referenced(
+        &self,
+        text: String,
+        sensitive: bool,
+        deadline: Duration,
+    ) -> Result<ReferencedPublication> {
+        let text = Zeroizing::new(text);
+        if text.len() > config::MAX_MESSAGE_BYTES {
+            return Err(Error::MessageTooLarge);
+        }
+        self.call(deadline, |reply| Command::EncryptReferenced {
+            text,
+            sensitive,
+            reply,
+        })
+        .await
+    }
+    pub async fn accept_text_referenced(
+        &self,
+        peer: Peer,
+        wire: Vec<u8>,
+        deadline: Duration,
+    ) -> Result<crate::rooms::group::StableReference> {
+        bound(&wire)?;
+        self.call(deadline, |reply| Command::AcceptReferenced {
+            peer,
+            wire,
+            reply,
+        })
+        .await
+    }
     pub async fn media_policy(&self, deadline: Duration) -> Result<MediaPolicy> {
         self.call(deadline, Command::MediaPolicy).await
     }
@@ -171,16 +308,30 @@ impl Handle {
         // It does not undo an already committed operation: that stays uncertain.
         let (cancel, cancelled) = oneshot::channel();
         let _cancel = CancelOnDrop(Some(cancel));
-        self.sender
+        let command = build(reply);
+        let history_work = matches!(
+            &command,
+            Command::History { .. } | Command::HistorySearch { .. }
+        );
+        let sender = if history_work {
+            &self.history_sender
+        } else {
+            &self.sender
+        };
+        sender
             .try_send(Request {
                 expires: Instant::now() + deadline,
-                command: build(reply),
+                command,
                 cancelled,
             })
             .map_err(|error| match error {
                 mpsc::error::TrySendError::Full(_) => Error::Limit {
                     resource: "room command queue",
-                    max: config::ROOM_COMMAND_QUEUE,
+                    max: if history_work {
+                        HISTORY_QUEUE
+                    } else {
+                        config::ROOM_COMMAND_QUEUE
+                    },
                 },
                 mpsc::error::TrySendError::Closed(_) => Error::Cancelled,
             })?;
@@ -382,16 +533,19 @@ impl Actor {
     /// owning foreground thread and retains the join handle for orderly shutdown.
     pub fn new(room: Room) -> (Handle, Self, mpsc::Receiver<Event>) {
         let (sender, requests) = mpsc::channel(config::ROOM_COMMAND_QUEUE);
+        let (history_sender, history_requests) = mpsc::channel(HISTORY_QUEUE);
         let (events, received) = mpsc::channel(config::ROOM_EVENT_QUEUE);
         let (status, observed) = watch::channel(Status::snapshot(&room, false, false));
         (
             Handle {
                 sender,
+                history_sender,
                 status: observed,
             },
             Self {
                 room,
                 requests,
+                history_requests,
                 events,
                 status,
             },
@@ -400,15 +554,20 @@ impl Actor {
     }
     pub async fn run(mut self) -> Room {
         self.publish(true, false);
-        while let Some(mut request) = self.requests.recv().await {
+        loop {
+            let mut request = tokio::select! {
+                biased;
+                request = self.requests.recv() => match request { Some(request) => request, None => break },
+                request = self.history_requests.recv() => match request { Some(request) => request, None => break },
+            };
             if request.expires <= Instant::now() || request.command.cancelled() {
                 continue;
             }
-            let deadline = request.expires.saturating_duration_since(Instant::now());
             self.publish(true, true);
             let shutdown = tokio::select! {
+                biased;
                 _ = &mut request.cancelled => false,
-                shutdown = self.execute(request.command, deadline) => shutdown,
+                shutdown = tokio::time::timeout_at(request.expires, self.execute(request.command, request.expires)) => shutdown.unwrap_or(false),
             };
             self.publish(true, false);
             if shutdown {
@@ -422,8 +581,64 @@ impl Actor {
         self.status
             .send_replace(Status::snapshot(&self.room, running, busy));
     }
-    async fn execute(&mut self, command: Command, deadline: Duration) -> bool {
+    async fn execute(&mut self, command: Command, expires: Instant) -> bool {
+        let deadline = expires.saturating_duration_since(Instant::now());
         match command {
+            Command::History { operation, reply } => {
+                let result = self.room.history_operation(operation, deadline).await;
+                let _ = reply.send(before_deadline(result, expires));
+            }
+            Command::HistorySearch { search, reply } => {
+                let result = self.room.history_search(search, deadline).await;
+                let _ = reply.send(before_deadline(result, expires));
+            }
+            Command::EncryptReferenced {
+                text,
+                sensitive,
+                reply,
+            } => {
+                let result = self
+                    .room
+                    .encrypt_text_referenced(&text, sensitive, deadline)
+                    .await
+                    .map(|(wire, reference)| ReferencedPublication {
+                        publication: Publication {
+                            wire,
+                            members: self
+                                .room
+                                .peers()
+                                .iter()
+                                .map(crate::rooms::control::raft::PeerId::from_peer)
+                                .collect(),
+                        },
+                        reference,
+                    });
+                if !reply.is_closed() {
+                    let _ = reply.send(before_deadline(result, expires));
+                }
+            }
+            Command::AcceptReferenced { peer, wire, reply } => {
+                let result = match self.events.try_reserve() {
+                    Ok(permit) => match self
+                        .room
+                        .decrypt_text_referenced(&peer, &wire, deadline)
+                        .await
+                    {
+                        Ok((text, reference)) if !reply.is_closed() && Instant::now() < expires => {
+                            permit.send(Event::Text(text));
+                            Ok(reference)
+                        }
+                        Ok(_) => Err(Error::Cancelled),
+                        Err(error) => Err(error),
+                    },
+                    Err(mpsc::error::TrySendError::Full(_)) => Err(Error::Limit {
+                        resource: "room event queue",
+                        max: config::ROOM_EVENT_QUEUE,
+                    }),
+                    Err(mpsc::error::TrySendError::Closed(_)) => Err(Error::Cancelled),
+                };
+                let _ = reply.send(before_deadline(result, expires));
+            }
             Command::MediaPolicy(reply) => {
                 let _ = reply.send(self.room.media_policy(deadline).await);
             }
@@ -448,17 +663,18 @@ impl Actor {
                             .map(crate::rooms::control::raft::PeerId::from_peer)
                             .collect(),
                     });
-                let _ = reply.send(result);
+                let _ = reply.send(before_deadline(result, expires));
             }
             Command::Accept { peer, wire, reply } => {
                 // Reserve before decrypting; a full/closed UI cannot consume
                 // a ratchet and then silently discard the resulting event.
                 let result = match self.events.try_reserve() {
                     Ok(permit) => match self.room.decrypt_text(&peer, &wire, deadline).await {
-                        Ok(text) => {
+                        Ok(text) if !reply.is_closed() && Instant::now() < expires => {
                             permit.send(Event::Text(text));
                             Ok(())
                         }
+                        Ok(_) => Err(Error::Cancelled),
                         Err(error) => Err(error),
                     },
                     Err(mpsc::error::TrySendError::Full(_)) => Err(Error::Limit {
@@ -541,3 +757,15 @@ impl Actor {
 
 #[cfg(all(test, unix))]
 mod tests;
+
+fn before_deadline<T>(result: Result<T>, expires: Instant) -> Result<T> {
+    if Instant::now() >= expires {
+        Err(Error::Timeout)
+    } else {
+        result
+    }
+}
+
+#[cfg(all(test, unix))]
+#[path = "history_tests.rs"]
+mod history_tests;

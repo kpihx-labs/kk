@@ -3,8 +3,11 @@
 Durable coordination for [workstreams](workstreams.md). OpenAI `help_*` only;
 executors edit, explorers research, checkers review read-only. Archived peers
 retain their sessions/results but have no active file ownership. Main integrates.
+Completed sessions below are archived after handoff; last assignments are retained
+as historical evidence, not permission for concurrent edits. Reopen only for a
+specific new mission and record its ownership before execution.
 
-| Peer | Current ownership | Verification / result |
+| Peer | Last assignment | Verification / result |
 | --- | --- | --- |
 | `ses_e8190452bffe5Wg9qRmeiFT2Ei` (Terra fast, checker) | Read-only independent review | Wrong implementation assignment withdrawn without edits; found then re-reviewed publication/admission/archive races; no remaining concrete defect in reviewed fixes |
 | `ses_e818fa5a8ffesTjZxwmtaA47DE` (Sol fast, explore, archived) | None | CLI/UI integration and existing multi-peer semantics mapped; no edits |
@@ -42,6 +45,13 @@ retain their sessions/results but have no active file ownership. Main integrates
 | `ses_e7dfe8f78ffexG325Rn86oA0In` (Sol fast, executor, returned) | None; codec ownership released | Bounded multi-chunk AGE with exact EOF/authentication reviewed; 11 record tests pass. Main measured optimized workstation timing separately; no complete dependency-internal erasure claim |
 | `ses_e7dd54492ffe1NCPM7uFbzcCQ9` (Sol fast, executor, returned) | None; SQL foundation released | Explicit V1-to-V2 migration, ciphertext policy/search, quarantine/clock/frame fixes reviewed; main ran 24 store and 15 Group tests. SDK callers must commit before exposure; live capture/actor/UI still separate |
 | `ses_e7dd0c727ffejbbbbYTpHiGvV4` (Sol fast, executor, returned) | None; key helper ownership released | Anchored key initialize/load reviewed; main independently ran 13 debug and release tests plus Clippy, including descriptor flags/pending preservation. DB enrollment not inferred from key loading |
+| `ses_e7db4e17effegaB1RbmyWB7RzM` (Sol fast, executor, returned) | Group/durable/history and minimal store key export; released | Atomic MLS/history capture, stored/SDK key lifecycle and commit-before-exposure APIs returned; owner reports 17 new history tests, 32 Group tests and 228 library passes; main verification and runtime authorization integration still required |
+| `ses_e7da48e48ffebNhty60IezaUpa` (Sol fast, executor, archived) | None; native corrections released | Apple FIFO fixture and Windows test-only cfg corrected; PTY phases bounded by owned subprocess deadlines with retained diagnostics; exact Apple blocking phase still requires native rerun |
+| `ses_e7da42217ffeQMWJ7OCkhF0GZa` (Terra fast, checker, archived) | None; review retained | Pending-artifact finding corrected and scoped static re-review passed; main reran 18 key tests; cooperative-writer boundary remains explicit |
+| `ses_e7da11f23ffezFHbBX9r9wGyqI` (Sol fast, executor, archived) | None; pending-key correction released | Independent directory-lock description and bounded pending-artifact scan before generation; retries preserve artifacts, with 18 key/42 store/33 Group tests reported |
+| `ses_e7d9ef842ffeJbGNhXOe97mdDW` (Sol fast, executor, returned) | None; runtime ownership released | Typed two-slot history lane, cached public summary and pre/post/per-author authorization; main verified nine runtime tests plus 33 Group and 18 key tests; IPC/CLI/UI remain next |
+| `ses_e7d71d12affeKVU80KUTOWSC7v` (Sol fast, executor, archived) | None; local/CLI history adapters released | Typed path-free IPC and CLI controls/search/recovery; three actual two-profile history tests pass in Main aggregate gate; incoming live stable-reference gap remains |
+| `ses_e7d715655ffeS5lBn0Wkq3dh7m` (Terra fast, checker, archived) | None; runtime review retained | Prepared/processed storage versus disclosure and uncertain committed outcomes made explicit in history-runtime.md; active-work scheduling and final paging budget remain qualification gates |
 
 ## Integration Boundaries
 

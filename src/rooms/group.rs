@@ -17,6 +17,8 @@ use zeroize::Zeroizing;
 mod applied;
 mod durable;
 mod enrollment;
+mod history;
+pub use history::{HistoryPage, HistoryRow, StableReference};
 mod outbox;
 mod prepared;
 
@@ -42,6 +44,7 @@ pub struct Group {
     pending: Option<Pending>,
     poisoned: bool,
     applied: Option<super::control::raft::Position>,
+    history: Option<Rc<history::Context>>,
 }
 
 #[derive(Debug)]
@@ -157,6 +160,7 @@ impl Group {
             pending: None,
             poisoned: false,
             applied: None,
+            history: None,
         })
     }
     pub fn epoch(&self) -> u64 {
@@ -527,7 +531,8 @@ impl Group {
     }
 
     pub fn encrypt_text(&mut self, text: &str, sensitive: bool) -> Result<Vec<u8>> {
-        self.transactional(|group| group.encrypt_text_mut(text, sensitive))
+        self.encrypt_text_referenced(text, sensitive, history::now()?)
+            .map(|(wire, _)| wire)
     }
     fn encrypt_text_mut(&mut self, text: &str, sensitive: bool) -> Result<Vec<u8>> {
         self.ready()?;
@@ -553,17 +558,14 @@ impl Group {
         encode(&message)
     }
     pub fn decrypt_text(&mut self, wire: &[u8]) -> Result<Text> {
-        self.transactional(|group| group.decrypt_text_mut(wire))
-    }
-    fn decrypt_text_mut(&mut self, wire: &[u8]) -> Result<Text> {
-        self.decrypt_text_from_mut(wire, None)
+        self.decrypt_text_referenced(wire, None, history::now()?)
+            .map(|(text, _)| text)
     }
     /// Bind the original MLS sender to the authenticated direct transport peer.
     /// A mismatch rolls ratchet/replay processing back before plaintext escapes.
     pub fn decrypt_text_from(&mut self, wire: &[u8], sender: &Peer) -> Result<Text> {
-        self.transactional(|group| {
-            group.decrypt_text_from_mut(wire, Some(sender.fingerprint_bytes()))
-        })
+        self.decrypt_text_referenced(wire, Some(sender), history::now()?)
+            .map(|(text, _)| text)
     }
     fn decrypt_text_from_mut(&mut self, wire: &[u8], expected: Option<[u8; 32]>) -> Result<Text> {
         self.ready()?;

@@ -14,7 +14,8 @@ use crate::{
 };
 use std::{sync::Arc, time::Duration};
 mod actor;
-pub use actor::{Actor, Event, Handle, Publication, Status};
+pub mod history;
+pub use actor::{Actor, Event, Handle, Publication, ReferencedPublication, Status};
 
 pub struct MediaPolicy {
     pub epoch: u64,
@@ -27,6 +28,8 @@ pub struct Room {
     control: Arc<ControlNode>,
     group: Group,
     profile: Registry,
+    history_directory: Option<std::path::PathBuf>,
+    history_summary: history::Summary,
 }
 
 impl Room {
@@ -49,6 +52,8 @@ impl Room {
             control,
             group,
             profile,
+            history_directory: None,
+            history_summary: history::Summary::Unknown,
         })
     }
     /// Complete private activation from a recipient-authenticated committed
@@ -266,13 +271,10 @@ impl Room {
         if text.len() > config::MAX_MESSAGE_BYTES {
             return Err(Error::MessageTooLarge);
         }
-        self.synchronize(deadline).await?;
-        self.authorize_audience()?;
-        let ciphertext = self.group.encrypt_text(text, sensitive)?;
-        // A concurrent local policy update must not release the ciphertext. Its
-        // generation remains durably consumed even when output is withheld.
-        self.authorize_audience()?;
-        Ok(ciphertext)
+        Ok(self
+            .encrypt_text_referenced(text, sensitive, deadline)
+            .await?
+            .0)
     }
     pub async fn decrypt_text(
         &mut self,
@@ -286,11 +288,10 @@ impl Room {
                 max: config::ROOM_MAX_WIRE_BYTES,
             });
         }
-        self.synchronize(deadline).await?;
-        self.sender(sender)?;
-        let text = self.group.decrypt_text_from(wire, sender)?;
-        self.sender(sender)?;
-        Ok(text)
+        Ok(self
+            .decrypt_text_referenced(sender, wire, deadline)
+            .await?
+            .0)
     }
     pub async fn prepare_admission(
         &mut self,

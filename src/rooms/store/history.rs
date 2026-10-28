@@ -531,7 +531,7 @@ impl Provider {
         Ok(page)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn inject_history_cleanup_failure(&self, tx: &Transaction) -> Result<()> {
         self.history_mutate(tx, |connection| {
             sql(connection.execute("DELETE FROM kk_history_rows", []))?;

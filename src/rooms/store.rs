@@ -15,6 +15,7 @@ use std::{borrow::Borrow, cell::Cell, fs::File, path::Path, rc::Rc};
 const SCHEMA_VERSION: i64 = 1;
 
 pub mod history;
+pub(crate) mod history_key;
 #[cfg(test)]
 mod history_tests;
 
@@ -47,6 +48,7 @@ struct Session {
     connection: Connection,
     poisoned: Cell<bool>,
     _lease: Option<File>,
+    directory: Option<File>,
 }
 #[derive(Clone)]
 pub struct ConnectionHandle(Rc<Session>);
@@ -82,6 +84,7 @@ impl Provider {
             Connection::open_in_memory()
                 .map_err(|_| Error::Storage("cannot create memory store"))?,
             None,
+            None,
             true,
         )
     }
@@ -108,7 +111,9 @@ impl Provider {
         let connection = Connection::open_with_flags(lease.path(), flags)
             .map_err(|_| Error::Storage("cannot open database"))?;
         lease.verify_path()?;
-        let provider = Self::initialize(connection, Some(lease.into_file()), create)?;
+        let root = File::open(directory)?;
+        let provider = Self::initialize(connection, Some(lease.into_file()), Some(root), create)?;
+        provider.verify_history_directory(provider.session.0.directory.as_ref().unwrap())?;
         if create {
             super::lease::sync_creation(directory)?;
         }
@@ -119,7 +124,12 @@ impl Provider {
         Err(Error::UnsupportedPlatform)
     }
 
-    fn initialize(mut connection: Connection, lease: Option<File>, create: bool) -> Result<Self> {
+    fn initialize(
+        mut connection: Connection,
+        lease: Option<File>,
+        directory: Option<File>,
+        create: bool,
+    ) -> Result<Self> {
         // Validate an existing store before applying mutable pragmas/migrations.
         if !create {
             let version: i64 = connection
@@ -159,6 +169,7 @@ impl Provider {
             connection,
             poisoned: Cell::new(false),
             _lease: lease,
+            directory,
         }));
         let storage = SqliteStorageProvider::new(session.clone());
         Ok(Self {
@@ -172,6 +183,47 @@ impl Provider {
             return Err(Error::Storage(
                 "uncertain transaction; reopen and verify state",
             ));
+        }
+        Ok(())
+    }
+    /// Match the retained key anchor to the actual private database lease and
+    /// original opened room directory, not a newly resolved pathname.
+    #[cfg(unix)]
+    pub(crate) fn verify_history_directory(&self, directory: &File) -> Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        self.healthy()?;
+        let root = self
+            .session
+            .0
+            .directory
+            .as_ref()
+            .ok_or(Error::Storage("history requires a file-backed room"))?
+            .metadata()?;
+        let candidate = directory.metadata()?;
+        if root.dev() != candidate.dev() || root.ino() != candidate.ino() {
+            return Err(Error::Storage(
+                "history key directory differs from opened room",
+            ));
+        }
+        let file = rustix::fs::openat(
+            directory,
+            "private.sqlite3",
+            rustix::fs::OFlags::RDONLY
+                | rustix::fs::OFlags::NOFOLLOW
+                | rustix::fs::OFlags::NONBLOCK
+                | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )?;
+        let named = File::from(file).metadata()?;
+        let leased = self
+            .session
+            .0
+            ._lease
+            .as_ref()
+            .ok_or(Error::Storage("missing private lease"))?
+            .metadata()?;
+        if !named.is_file() || named.dev() != leased.dev() || named.ino() != leased.ino() {
+            return Err(Error::Storage("history database anchor changed"));
         }
         Ok(())
     }

@@ -18,6 +18,14 @@ impl HistoryKey {
 
 const NAME: &str = "history.agekey";
 const LIMIT: usize = 512;
+// Counts every directory entry, including dot entries and unrelated room files.
+// Exhaustion is ambiguous state, never permission to generate another identity.
+#[cfg(any(target_os = "linux", target_vendor = "apple"))]
+const INITIALIZE_SCAN_ENTRIES: usize = 64;
+#[cfg(any(target_os = "linux", target_vendor = "apple"))]
+fn recovery_required() -> Error {
+    Error::Destination("history key initialization is ambiguous; explicit recovery required")
+}
 fn invalid() -> Error {
     Error::Destination("history key or directory is missing, unsafe or mismatched")
 }
@@ -149,20 +157,95 @@ impl HistoryKeyAnchor {
         }
     }
 
+    // The Provider's exclusive lease serializes Group writers. Raw helper callers
+    // also need an inode-scoped gate spanning scan, generation and publication.
+    // openat(".") creates an INDEPENDENT open file description: a try_clone would
+    // share flock ownership and let concurrent calls on this same anchor race.
+    // Nonblocking acquisition bounds waiting; closing releases only this lease.
+    #[cfg(any(target_os = "linux", target_vendor = "apple"))]
+    fn initialization_lease(&self) -> Result<File> {
+        self.verify()?;
+        let lease = File::from(fs::openat(self.directory(), ".", flags(), Mode::empty())?);
+        same(self.directory(), &lease)?;
+        private(&lease, true)?;
+        fs::flock(&lease, fs::FlockOperation::NonBlockingLockExclusive).map_err(|_| {
+            Error::Destination(
+                "history key initialization is busy; retry after the active operation",
+            )
+        })?;
+        self.verify()?;
+        Ok(lease)
+    }
+
+    #[cfg(any(target_os = "linux", target_vendor = "apple"))]
+    fn refuse_pending(&self) -> Result<()> {
+        let mut entries = fs::Dir::read_from(self.directory())?;
+        for _ in 0..INITIALIZE_SCAN_ENTRIES {
+            let Some(entry) = entries.next() else {
+                return Ok(());
+            };
+            let entry = entry?;
+            let name = entry.file_name().to_bytes();
+            if !name.starts_with(b".history-key-") && !name.ends_with(b".pending") {
+                continue;
+            }
+            // Never open or read an artifact, even a symlink/FIFO. Validate the
+            // canonical name and no-follow metadata, but preserve unsafe and
+            // incomplete artifacts too: none authorize regeneration or adoption.
+            name.strip_prefix(b".history-key-")
+                .and_then(|name| name.strip_suffix(b".pending"))
+                .filter(|nonce| {
+                    nonce.len() == 32
+                        && nonce
+                            .iter()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b))
+                })
+                .ok_or_else(recovery_required)?;
+            let stat = fs::statat(
+                self.directory(),
+                entry.file_name(),
+                fs::AtFlags::SYMLINK_NOFOLLOW,
+            )
+            .map_err(|_| recovery_required())?;
+            if fs::FileType::from_raw_mode(stat.st_mode) != fs::FileType::RegularFile
+                || stat.st_uid != rustix::process::geteuid().as_raw()
+                || stat.st_nlink != 1
+                || stat.st_mode & 0o7777 != 0o600
+                || stat.st_size < 0
+                || stat.st_size as u64 > LIMIT as u64
+            {
+                return Err(recovery_required());
+            }
+            return Err(recovery_required());
+        }
+        Err(recovery_required())
+    }
+
     #[cfg(any(target_os = "linux", target_vendor = "apple"))]
     fn initialize_with_sync(
         &self,
+        sync: impl FnMut(&File) -> std::io::Result<()>,
+    ) -> Result<HistoryKey> {
+        self.initialize_with_io(|file, bytes| file.write_all(bytes), sync)
+    }
+
+    #[cfg(any(target_os = "linux", target_vendor = "apple"))]
+    fn initialize_with_io(
+        &self,
+        write: impl FnOnce(&mut File, &[u8]) -> std::io::Result<()>,
         mut sync: impl FnMut(&File) -> std::io::Result<()>,
     ) -> Result<HistoryKey> {
         use age::secrecy::ExposeSecret;
         use ring::rand::{SecureRandom, SystemRandom};
         use zeroize::Zeroizing;
-        self.verify()?;
+        let _lease = self.initialization_lease()?;
         // Check existence without reading it, including dangling symlinks.
         match fs::statat(self.directory(), NAME, fs::AtFlags::SYMLINK_NOFOLLOW) {
             Err(rustix::io::Errno::NOENT) => (),
             _ => return Err(invalid()),
         }
+        self.refuse_pending()?;
+        self.verify()?;
         let identity = Identity::generate();
         let secret = identity.to_string(); // AGE SecretString owns its zeroization.
         let mut bytes = Zeroizing::new(Vec::with_capacity(LIMIT));
@@ -182,7 +265,7 @@ impl HistoryKeyAnchor {
             Mode::RUSR | Mode::WUSR,
         )?);
         private(&file, false)?;
-        file.write_all(&bytes)?;
+        write(&mut file, &bytes)?;
         sync(&file)?;
         self.verify()?;
         private(&file, false)?;

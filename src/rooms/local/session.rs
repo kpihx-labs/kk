@@ -6,7 +6,7 @@ use crate::{
     pairing::{self, Invite, PairServer, Proposal, Scope},
     rooms::{
         Rights, enrollment,
-        runtime::{Actor, Event, Handle},
+        runtime::{Actor, Event, Handle, history},
     },
 };
 use serde_json::{Value, json};
@@ -51,6 +51,24 @@ pub struct InvitationOptions {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "operation", deny_unknown_fields)]
 pub enum Command {
+    HistoryEnable {
+        policy: history::Policy,
+    },
+    HistoryOpen {},
+    HistoryRecover {
+        expected_recipient: String,
+        policy: history::Policy,
+    },
+    HistoryDisable {},
+    HistoryClear {},
+    HistoryStatus {},
+    HistoryRefresh {},
+    HistorySearch {
+        text: String,
+        after_id: u64,
+        limit: usize,
+        response_bytes: usize,
+    },
     MediaPublish {
         kind: crate::media::Kind,
         peers: Vec<raft::PeerId>,
@@ -114,7 +132,7 @@ impl Command {
 }
 impl Drop for Command {
     fn drop(&mut self) {
-        if let Self::Text { text, .. } = self {
+        if let Self::Text { text, .. } | Self::HistorySearch { text, .. } = self {
             text.zeroize();
         }
     }
@@ -261,6 +279,50 @@ async fn dispatch(
     identity: &Identity,
 ) -> Result<Value> {
     match command {
+        Command::HistoryEnable { policy } => {
+            Ok(json!(handle.history_enable_file(*policy, DEADLINE).await?))
+        }
+        Command::HistoryOpen {} => Ok(json!(handle.history_open_file(DEADLINE).await?)),
+        Command::HistoryRecover {
+            expected_recipient,
+            policy,
+        } => {
+            if expected_recipient.len() > 128 {
+                return Err(Error::Configuration("invalid public history recipient"));
+            }
+            let expected = expected_recipient
+                .parse()
+                .map_err(|_| Error::Configuration("invalid public history recipient"))?;
+            Ok(json!(
+                handle
+                    .history_recover_file(expected, *policy, DEADLINE)
+                    .await?
+            ))
+        }
+        Command::HistoryDisable {} => Ok(json!(handle.history_disable(DEADLINE).await?)),
+        Command::HistoryClear {} => Ok(json!(handle.history_clear(DEADLINE).await?)),
+        Command::HistoryStatus {} => Ok(json!(handle.history_status(DEADLINE).await?)),
+        Command::HistoryRefresh {} => Ok(json!(handle.history_refresh(DEADLINE).await?)),
+        Command::HistorySearch {
+            text,
+            after_id,
+            limit,
+            response_bytes,
+        } => {
+            let mut search = history::Search {
+                text: text.clone(),
+                after_id: *after_id,
+                limit: *limit,
+                response_bytes: *response_bytes,
+            };
+            search.validate()?;
+            // The runtime bounds its page; reserve space for the IPC reply/event
+            // envelope as well. Escaped bodies are counted by the runtime.
+            search.response_bytes = search
+                .response_bytes
+                .min(config::MAX_RECORD_PLAINTEXT_BYTES - 1024);
+            Ok(json!(handle.history_search(search, DEADLINE).await?))
+        }
         Command::Status => {
             let status = handle.status(DEADLINE).await?;
             // Pass one complete membership snapshot, never a filtered recipient
@@ -377,8 +439,10 @@ async fn dispatch(
         }
         Command::Text { text, sensitive } => {
             let publication = handle
-                .publication(text.clone(), *sensitive, Duration::from_secs(60))
+                .publication_referenced(text.clone(), *sensitive, Duration::from_secs(60))
                 .await?;
+            let reference = publication.reference;
+            let publication = publication.publication;
             let mut acknowledged = Vec::new();
             let mut failed = Vec::new();
             let deliveries = publication
@@ -403,7 +467,7 @@ async fn dispatch(
                 }
             }
             Ok(
-                json!({"bytes": text.len(), "acknowledged": acknowledged, "failed": failed,
+                json!({"bytes": text.len(), "acknowledged": acknowledged, "failed": failed, "reference": reference,
                 "all_acknowledged": failed.is_empty(), "ack_meaning": "durable-replay-processing-and-event-queue-not-human-reading"}),
             )
         }
@@ -446,6 +510,7 @@ fn is_control(command: &Command) -> bool {
     matches!(
         command,
         Command::Status
+            | Command::HistoryStatus {}
             | Command::Stop
             | Command::FileUnshare { .. }
             | Command::FileReception { inbox: None, .. }
@@ -456,11 +521,23 @@ fn operation_lane(
     command: &Command,
     work: &Arc<tokio::sync::Semaphore>,
     invitations: &Arc<tokio::sync::Semaphore>,
+    history: &Arc<tokio::sync::Semaphore>,
 ) -> Result<Option<tokio::sync::OwnedSemaphorePermit>> {
     if is_control(command) {
         return Ok(None);
     }
     match command {
+        Command::HistoryEnable { .. }
+        | Command::HistoryOpen {}
+        | Command::HistoryRecover { .. }
+        | Command::HistoryDisable {}
+        | Command::HistoryClear {}
+        | Command::HistoryRefresh {}
+        | Command::HistorySearch { .. } => history
+            .clone()
+            .try_acquire_owned()
+            .map(Some)
+            .map_err(|_| Error::Node("room history lane is full")),
         Command::Invite(_) => invitations
             .clone()
             .try_acquire_owned()
@@ -477,6 +554,7 @@ fn operation_lane(
 struct Incoming {
     stream: UnixStream,
     control_only: bool,
+    history: Arc<tokio::sync::Semaphore>,
 }
 
 async fn connection(
@@ -491,6 +569,7 @@ async fn connection(
     let Incoming {
         mut stream,
         control_only,
+        history,
     } = incoming;
     let handshake = if control_only {
         CONTROL_HANDSHAKE
@@ -514,7 +593,7 @@ async fn connection(
     }
     let stream = Arc::new(Mutex::new(stream));
     let operation = async {
-        let _lane = operation_lane(&command, &work, &invitations)?;
+        let _lane = operation_lane(&command, &work, &invitations, &history)?;
         dispatch(&command, &stream, &handle, &control, &identity).await
     };
     let deadline = command.deadline();
@@ -554,7 +633,7 @@ async fn run(
     identity: Arc<Identity>,
     profile: &Path,
     directory: &Path,
-    room: Room,
+    mut room: Room,
     control: Arc<ControlNode>,
     listener: ipc::Listener,
     options: Options,
@@ -562,6 +641,9 @@ async fn run(
     let control_directory = directory.join("ctl");
     crate::profile::private_directory(&control_directory, true)?;
     let control_listener = ipc::Listener::bind(&control_directory).await?;
+    let private = directory.join("private");
+    profile::private_directory(&private, false)?;
+    room.configure_history_directory(std::path::absolute(private)?)?;
     let (handle, actor, mut events) = Actor::new(room);
     let task = tokio::task::spawn_local(actor.run());
     let registered = control.register_room(handle.clone()).await;
@@ -605,11 +687,23 @@ async fn run(
     let mut controls = JoinSet::new();
     let work = Arc::new(tokio::sync::Semaphore::new(4));
     let invitations = Arc::new(tokio::sync::Semaphore::new(1));
+    let history = Arc::new(tokio::sync::Semaphore::new(2));
     let (stop, mut stopped) = watch::channel(false);
     let mut renderer_joined = false;
     let result = async {
         registered?;
         configured?;
+        // Opening is strictly existing-key-only. History failure must not stop
+        // a default-off V1 room; refresh publishes public locked/off metadata.
+        match handle.history_refresh(DEADLINE).await {
+            Ok(history::Summary::Enrolled { .. }) => {
+                if let Err(error) = handle.history_open_file(DEADLINE).await {
+                    eprintln!("Room history remains locked: {error}");
+                }
+            }
+            Ok(_) => (),
+            Err(error) => eprintln!("Room history status unavailable: {error}"),
+        }
         if let Some(ready) = ready { let _ = ready.send(()); }
         crate::output::line(format!("ROOM SERVING {} {}", directory.file_name().ok_or(Error::Protocol)?.to_string_lossy(), control.local_addr()?)).await?;
         loop {
@@ -640,10 +734,10 @@ async fn run(
                     }
                 },
                 accepted = control_listener.accept(), if controls.len() < 4 => {
-                    controls.spawn_local(connection(Incoming { stream: accepted?, control_only: true }, handle.clone(), control.clone(), identity.clone(), stop.clone(), work.clone(), invitations.clone()));
+                    controls.spawn_local(connection(Incoming { stream: accepted?, control_only: true, history: history.clone() }, handle.clone(), control.clone(), identity.clone(), stop.clone(), work.clone(), invitations.clone()));
                 },
                 accepted = listener.accept(), if connections.len() < 32 => {
-                    connections.spawn_local(connection(Incoming { stream: accepted?, control_only: false }, handle.clone(), control.clone(), identity.clone(), stop.clone(), work.clone(), invitations.clone()));
+                    connections.spawn_local(connection(Incoming { stream: accepted?, control_only: false, history: history.clone() }, handle.clone(), control.clone(), identity.clone(), stop.clone(), work.clone(), invitations.clone()));
                 },
             }
         }
@@ -785,6 +879,31 @@ mod lane_tests {
     use super::*;
 
     #[test]
+    fn history_work_has_its_own_bounded_lane_not_reserved_control() {
+        let work = Arc::new(tokio::sync::Semaphore::new(4));
+        let invitations = Arc::new(tokio::sync::Semaphore::new(1));
+        let history = Arc::new(tokio::sync::Semaphore::new(2));
+        let _work = work.clone().try_acquire_many_owned(4).unwrap();
+        let query = Command::HistorySearch {
+            text: String::new(),
+            after_id: 0,
+            limit: 1,
+            response_bytes: 4096,
+        };
+        assert!(!is_control(&query));
+        assert!(!is_control(&Command::HistoryRefresh {}));
+        let _first = operation_lane(&query, &work, &invitations, &history).unwrap();
+        let _second = operation_lane(&query, &work, &invitations, &history).unwrap();
+        assert!(operation_lane(&query, &work, &invitations, &history).is_err());
+        assert!(is_control(&Command::HistoryStatus {}));
+        assert!(
+            operation_lane(&Command::HistoryStatus {}, &work, &invitations, &history)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
     fn invitation_deadlines_cover_wait_and_bounded_admission_only() {
         let invitation = Command::Invite(InvitationOptions {
             listen: "127.0.0.1:12345".parse().unwrap(),
@@ -814,6 +933,7 @@ mod lane_tests {
     fn withdrawal_bypasses_saturated_work_and_invitation_lanes() {
         let work = Arc::new(tokio::sync::Semaphore::new(4));
         let invitations = Arc::new(tokio::sync::Semaphore::new(1));
+        let history = Arc::new(tokio::sync::Semaphore::new(2));
         let _busy = work.clone().try_acquire_many_owned(4).unwrap();
         let _invitation = invitations.clone().try_acquire_owned().unwrap();
         let mut command = Command::FileReception {
@@ -822,13 +942,13 @@ mod lane_tests {
             budget: 1,
         };
         assert!(
-            operation_lane(&command, &work, &invitations)
+            operation_lane(&command, &work, &invitations, &history)
                 .unwrap()
                 .is_none()
         );
         if let Command::FileReception { inbox, .. } = &mut command {
             *inbox = Some(PathBuf::from("inbox"));
         }
-        assert!(operation_lane(&command, &work, &invitations).is_err());
+        assert!(operation_lane(&command, &work, &invitations, &history).is_err());
     }
 }
