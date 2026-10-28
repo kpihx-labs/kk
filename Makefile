@@ -2,14 +2,16 @@ SHELL := /bin/sh
 .DEFAULT_GOAL := help
 GITHUB_SSH_COMMAND ?= ssh
 GITLAB_SSH_COMMAND ?= ssh
+RUFF ?= ruff
 
-.PHONY: help check docs-check ui-check fixture-check packaging-check workflow-check sdk-check hax-check bundle verify-bundle install tag-release publish-tag build fmt run push lab-check lab-test lab-crypto-test lab-control-test lab-room-test lab-enrollment-test lab-room-cli-test lab-native-media-test lab-stop
+.PHONY: help check docs-check ui-check fixture-check packaging-check python-check workflow-check sdk-check hax-check bundle verify-bundle install tag-release publish-tag build fmt run push lab-check lab-test lab-crypto-test lab-control-test lab-room-test lab-enrollment-test lab-room-cli-test lab-native-media-test lab-stop
 
 help: ## Show available tasks
 	@printf '%s\n' \
 	  'make check           Format, lint, tests and documentation' \
 	  'make docs-check      Current guide links, tables, wire tokens and examples' \
 	  'make fixture-check   Offline layout and opaque-input safety regressions' \
+	  'make python-check    Pinned CI Python lint; may require tool cache/network' \
 	  'make workflow-check  Pinned workflow syntax/lint gate (Go tool required)' \
 	  'make sdk-check       Upstream expansion vectors and independent OPAQUE interoperability' \
 	  'make hax-check       Explicit upstream-nightly macro check, not a formal proof' \
@@ -33,6 +35,7 @@ help: ## Show available tasks
 	  'make push            Push this branch to both SSH remotes'
 
 check: ## Validate offline with local loopback network tests
+	$(MAKE) python-check
 	cargo fmt --package kk -- --check
 	cargo clippy --offline --locked --all-targets -- -D warnings
 	cargo test --offline --locked --all-targets
@@ -49,6 +52,9 @@ docs-check: ## Pure-Python current documentation consistency checks; no network 
 packaging-check: ## Release integrity, archive safety and clean-source policy tests
 	uv run --no-project python -m unittest discover -s tests -p 'test_release.py'
 	uv run --no-project python -m unittest discover -s tests -p 'test_installers.py'
+
+python-check: ## Python tool/fixture lint; CI provides the pinned checker through RUFF
+	$(RUFF) check --target-version py311 scripts tests/*.py
 
 fixture-check: ## Layout and opaque-input safety guards; no browser execution
 	uv run --no-project python -m unittest discover -s tests -p 'test_*fixture.py'

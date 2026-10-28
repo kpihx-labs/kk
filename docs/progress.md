@@ -84,6 +84,8 @@ artifact qualification. Current ownership and remaining gates: [workstreams](wor
 | UI lifecycle correction | A queued old dialog close erased replacement controls in real Edge. Modal revisions now fence stale close/results and retire private controls/handlers; 48 JS and 17 fixture guard tests pass |
 | Fresh Edge pairing/history | Unchanged long-profile paths create and pair after matching SAS. Both show two members/epoch one. Equal Reboot QA bodies yield two distinct references and two stored/rendered matches; sensitive text is hidden and excluded. See after-reboot evidence for remaining gates |
 | Profile fixture timing | One complete run exceeded its unchanged 40-second metadata fixture bound. Phase diagnostics were added; focused and later complete runs passed. No root cause or timing guarantee is claimed from reruns |
+| Checkpoint 9e16252 hosted failures | GitLab Rust and browser jobs pass; release-integrity and both GitHub Linux packaging-lint steps fail on import order and late-bound fault-injection closures. All three native all-target builds pass, but platform-specific dead-code/import lint blocks subsequent execution. No skipped native step is counted as a pass |
+| CI correction verification | Imports and loop captures are corrected; Linux-only/test-only traits and the Unix-only database file handle are cfg-scoped, not suppressed. Python lint is now part of the local product gate, with CI selecting its pinned provider through RUFF. Local Python lint, release/fixture tests, workflow lint and all-target Clippy pass; hosted replay remains required |
 
 The first intermediate check caught test-module placement; it was fixed, not
 suppressed. A real-service test run emitted a bounded-close-grace diagnostic;

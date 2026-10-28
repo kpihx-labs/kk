@@ -1,11 +1,12 @@
 //! Same-user local commands only. No HTTP, shell execution or network trust bootstrap.
 
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::FileTypeExt;
+#[cfg(any(target_os = "linux", test))]
+use std::os::unix::fs::PermissionsExt;
 use std::{
-    os::unix::{
-        ffi::OsStrExt,
-        fs::{FileTypeExt, MetadataExt, PermissionsExt},
-    },
+    os::unix::{ffi::OsStrExt, fs::MetadataExt},
     path::{Path, PathBuf},
     time::Duration,
 };

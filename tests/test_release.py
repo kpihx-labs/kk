@@ -447,7 +447,8 @@ class ReleaseTests(unittest.TestCase):
                 original_link = release.os.link
                 attempted = []
 
-                def fail_publication(source, path):
+                def fail_publication(source, path, *, attempted=attempted,
+                                     failure_index=failure_index, original_link=original_link):
                     if path.parent == destination:
                         attempted.append(path.name)
                         if len(attempted) == failure_index + 1:
@@ -492,12 +493,12 @@ class ReleaseTests(unittest.TestCase):
             with self.subTest(failure=failure), self.bundle_fixture() as (target, destination, _):
                 original_open, original_link = Path.open, release.os.link
 
-                def fail_notice_write(path, *args, **kwargs):
+                def fail_notice_write(path, *args, original_open=original_open, **kwargs):
                     if path.name.endswith("-bootstrap-notices.json") and args == ("xb",):
                         raise OSError("injected private notice write failure")
                     return original_open(path, *args, **kwargs)
 
-                def fail_notice_link(source, path):
+                def fail_notice_link(source, path, *, original_link=original_link):
                     if path.name.endswith("-bootstrap-notices.json"):
                         raise OSError("injected private notice link failure")
                     original_link(source, path)

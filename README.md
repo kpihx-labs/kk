@@ -55,6 +55,7 @@ Prefer the terminal? [Create and join a room](docs/cli.md#rooms), or
 | Which commands should I run? | [CLI](docs/cli.md), [UI](docs/ui.md) |
 | Who can join, vote or receive data? | [Rooms](docs/rooms.md), [contract](CONTRACT.md) |
 | What happens to files or copies? | [Files](docs/files.md), [replicas](docs/replicas.md) |
+| Optional encrypted history in the development source? | [History UI](docs/history-ui.md), [history CLI](docs/history-cli.md) |
 | Which media/platform paths are verified? | [Media](docs/media.md), [platforms](docs/platforms.md) |
 | How is the backend organized? | [Owners](docs/backend-map.md), [room runtime](docs/room-runtime.md) |
 | What has actually passed? | [Verification record](docs/progress.md), [lab](docs/lab.md) |
@@ -63,9 +64,13 @@ Prefer the terminal? [Create and join a room](docs/cli.md#rooms), or
 
 ## Develop
 
+Validation needs the pinned Rust toolchain, Node, UV/Python and Ruff. CI supplies its
+pinned Ruff through `RUFF`; the installed application needs none of these tools.
+
 ```sh
 make help           # Actual targets and their purpose
 make check          # Product format, lint, tests, docs and packaging checks
+make python-check   # Python release/fixture lint, also included in make check
 make docs-check     # Links, tables, wire names and obsolete command examples
 make sdk-check      # Upstream vectors and independent OPAQUE interoperability
 make lab-check      # Lab tooling checks; does not change VMs

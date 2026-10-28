@@ -3,12 +3,12 @@
 #[cfg(unix)]
 use crate::profile;
 use crate::{Error, Result};
-use std::{
-    fs::File,
-    path::{Path, PathBuf},
-};
+#[cfg(unix)]
+use std::fs::File;
+use std::path::{Path, PathBuf};
 
 pub(super) struct Lease {
+    #[cfg(unix)]
     file: File,
     path: PathBuf,
     #[cfg(test)]

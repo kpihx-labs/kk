@@ -91,6 +91,7 @@ jobs:
     timeout-minutes: 35
     env:
       TARGET: ${{ matrix.target }}
+      RUFF: uvx --from ruff==0.16.9 ruff
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
         with:
@@ -108,8 +109,6 @@ jobs:
         run: cargo fetch --locked
       - name: Full local checks, not a VM or physical-device claim
         run: make check
-      - name: Packaging tool lint
-        run: uvx --from ruff==0.16.9 ruff check --target-version py311 scripts tests/test_release.py tests/test_docs.py
       - name: Clean committed archives and offline vendored source
         if: github.event_name != 'pull_request'
         run: make bundle TARGET="$TARGET"

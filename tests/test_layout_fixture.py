@@ -2,12 +2,11 @@
 
 import importlib.util
 import json
-from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "lab/scripts/15-ui-layout-fixture.py"
@@ -152,7 +151,7 @@ function context(marked=false,withModals=false) {
             link = Path(directory) / "link"
             link.symlink_to(directory, target_is_directory=True)
             result = subprocess.run(["uv", "run", "--script", str(SCRIPT), "--target", "owned-fake-target",
-                                     "--payload-directory", str(link)], text=True, capture_output=True)
+                                     "--payload-directory", str(link)], text=True, capture_output=True, check=False)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("non-symlink", result.stderr)
 
