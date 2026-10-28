@@ -52,6 +52,14 @@ jobs:
         with:
           python-version: '3.13'
           enable-cache: false # These stdlib-only fixtures have no Python dependency lock.
+      - name: Use a physical macOS temporary root for protected-storage fixtures
+        if: runner.os == 'macOS'
+        run: |
+          $physicalTmp = uv run --no-project python -c "import pathlib, tempfile; print(pathlib.Path(tempfile.gettempdir()).resolve(strict=True))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ([string]::IsNullOrWhiteSpace($physicalTmp)) { throw 'Missing physical temporary root' }
+          # Fixture paths must satisfy NOFOLLOW; production path checks remain unchanged.
+          "TMPDIR=$physicalTmp" | Add-Content -Path $env:GITHUB_ENV
       - name: Build native binary and compile all test/example targets (not execution)
         run: cargo build --locked --offline --target $env:TARGET --all-targets
       - name: Lint native targets without warning suppression
@@ -66,6 +74,9 @@ jobs:
       - name: Execute macOS private shared IPC ownership and recovery regressions
         if: runner.os == 'macOS'
         run: cargo test --locked --offline --target $env:TARGET --lib node::ipc::path_tests -- --nocapture
+      - name: Execute macOS SQLite ancestor refusal and committed-state preservation
+        if: runner.os == 'macOS'
+        run: cargo test --locked --offline --target $env:TARGET --lib rooms::store::tests::symlinked_database_ancestors_are_refused_without_changing_committed_state -- --exact --nocapture
       - name: Execute macOS actual long-path contact, room and HTTP workflows
         if: runner.os == 'macOS'
         run: cargo test --locked --offline --target $env:TARGET --test ipc_long_paths -- --nocapture

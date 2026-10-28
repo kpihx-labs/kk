@@ -149,6 +149,38 @@ fn unsafe_files_links_and_corrupt_state_are_refused_without_repair() {
 }
 
 #[test]
+fn symlinked_database_ancestors_are_refused_without_changing_committed_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(directory.path()).unwrap();
+    let parent = root.join("physical");
+    profile::private_directory(&parent, true).unwrap();
+    let path = parent.join("room");
+    let provider = Provider::create(&path).unwrap();
+    let transaction = provider.transaction().unwrap();
+    provider.set_metadata("preserved", &7u64).unwrap();
+    transaction.commit().unwrap();
+    drop(provider);
+    let database = path.join("private.sqlite3");
+    let before = fs::read(&database).unwrap();
+    let alias = root.join("alias");
+    std::os::unix::fs::symlink(&parent, &alias).unwrap();
+    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+        | OpenFlags::SQLITE_OPEN_NOFOLLOW
+        | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
+    assert!(Connection::open_with_flags(alias.join("room/private.sqlite3"), flags).is_err());
+    assert!(Provider::open(&alias.join("room")).is_err());
+    assert!(
+        fs::symlink_metadata(&alias)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(fs::read(&database).unwrap(), before);
+    let reopened = Provider::open(&path).unwrap();
+    assert_eq!(reopened.metadata::<u64>("preserved").unwrap(), Some(7));
+}
+
+#[test]
 fn failed_sqlite_commit_quarantines_the_handle_and_never_reports_success() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("room");

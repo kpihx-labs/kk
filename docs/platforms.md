@@ -21,7 +21,7 @@ Unsupported protection models fail closed instead of weakening storage or TLS.
 It uses the existing checkout action pin and reads the Rust channel from
 [`rust-toolchain.toml`](../rust-toolchain.toml), rather than maintaining another
 version. The [hosted runner labels](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
-identify native hosts, not Linux cross-compilation.
+identify native hosts, not Linux cross-compilation. macOS fixtures use a resolved physical temporary root; production `NOFOLLOW` and ancestor checks remain unchanged.
 
 **Execution status is source-bound.** Earlier Windows foundation passes do not
 qualify the changed tree; earlier macOS runs stopped at compile/stdio blockers.
@@ -36,7 +36,7 @@ blockers, not permission to skip a step or claim product support.
 | Explicit binary smoke | Actual native executable runs `--version`, `--help`, and refuses an unknown argument with exit 2 | Initialized profiles, networking, UI or media |
 | Offline locked foundation tests | Public digest parsing; Unix protected identity and inspection, or exact non-Unix refusals; Linux/macOS publication or unsupported-target refusal | Full integration/unit suites, cross-device interoperability or physical devices |
 | macOS-only selected integrations | File/envelope transfers and nonclobber; `ipc_long_paths` real contact/room/HTTP paths; `history_keys` protected binding/recovery regressions | Cross-device exchange, crypto redesign or complete product qualification |
-| macOS-only selected library tests | `files::`, shared IPC ownership/recovery, room reservations, publication consent/revocation/cancellation and grant-lock regressions | Unselected library suites, complete foreground lifecycle, native UI or capture qualification |
+| macOS-only selected library tests | `files::`, shared IPC ownership/recovery, room reservations, publication consent/revocation/cancellation and grant-lock regressions; explicit SQLite ancestor-symlink refusal with committed state preserved | Unselected library suites, complete foreground lifecycle, native UI or capture qualification |
 
 There are no uploads, installers, release calls, signing credentials or write
 permissions in this lane. It does not change the existing release job's gates.

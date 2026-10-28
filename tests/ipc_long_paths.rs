@@ -15,6 +15,10 @@ use std::{
 fn long_profile(root: &Path) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    // Persisted database and history-key paths deliberately reject symlinked
+    // ancestors. Resolve the platform temp-root alias before building this
+    // positive fixture; keep the production NOFOLLOW policy unchanged.
+    let root = std::fs::canonicalize(root).unwrap();
     let path = root
         .join("absolute profile with spaces")
         .join("étude-房间".repeat(12))
