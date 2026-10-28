@@ -111,3 +111,7 @@ picker, hardware capture, network traversal or cross-platform qualification.
 The subsequent file-consent, byte-integrity and simultaneous generated-screen
 results are preserved in [the focused data/media report](reboot-data-media-qualification.md),
 including source-stop isolation, cleanup and the limits of those observations.
+
+The [history and cold-restart report](reboot-history-qualification.md) records
+disable/re-enable without backfill, profile-local clearing, preserved identities
+and encrypted history, and new bidirectional traffic after both processes restart.

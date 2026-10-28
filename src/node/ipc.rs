@@ -1080,9 +1080,24 @@ mod path_tests {
         std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).unwrap();
         drop(listener);
         assert!(socket.exists());
-        assert!(Listener::bind(&profile).await.is_err());
+        assert!(matches!(
+            Listener::bind(&profile).await,
+            Err(Error::Node("active node socket without lock"))
+        ));
+        assert!(
+            socket.exists(),
+            "the refused bind must preserve the live socket"
+        );
         drop(replacement);
-        assert!(connect(&profile).await.is_err()); // No client-side stale cleanup.
+        assert!(
+            socket.exists(),
+            "dropping the raw listener must leave its path"
+        );
+        match connect(&profile).await {
+            Err(_) => {}
+            Ok(None) => panic!("stale socket unexpectedly absent: {}", socket.exists()),
+            Ok(Some(_)) => panic!("closed replacement listener still accepted a connection"),
+        } // No client-side stale cleanup.
         let recovered = Listener::bind(&profile).await.unwrap();
         drop(recovered);
         assert!(!socket.exists());
@@ -1123,7 +1138,12 @@ mod path_tests {
         let profile = root.path().join("short");
         crate::profile::private_directory(&profile, true).unwrap();
         let listener = Listener::bind(&profile).await.unwrap();
-        assert_eq!(listener.path, profile.join("node.sock"));
+        // Darwin's temporary directory can use the /var -> /private/var alias.
+        // Compare the physical endpoint while retaining the legacy input below.
+        assert_eq!(
+            listener.path,
+            std::fs::canonicalize(&profile).unwrap().join("node.sock")
+        );
         assert!(connect(&profile).await.unwrap().is_some());
         // A legacy client using the ordinary filesystem spelling still works
         // when Linux's new server binds through its pinned directory FD.
