@@ -38,6 +38,7 @@ retain their sessions/results but have no active file ownership. Main integrates
 | `ses_e7e690e0bffeflfrhkX38U0cGh` (Sol fast, executor, returned) | None; stdio follow-up released | Prompt/newline avoid echo guard; owned PTY/full-stderr cancellation passes. Production Darwin parent-death fixture added; exclusive host wait/reap precondition documented. Main verified all eight stdio integration entries |
 | `ses_e7e659fcaffeOTCafBKyUVrhre` (Terra fast, checker) | Read-only installer review | Four concrete early findings assigned to installer owner; final snapshot requires re-review |
 | `ses_e7e603c4affe9LzWPMLszi4Fhb` (Sol fast, executor, returned) | None; layout ownership released | CSS corrected; main replayed all 34 unchanged static rendered cases successfully. Native/interactive mobile remains distinct; latest report and CSS digest in ui-qualification.md |
+| `ses_e7e09a202ffeJa5oXNwoHN050g` (Sol fast, executor) | input/output/stdio worker and stdio tests | Diagnose/fix actual Apple runtime failures at 220bd39 native jobs 122742661892/122742661970; no timeout increases or skips; main owns workflow/deployment |
 
 ## Integration Boundaries
 
@@ -51,11 +52,13 @@ retain their sessions/results but have no active file ownership. Main integrates
 - Settings owner also supplies monotonic revision/CAS for stale consent ABA;
   main owns the UI/API revision adapter and conflict/retry experience. Dirty-field
   omission alone fixes the observed stale opt-out overwrite, not every consent race.
-- Source checkpoint: `ac0a6ef`, `17249f0`, `8d3f384`, pushed to both remotes.
+- Source checkpoints through `3a47c02` are equal on HEAD/github/main/gitlab/main.
   Version is `0.9.0-dev.1`, not a release; installed signed `0.8.2` stays unchanged.
-- GitHub runs for `8d3f384`: product `40569916512`, native `40569916726`.
-  GitLab pipeline `2996116181`: browser/release-integrity pass, Rust running at last
-  inspection. Use `glab api --hostname gitlab.com` because SSH aliases defeat CI
+- GitHub `220bd39`: product `40666630108` passes; native `40666630112` passes Windows
+  foundation but fails Apple stdio after successful lint/smoke/file tests. New
+  `3a47c02` runs: product `40668832992`, native `40668832732`, pending results.
+  GitLab 220bd39 pipeline `2998445597` failed inherited-output permissions; 3a47c02
+  creates the test pipe as its unprivileged user. Use `glab api --hostname gitlab.com` because SSH aliases defeat CI
   command host inference. Read every required job, not only pipeline summary.
 - Initial native failures: Apple lacks `pipe_with`/`PipeFlags` and `NOSIGNAL`;
   Windows exposes ungated `cli/media.rs` room code and target-specific warnings.

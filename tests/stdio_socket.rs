@@ -31,7 +31,7 @@ fn socket_stdio_preserves_flags_and_cancels_blocked_input_and_output() {
         "closed-output",
     ] {
         let (mut input, child_input) = UnixStream::pair().unwrap();
-        let (mut output, child_output) = UnixStream::pair().unwrap();
+        let (output, child_output) = UnixStream::pair().unwrap();
         #[cfg(target_vendor = "apple")]
         rustix::net::sockopt::set_socket_nosigpipe(&child_output, false).unwrap();
         let (diagnostics, child_diagnostics) = UnixStream::pair().unwrap();
@@ -67,13 +67,17 @@ fn socket_stdio_preserves_flags_and_cancels_blocked_input_and_output() {
             input.write_all(&bytes).unwrap();
             input.shutdown(Shutdown::Write).unwrap();
         }
+        let mut output = Some(output);
         let mut diagnostics = BufReader::new(diagnostics);
         if mode == "closed-output" {
             // Wait until libtest has finished its initial stdout reporting.
             let mut ready = String::new();
             diagnostics.read_line(&mut ready).unwrap();
             assert_eq!(ready.trim(), "close output now");
-            output.shutdown(Shutdown::Read).unwrap();
+            // SHUT_RD is not peer closure: Darwin's AF_UNIX send path can
+            // accept bytes after the peer stops reading. Close the endpoint
+            // to exercise an actual broken output socket on every host.
+            drop(output.take());
             input.write_all(b"x").unwrap();
         }
         if mode.starts_with("hidden-") {
@@ -82,14 +86,38 @@ fn socket_stdio_preserves_flags_and_cancels_blocked_input_and_output() {
             assert_eq!(notice.trim(), "INPUT sensitive stdin");
         }
         let mut report = String::new();
-        let reported = diagnostics.read_line(&mut report);
-        if reported.is_err() || report.trim() != "fixture finished" {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let reported = loop {
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                break Err(std::io::Error::from(std::io::ErrorKind::TimedOut));
+            };
+            diagnostics
+                .get_ref()
+                .set_read_timeout(Some(remaining))
+                .unwrap();
+            let start = report.len();
+            match diagnostics
+                .by_ref()
+                .take(16 * 1024 - start as u64)
+                .read_line(&mut report)
+            {
+                Ok(0) => break Ok(false),
+                Ok(_) if report[start..].trim() == "fixture finished" => break Ok(true),
+                Ok(_) if report.len() < 16 * 1024 => continue,
+                Ok(_) => break Err(std::io::Error::other("fixture diagnostics exceeded limit")),
+                Err(error) => break Err(error),
+            }
+        };
+        if !matches!(reported, Ok(true)) || report.trim() != "fixture finished" {
             let _ = child.0.kill();
             let status = child.0.wait().unwrap();
             panic!("socket {mode} fixture failed: {reported:?}, {report:?}, {status}");
         }
         let mut bytes = Vec::new();
-        if let Err(error) = output.read_to_end(&mut bytes) {
+        if let Some(error) = output
+            .as_mut()
+            .and_then(|output| output.read_to_end(&mut bytes).err())
+        {
             let _ = child.0.kill();
             let _ = child.0.wait();
             panic!("socket {mode} output did not close: {error}");
@@ -176,10 +204,14 @@ async fn socket_stdio_child() {
     } else if mode == "closed-output" {
         writeln!(std::io::stderr(), "close output now").unwrap();
         std::io::stdin().read_exact(&mut [0]).unwrap();
-        assert!(matches!(
-            kk::output::line("closed socket fixture".to_owned()).await,
-            Err(kk::Error::Io(error)) if error.kind() == std::io::ErrorKind::BrokenPipe
-        ));
+        let result = kk::output::line("closed socket fixture".to_owned()).await;
+        assert!(
+            matches!(
+                &result,
+                Err(kk::Error::Io(error)) if error.kind() == std::io::ErrorKind::BrokenPipe
+            ),
+            "closed socket output returned {result:?}"
+        );
     } else {
         panic!("unknown fixture mode");
     }

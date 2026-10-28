@@ -21,11 +21,11 @@ and acceptance cases live in [product workstreams](docs/workstreams.md).
 
 | Scope | Current verification boundary |
 | --- | --- |
-| Live incoming files | Publication/cancellation/shutdown and lifetime-budget regressions pass; independent static follow-up passes; two-UI file gate pending |
+| Live incoming files | Publication/cancellation/shutdown and lifetime-budget regressions pass; actual two-UI opt-in, denied retry and binary/empty transfer digests verified |
 | Profiles and useful status | Locked updates, local member labels, CLI profile management and public-only offline/live status pass combined checks |
-| Human-facing UI | Profiles/settings/themes/nicknames/editable join and independent media controls pass API/JS checks; two-pane/two-tab browser QA in progress |
-| Portable archives | ZIP added alongside tar.gz with hostile-input tests; release provenance integration and exact-artifact replay pending |
-| Meetings and native targets | Explicitly tracked in workstreams; no additional platform or media qualification claimed |
+| Human-facing UI | Live profile-name collision/routing, local aliases and Settings-conflict controls verified; 39 static layout cases pass; broader interactive qualification remains open |
+| Portable archives | TAR/ZIP transaction regressions pass; real signed 0.8.2 TAR online install, same-version reinstall/rollback verified in isolated prefix; new/raw/offline artifact gates remain open |
+| Meetings and native targets | Two simultaneous synthetic UI screen publications verified; Windows foundation passes, Apple stdio runtime correction in progress; full native product not claimed |
 
 ## Not Qualified
 
