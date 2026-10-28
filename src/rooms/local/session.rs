@@ -629,6 +629,19 @@ async fn connection(
     Ok(())
 }
 
+async fn announce_ready(
+    message: String,
+    ready: Option<tokio::sync::oneshot::Sender<()>>,
+) -> Result<()> {
+    tokio::time::timeout(config::DEFAULT_TIMEOUT, crate::output::line(message))
+        .await
+        .map_err(|_| Error::Timeout)??;
+    if let Some(ready) = ready {
+        let _ = ready.send(());
+    }
+    Ok(())
+}
+
 async fn run(
     identity: Arc<Identity>,
     profile: &Path,
@@ -706,8 +719,10 @@ async fn run(
             Ok(_) => (),
             Err(error) => eprintln!("Room history status unavailable: {error}"),
         }
-        if let Some(ready) = ready { let _ = ready.send(()); }
-        crate::output::line(format!("ROOM SERVING {} {}", directory.file_name().ok_or(Error::Protocol)?.to_string_lossy(), control.local_addr()?)).await?;
+        announce_ready(
+            format!("ROOM SERVING {} {}", directory.file_name().ok_or(Error::Protocol)?.to_string_lossy(), control.local_addr()?),
+            ready,
+        ).await?;
         loop {
             tokio::select! {
                 signal = cancelled(&mut external) => { signal?; break; },
@@ -879,6 +894,17 @@ where
 #[cfg(test)]
 mod lane_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn readiness_is_not_published_when_startup_output_is_refused() {
+        let (ready, started) = tokio::sync::oneshot::channel();
+        let oversized = "x".repeat(config::MAX_MESSAGE_BYTES * 7 + 8193);
+        assert!(matches!(
+            announce_ready(oversized, Some(ready)).await,
+            Err(Error::Configuration(_))
+        ));
+        assert!(started.await.is_err());
+    }
 
     #[test]
     fn history_work_has_its_own_bounded_lane_not_reserved_control() {

@@ -83,9 +83,12 @@ jobs:
       - name: Execute macOS actual long-path contact, room and HTTP workflows
         if: runner.os == 'macOS'
         run: cargo test --locked --offline --target $env:TARGET --test ipc_long_paths -- --nocapture
-      - name: Execute macOS room reservation ownership regressions
+      - name: Execute macOS room reservation ownership and startup readiness regressions
         if: runner.os == 'macOS'
-        run: cargo test --locked --offline --target $env:TARGET --lib rooms::local::reservation_tests -- --nocapture
+        run: |
+          cargo test --locked --offline --target $env:TARGET --lib rooms::local::reservation_tests -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --offline --target $env:TARGET --lib rooms::local::session::lane_tests -- --nocapture
       - name: Execute macOS protected history-key regressions
         if: runner.os == 'macOS'
         run: cargo test --locked --offline --target $env:TARGET --test history_keys -- --nocapture

@@ -37,6 +37,7 @@ checkpoints; restoration does not authorize a different identity.
 | Network | Exact contact certificates; address changes do not replace identity |
 | Work | Separate bounded text/file/control lanes; excess work is refused |
 | Output | Slow terminals cannot hold the protocol loop indefinitely |
+| Foreground room readiness | Signal only after its bounded startup announcement succeeds; Darwin SDK hosts explicitly configure a compatible [stdio worker](stdio.md) when non-file output requires one |
 | Exit | Cancel work, join owned resources and remove only the owned socket |
 
 Run it in a terminal and stop with Ctrl-C. No service or automatic startup is

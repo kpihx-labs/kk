@@ -14,6 +14,10 @@ use std::{
 
 fn long_profile(root: &Path) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
+    // The SDK never infers a stdio worker from its host. Opt this native fixture
+    // into the explicitly compatible Cargo-built CLI before foreground output.
+    #[cfg(target_vendor = "apple")]
+    kk::stdio_worker::configure(PathBuf::from(env!("CARGO_BIN_EXE_kk"))).unwrap();
     std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700)).unwrap();
     // Persisted database and history-key paths deliberately reject symlinked
     // ancestors. Resolve the platform temp-root alias before building this
