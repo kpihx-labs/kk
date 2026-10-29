@@ -5,6 +5,8 @@ current state and Git history for detailed implementation checkpoints.
 
 ## 0.9.0-dev.2 - Unreleased Verification Checkpoint
 
+- Explicitly release history-key initialization ownership when its operation ends,
+  even if a duplicated directory descriptor survives; preserve active exclusivity.
 - Accept explicitly provisioned local trust roots with attestation bundles for
   installation and rollback; seal/bound both inputs before gh verification and
   require an already trusted helper for the shell's explicit-root path.

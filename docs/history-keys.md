@@ -58,11 +58,16 @@ anchor and staging inode, atomically rename with `NOREPLACE`, then sync the
 directory and verify again. Other platforms refuse initialization rather than
 fall back to replacement or unsafe path resolution. Non-Unix loading refuses.
 
+Initialization holds an independently opened, nonblocking directory lease across
+scan, generation, publication and verification. Its guard explicitly unlocks on
+return or unwind: a duplicated descriptor cannot extend a completed operation.
+An active initializer still excludes both retained-anchor and fresh-anchor writers.
+
 Failures never delete or replace private state. A failed write, file sync,
 publication race or ancestor check can leave a private `.pending` file. A
 directory-sync failure can leave the published key; the error must still reach
 the caller. Do not infer absence or successful enrollment from that error.
-Crash recovery, orphan handling and adoption require a future explicit Group
+Crash recovery, orphan handling and adoption require the explicit Group
 workflow; this helper provides no delete, replace, repair or adoption operation.
 
 The guarantee assumes the existing cooperating writers and private path scope.
@@ -85,7 +90,11 @@ the two new source files without touching the active SQL owner's module file.
 Tests use synthetic temporary directories and generated test identities only.
 They cover codec round trips, explicit-only loading, public-binding mismatch,
 malformed and oversized files, modes, symlinks, hardlinks, FIFO refusal,
-concurrent initialization, ancestor/root replacement, publication path swaps,
+concurrent initialization, logical lease release with retained descriptors,
+ancestor/root replacement, publication path swaps,
 and injected file/directory sync failures with private-state preservation.
 They are local filesystem regression evidence, not power-loss durability tests
 or actual profile/runtime enrollment qualification.
+
+The [native key qualification](native-key-qualification.md) separates the local
+lease regression from the still-unclassified native pending-artifact failure.

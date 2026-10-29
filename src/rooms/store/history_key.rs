@@ -44,6 +44,27 @@ use std::{
     path::Component,
 };
 
+#[cfg(any(target_os = "linux", target_vendor = "apple"))]
+use std::os::fd::{AsFd, BorrowedFd};
+
+// Completion releases the logical operation even if dup/fork aliases outlive it.
+#[cfg(any(target_os = "linux", target_vendor = "apple"))]
+struct InitializationLease(File);
+
+#[cfg(any(target_os = "linux", target_vendor = "apple"))]
+impl AsFd for InitializationLease {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.0.as_fd()
+    }
+}
+
+#[cfg(any(target_os = "linux", target_vendor = "apple"))]
+impl Drop for InitializationLease {
+    fn drop(&mut self) {
+        let _ = fs::flock(&self.0, fs::FlockOperation::Unlock);
+    }
+}
+
 /// Retained root-to-room descriptors. Callers must coordinate writers for this
 /// private path scope; this is not isolation from malicious same-UID processes.
 pub(crate) struct HistoryKeyAnchor {
@@ -166,9 +187,9 @@ impl HistoryKeyAnchor {
     // also need an inode-scoped gate spanning scan, generation and publication.
     // openat(".") creates an INDEPENDENT open file description: a try_clone would
     // share flock ownership and let concurrent calls on this same anchor race.
-    // Nonblocking acquisition bounds waiting; closing releases only this lease.
+    // Nonblocking acquisition bounds waiting; logical drop explicitly unlocks.
     #[cfg(any(target_os = "linux", target_vendor = "apple"))]
-    fn initialization_lease(&self) -> Result<File> {
+    fn initialization_lease(&self) -> Result<InitializationLease> {
         self.verify()?;
         let lease = File::from(fs::openat(self.directory(), ".", flags(), Mode::empty())?);
         same(self.directory(), &lease)?;
@@ -178,6 +199,7 @@ impl HistoryKeyAnchor {
                 "history key initialization is busy; retry after the active operation",
             )
         })?;
+        let lease = InitializationLease(lease);
         self.verify()?;
         Ok(lease)
     }

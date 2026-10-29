@@ -47,7 +47,10 @@ fn empty_partial_and_complete_pending_block_every_initialization_retry() {
     let (source, source_anchor) = fixture();
     source_anchor.initialize().unwrap();
     let complete = zeroize::Zeroizing::new(stdfs::read(source.path().join(NAME)).unwrap());
-    for bytes in [b"".as_slice(), b"synthetic partial identity", &complete[..]] {
+    for (payload, bytes) in [b"".as_slice(), b"synthetic partial identity", &complete[..]]
+        .into_iter()
+        .enumerate()
+    {
         let (dir, anchor) = fixture();
         let pending = dir
             .path()
@@ -55,13 +58,20 @@ fn empty_partial_and_complete_pending_block_every_initialization_retry() {
         stdfs::write(&pending, bytes).unwrap();
         stdfs::set_permissions(&pending, stdfs::Permissions::from_mode(0o600)).unwrap();
         let before = stdfs::metadata(&pending).unwrap();
-        for _ in 0..3 {
+        for attempt in 0..3 {
             let fresh = HistoryKeyAnchor::open(dir.path(), [1; 32], [2; 32]).unwrap();
-            for candidate in [&anchor, &fresh] {
-                assert!(matches!(
-                    candidate.initialize(),
-                    Err(Error::Destination(message)) if message.contains("explicit recovery required")
-                ));
+            for (candidate_index, candidate) in [&anchor, &fresh].into_iter().enumerate() {
+                match candidate.initialize() {
+                    Err(Error::Destination(message))
+                        if message.contains("explicit recovery required") => {}
+                    Err(error) => panic!(
+                        "pending-key refusal: payload={payload}, attempt={attempt}, anchor={candidate_index}: {}: {error}",
+                        error.code(),
+                    ),
+                    Ok(_) => panic!(
+                        "pending-key regeneration: payload={payload}, attempt={attempt}, anchor={candidate_index}"
+                    ),
+                }
                 assert!(candidate.load().is_err());
             }
         }
@@ -350,6 +360,23 @@ fn concurrent_initializers_have_exactly_one_winner() {
     let anchor = HistoryKeyAnchor::open(dir.path(), [1; 32], [2; 32]).unwrap();
     assert_eq!(anchor.load().unwrap().recipient(), winners[0]);
     assert_eq!(stdfs::read_dir(dir.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn initialization_lease_ends_before_an_inherited_description_is_closed() {
+    let (_dir, anchor) = fixture();
+    let lease = anchor.initialization_lease().unwrap();
+    let inherited = rustix::io::dup(&lease).unwrap();
+    assert!(matches!(
+        anchor.initialize(),
+        Err(Error::Destination(message)) if message.contains("initialization is busy")
+    ));
+    drop(lease);
+    assert!(
+        anchor.initialize().is_ok(),
+        "an inactive initializer's duplicated descriptor retained its logical lease"
+    );
+    drop(inherited);
 }
 
 #[test]
