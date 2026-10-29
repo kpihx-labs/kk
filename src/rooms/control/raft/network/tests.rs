@@ -263,7 +263,9 @@ async fn mutual_tls_context_sender_binding_reuse_and_revocation_are_enforced() {
     }
 }
 
-#[tokio::test]
+// Private synchronous MLS work and independent voter drivers need separate
+// executor threads; the blocking-caller quorum-read regression below proves it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_quic_quorum_orders_crypto_changes_and_survives_creator_control_loss() {
     let directory = tempfile::tempdir().unwrap();
     let identities: Vec<_> = (0..3)
@@ -349,6 +351,18 @@ async fn real_quic_quorum_orders_crypto_changes_and_survives_creator_control_los
     let outcome = std::panic::AssertUnwindSafe(async {
         nodes[&ids[0]].initialize(nodes_meta).await.unwrap();
         let leader = elected(&nodes[&ids[0]], None).await;
+        // Synchronous private MLS work must not suspend all independent voters.
+        // Park this caller until a real quorum read finishes on their executor.
+        let control = nodes[&leader].clone();
+        let (completed, received) = std::sync::mpsc::sync_channel(1);
+        let quorum = tokio::spawn(async move {
+            let _ = completed.send(control.ensure_linearizable().await);
+        });
+        received
+            .recv_timeout(Duration::from_secs(5))
+            .expect("quorum drivers stopped with the synchronous private caller")
+            .expect("independent quorum read failed");
+        quorum.await.unwrap();
         let view = machines[&leader].public_view().await.unwrap();
         let add = private_a
             .prepare_add(private_a.validate_package(&package).unwrap())
