@@ -14,6 +14,8 @@ tests and delivery status remain in their owners; this is not a release claim.
 | W7 platforms | Main, native foundation returned | Storage/IPC/process/capture ports | Actual native Windows/macOS/WSL execution and packaging |
 | W8 distribution | Main, native installer returned | Portable archives/installers | TAR/ZIP transaction and rollback regressions pass; real gh provenance/bootstrap assets/exact-artifact and non-Linux gates remain open |
 | W9 product review | Unassigned | Profiles/history/search/calls/accessibility | Review useful comparable-app patterns; define and test end-to-end cases |
+| W10 current source gate | Main; executor returned | `src/rooms/runtime/tests.rs`, scheduler-progress fixture only | Independent static review accepts two-worker progress while private LocalSet caller blocks; original hosted cause remains unproven until fresh CI evidence |
+| W11 distribution review | Main; checker returned | `src/install/provenance.rs`, `tests/install.rs` and installer guides | Exact-authority redirect correction accepted statically; Main passed 52 installer cases and Clippy; real-artifact/offline-root qualification remains open |
 
 ## Peer Rules
 

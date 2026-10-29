@@ -33,6 +33,22 @@ and acceptance cases live in [product workstreams](docs/workstreams.md).
 | Long-profile recovery | Initial SUN_LEN correction passes real IPC/HTTP tests; independent IPC findings require corrective acceptance. Runtime-only create retry now has a passing regression; persistent or ambiguous room state remains refused |
 | Persisted QA permissions | Explicitly approved nonrecursive group-write removal applied to workspace/repository/target ancestors: 0775 to 0755. Strict IPC policy retained; QA can resume at unchanged profile paths |
 
+### Current checkpoint: 2026-10-29
+
+This checkpoint supersedes the pending wording in the earlier expansion snapshot;
+it does not change the installed release or qualify new distributed bytes.
+
+| Gate | Current state |
+| --- | --- |
+| Source | `8761b9f`, package `0.9.0-dev.2`, delivered to both remotes |
+| Hosted verification | [Verify 40823238849](https://github.com/kpihx-labs/kk/actions/runs/40823238849) failed: three-room runtime test timed out encrypting a bounded-actor event; corrective diagnosis active |
+| Native foundation | [40823238875](https://github.com/kpihx-labs/kk/actions/runs/40823238875) passes the selected native gates, including repeated consent checks; not full native product qualification |
+| Historical tag | `v0.9.0-dev.1` remains immutable at `7f93adf`; its failed verification is not replaced or promoted |
+| History lifecycle | Actual two-tab disable/re-enable, local clear, unchanged-profile cold restart and bidirectional messages pass; [evidence](docs/reboot-history-qualification.md) |
+| File/media UI | Binary/empty file digests, refused post-withdrawal offer and simultaneous synthetic screens pass; [evidence](docs/reboot-data-media-qualification.md), not physical capture or file-under-media-load proof |
+| Distribution | Earlier local bundles pass internal integrity only. Current-source authenticated bootstrap, ZIP/TAR exact-byte replay and inter-version rollback remain open |
+| Lab preflight | `fedora-44`, `mint-22.3`, `kk-peer-3` and their declared disks exist; all are shut off, dedicated network inactive. Current artifact replay has not run |
+
 ## Not Qualified
 
 | Scope | Work still needed |

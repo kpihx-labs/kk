@@ -9,6 +9,8 @@ specific new mission and record its ownership before execution.
 
 | Peer | Last assignment | Verification / result |
 | --- | --- | --- |
+| `ses_e790e5ac3ffec6WQNrwd6q2tII` (Sol fast, executor, returned) | None; runtime fixture handed to Main | Demonstrated blocked-caller scheduler starvation and corrected two-worker control progress with LocalSet retained; original hosted timeout not locally reproduced. Focused and unfiltered library pass reported; constrained stress had five other timing failures and is not a passing gate |
+| `ses_e790a3babffedeDGA3fLs9dZDS` (Terra fast, checker, returned) | None; read-only reviews retained | Confirmed redirect authority gap, then accepted Main correction statically; also accepted fixture scheduler-progress scope, not process isolation or proof of hosted timeout resolution. Offline trust-root qualification remains separate |
 | `ses_e8190452bffe5Wg9qRmeiFT2Ei` (Terra fast, checker) | Read-only independent review | Wrong implementation assignment withdrawn without edits; found then re-reviewed publication/admission/archive races; no remaining concrete defect in reviewed fixes |
 | `ses_e818fa5a8ffesTjZxwmtaA47DE` (Sol fast, explore, archived) | None | CLI/UI integration and existing multi-peer semantics mapped; no edits |
 | `ses_e8188f7e6ffesHsfAjUS4Mv0cI` (Sol fast, explore, archived) | None | Native blockers and sender-bound names/history mapped; [design](messaging-design.md) retained |

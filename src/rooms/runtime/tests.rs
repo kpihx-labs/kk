@@ -12,7 +12,9 @@ use crate::{
 };
 use std::collections::BTreeMap;
 
-#[tokio::test]
+// Keep the independent voters/QUIC drivers runnable while the LocalSet's
+// private-state caller performs synchronous crypto and durable storage work.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn three_private_rooms_use_quorum_order_durable_nonce_and_local_veto_without_global_trust() {
     let directory = tempfile::tempdir().unwrap();
     let identities: Vec<_> = (0..3)
@@ -74,6 +76,27 @@ async fn three_private_rooms_use_quorum_order_durable_nonce_and_local_veto_witho
     })
     .await
     .unwrap();
+    // These are three independent peers, not three actors sharing the private
+    // caller's executor. Synchronous MLS/storage work on that caller must not
+    // suspend every controller and its QUIC drivers at once. Deliberately block
+    // this thread until a real quorum read completes on the control executor.
+    let control = controls[1].clone();
+    let (completed, received) = std::sync::mpsc::sync_channel(1);
+    let quorum = tokio::spawn(async move {
+        let result = control
+            .fresh_catch_up(None, Duration::from_secs(5))
+            .await
+            .map(|(view, _)| view.epoch());
+        let _ = completed.send(result);
+    });
+    assert_eq!(
+        received
+            .recv_timeout(Duration::from_secs(5))
+            .expect("independent controllers stopped with the private caller")
+            .expect("independent quorum read failed"),
+        0
+    );
+    quorum.await.unwrap();
     let profile_path = directory.path().join("profile-0");
     let mut rooms = vec![
         Room::new(
@@ -437,11 +460,15 @@ async fn three_private_rooms_use_quorum_order_durable_nonce_and_local_veto_witho
             };
             assert_eq!(original.content.text(), "original peer binding");
             // The remaining direct sender is Charlie (Bob has been removed).
-            for _ in 0..config::ROOM_EVENT_QUEUE {
+            for index in 0..config::ROOM_EVENT_QUEUE {
                 let wire = rooms[1]
                     .encrypt_text("bounded actor event", false, Duration::from_secs(5))
                     .await
-                    .unwrap();
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "Charlie encryption at event {index} before queue capacity: {error:?}"
+                        )
+                    });
                 controls[2]
                     .send_room_text(target, &wire, Duration::from_secs(5))
                     .await
