@@ -116,6 +116,13 @@ mod consent {
         )
         .await;
         trace("fresh offer: read accepted response");
+        if send.id().index() < 3 {
+            eprintln!(
+                "paced peer {:?}/{:?}: await Accepted",
+                connection.remote_address(),
+                send.id()
+            );
+        }
         assert_eq!(
             read_frame(&mut recv).await,
             serde_json::json!({"RoomFile": {"Accepted": room}})
@@ -165,6 +172,24 @@ mod consent {
     }
 
     async fn receive_case(regrant_before_body: bool, at_publication: bool) {
+        receive_case_policy(
+            regrant_before_body,
+            at_publication,
+            crate::transport::Policy::OneShot,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn room_transport_reuses_connection_after_live_receive_withdrawal_and_regrant() {
+        receive_case_policy(true, false, crate::transport::Policy::Room).await;
+    }
+
+    async fn receive_case_policy(
+        regrant_before_body: bool,
+        at_publication: bool,
+        policy: crate::transport::Policy,
+    ) {
         let stage = std::cell::Cell::new("create fixture");
         tokio::time::timeout(
             DEADLINE * 4,
@@ -182,13 +207,16 @@ mod consent {
                 control.enable_files(inbox.clone(), size, size * 2).unwrap();
                 let pause =
                     at_publication.then(|| control.network.pause_file_publication().unwrap());
-                let endpoint = crate::transport::client(
+                let mut endpoint = crate::transport::client(
                     control.local_addr().unwrap(),
                     &bob,
                     &alice.peer(),
                     ALPN,
                 )
                 .unwrap();
+                endpoint.set_default_client_config(crate::transport::client_config(
+                    &bob, &alice.peer(), ALPN, policy,
+                ).unwrap());
                 stage.set("connect peer");
                 let connection = endpoint
                     .connect(control.local_addr().unwrap(), crate::config::TLS_NAME)

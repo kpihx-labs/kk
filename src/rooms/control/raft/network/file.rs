@@ -305,12 +305,26 @@ pub(super) fn current_inbox(shared: &Shared, inbox: &Arc<Grant>) -> Result<()> {
     }
 }
 
+// Test-only numeric endpoint/stream evidence; never identities, paths or payloads.
+// The first three streams cover revoked, fresh and exhausted-budget offers.
+#[cfg(test)]
+pub(super) fn trace(shared: &Shared, stream: quinn::StreamId, phase: &str) {
+    if stream.index() < 3 {
+        eprintln!(
+            "room stream {:?}/{stream:?}: {phase}",
+            shared.endpoint.local_addr()
+        );
+    }
+}
+
 pub(super) async fn receive(
     shared: &Shared,
     id: PeerId,
     mut send: quinn::SendStream,
     recv: quinn::RecvStream,
 ) -> Result<()> {
+    #[cfg(test)]
+    trace(shared, send.id(), "receive entered");
     let inbox = shared
         .room_files
         .read()
@@ -335,6 +349,8 @@ pub(super) async fn receive(
         .get(&id)
         .cloned()
         .ok_or(Error::Denied)?;
+    #[cfg(test)]
+    trace(shared, send.id(), "authorize start");
     if handle
         .authorize_file(peer.clone(), true, config::DEFAULT_TIMEOUT)
         .await
@@ -344,11 +360,15 @@ pub(super) async fn receive(
         send.finish().map_err(|_| Error::Network)?;
         return Err(Error::Denied);
     }
+    #[cfg(test)]
+    trace(shared, send.id(), "authorize passed");
     send_frame(
         &mut send,
         &Response::RoomFile(DataReply::Accepted(shared.room)),
     )
     .await?;
+    #[cfg(test)]
+    trace(shared, send.id(), "Accepted queued");
     let receipt = files::stream::receive_with_publication(
         &peer,
         recv,

@@ -1237,6 +1237,8 @@ async fn serve_connection(
         tokio::select! {
             stream = connection.accept_bi() => {
                 let Ok((mut send, mut recv)) = stream else { break; };
+                #[cfg(test)]
+                file::trace(&shared, send.id(), "admitted");
                 if !authorized(&shared, id)? { connection.close(1u32.into(), b""); break; }
                 let Ok(permit) = requests.clone().try_acquire_owned() else { let _ = send.reset(1u32.into()); continue; };
                 let shared = shared.clone(); let raft = raft.clone(); let machine = machine.clone();
@@ -1251,7 +1253,18 @@ async fn serve_connection(
                         }
                         Ok::<_, Error>(envelope)
                     };
-                    let Ok(Ok(envelope)) = tokio::time::timeout(config::DEFAULT_TIMEOUT, header).await else { return; };
+                    let envelope = match tokio::time::timeout(config::DEFAULT_TIMEOUT, header).await {
+                        Ok(Ok(envelope)) => envelope,
+                        failure => {
+                            #[cfg(test)]
+                            file::trace(&shared, send.id(), match failure { Ok(Err(error)) => error.code(), _ => "header TIMEOUT" });
+                            #[cfg(not(test))]
+                            let _ = failure;
+                            return;
+                        }
+                    };
+                    #[cfg(test)]
+                    file::trace(&shared, send.id(), "envelope parsed");
                     let deadline = match envelope.request {
                         Request::RoomFile | Request::FileFetch(_) => config::DEFAULT_FILE_TIMEOUT,
                         Request::ProfileGet => config::ROOM_PROFILE_TIMEOUT,
@@ -1283,8 +1296,12 @@ async fn serve_connection(
                             },
                             Request::RoomFile => {
                                 drop(_permit);
-                                file::receive(&shared, id, send, recv).await?;
-                                return Ok(());
+                                #[cfg(test)]
+                                let stream_id = send.id();
+                                let result = file::receive(&shared, id, send, recv).await;
+                                #[cfg(test)]
+                                file::trace(&shared, stream_id, result.as_ref().map_or_else(|error| error.code(), |_| "receive ended OK"));
+                                return result;
                             },
                             Request::FileAvailability(hash) => {
                                 drop(_permit);
