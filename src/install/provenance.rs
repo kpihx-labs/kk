@@ -173,7 +173,7 @@ pub(super) async fn authenticate(
     target: &str,
     cancel: super::Cancel,
 ) -> Result<Vec<u8>> {
-    verifier(request.bundle.is_some()).await?;
+    verifier(request).await?;
     // The filename convention is release.py's existing Linux release convention.
     // It selects a candidate only; the authenticated manifest must match the host.
     let bytes = if let Some(path) = &request.archive {
@@ -280,7 +280,10 @@ async fn download(mut url: String, cancel: &super::Cancel) -> Result<Vec<u8>> {
     refuse("archive redirect limit exceeded")
 }
 
-async fn verifier(bundle: bool) -> Result<()> {
+async fn verifier(request: &InstallRequest) -> Result<()> {
+    if request.trusted_root.is_some() && request.bundle.is_none() {
+        return refuse("trusted root requires a local attestation bundle");
+    }
     let mut gh = Command::new("gh");
     gh.args(["attestation", "verify", "--help"])
         .env("GH_HOST", "github.com")
@@ -301,8 +304,11 @@ async fn verifier(bundle: bool) -> Result<()> {
             );
         }
     }
-    if bundle && !help.contains("--bundle") {
+    if request.bundle.is_some() && !help.contains("--bundle") {
         return refuse("gh lacks offline bundle verification support");
+    }
+    if request.trusted_root.is_some() && !help.contains("--custom-trusted-root") {
+        return refuse("gh lacks explicit trusted-root verification support");
     }
     Ok(())
 }
@@ -312,7 +318,7 @@ pub(super) async fn authenticate_bytes(
     bytes: Vec<u8>,
     cancel: super::Cancel,
 ) -> Result<Vec<u8>> {
-    verifier(request.bundle.is_some()).await?;
+    verifier(request).await?;
     verify_snapshot(request, bytes, cancel).await
 }
 
@@ -345,21 +351,29 @@ async fn verify_snapshot(
         &request.commit,
         "--deny-self-hosted-runners",
     ]);
-    let mut bundle_snapshot = None;
-    if let Some(bundle) = &request.bundle {
-        let bundle = bundle.clone();
+    let mut verification_inputs = Vec::with_capacity(2);
+    for (flag, path, limit) in [
+        ("--bundle", request.bundle.as_ref(), 16 * 1024 * 1024),
+        (
+            "--custom-trusted-root",
+            request.trusted_root.as_ref(),
+            1024 * 1024,
+        ),
+    ] {
+        let Some(path) = path else { continue };
+        let path = path.clone();
         let cancel = cancel.clone();
-        let (file, bundle_path) = super::worker(move || {
-            let data = snapshot(&bundle, 16 * 1024 * 1024, &cancel)?;
+        let (file, input_path) = super::worker(move || {
+            let data = snapshot(&path, limit, &cancel)?;
             sealed(&data, &cancel)
         })
         .await?;
-        bundle_snapshot = Some(file);
-        gh.arg("--bundle").arg(bundle_path);
+        verification_inputs.push(file);
+        gh.arg(flag).arg(input_path);
     }
     cancel.check()?;
     run(gh, 1024 * 1024, 120).await?;
-    drop((frozen, bundle_snapshot));
+    drop((frozen, verification_inputs));
     Ok(bytes)
 }
 

@@ -44,10 +44,32 @@ fn installer_help_explains_verified_inputs_without_performing_work() {
         let help = String::from_utf8(output.stdout).unwrap();
         assert!(help.contains("--version"));
         assert!(help.contains("--prefix"));
+        assert!(help.contains("--trusted-root"));
         if operation == "install" {
             assert!(help.contains("--archive"));
             assert!(help.contains("--commit"));
             assert!(help.contains("--bundle"));
         }
+    }
+}
+
+#[test]
+fn trusted_root_requires_bundle_before_installation_state() {
+    let scratch = tempfile::tempdir().unwrap();
+    let prefix = scratch.path().join("uncreated");
+    for operation in ["install", "rollback"] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_kk"));
+        command
+            .args([operation, "--version", "0.8.2", "--prefix"])
+            .arg(&prefix)
+            .arg("--trusted-root")
+            .arg(scratch.path().join("root.jsonl"));
+        if operation == "install" {
+            command.args(["--commit", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]);
+        }
+        let output = command.output().unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("--bundle"));
+        assert!(!prefix.exists());
     }
 }

@@ -70,6 +70,8 @@ pub struct InstallRequest {
     pub prefix: PathBuf,
     pub archive: Option<PathBuf>,
     pub bundle: Option<PathBuf>,
+    /// Separately provisioned public Sigstore trust roots; requires a local bundle.
+    pub trusted_root: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -182,7 +184,7 @@ pub async fn install(request: InstallRequest) -> Result<Outcome> {
     }
 }
 
-/// Roll back to retained, fully rechecked managed bytes; never downloads anything.
+/// Roll back to retained managed bytes; reauthenticate provenance before activation.
 pub async fn rollback(prefix: PathBuf, selected: String) -> Result<Outcome> {
     rollback_with_bundle(prefix, selected, None).await
 }
@@ -192,6 +194,16 @@ pub async fn rollback_with_bundle(
     prefix: PathBuf,
     selected: String,
     bundle: Option<PathBuf>,
+) -> Result<Outcome> {
+    rollback_with_trust(prefix, selected, bundle, None).await
+}
+
+/// Reauthenticate retained bytes using an explicit bundle and provisioned trust roots.
+pub async fn rollback_with_trust(
+    prefix: PathBuf,
+    selected: String,
+    bundle: Option<PathBuf>,
+    trusted_root: Option<PathBuf>,
 ) -> Result<Outcome> {
     version(&selected)?;
     #[cfg(target_os = "linux")]
@@ -212,6 +224,7 @@ pub async fn rollback_with_bundle(
             prefix: prefix.clone(),
             archive: None,
             bundle,
+            trusted_root,
         };
         let original = provenance::authenticate_bytes(&request, original, cancel.clone()).await?;
         let parsing_cancel = cancel.clone();
@@ -225,7 +238,7 @@ pub async fn rollback_with_bundle(
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (prefix, bundle);
+        let _ = (prefix, bundle, trusted_root);
         refuse("native rollback is qualified only for Linux")
     }
 }

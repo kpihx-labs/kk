@@ -52,8 +52,8 @@ Missing jq is fatal, never auto-installed. The retained notices path is printed 
 
 ```text
 kk install --version VERSION --commit FULL_SHA --prefix ABSOLUTE
-  [--archive ABSOLUTE [--bundle ABSOLUTE]]
-kk rollback --prefix ABSOLUTE --version VERSION [--bundle ABSOLUTE]
+  [--archive ABSOLUTE [--bundle ABSOLUTE [--trusted-root ABSOLUTE]]]
+kk rollback --prefix ABSOLUTE --version VERSION [--bundle ABSOLUTE [--trusted-root ABSOLUTE]]
 ```
 
 The helper owns the complete transaction, including these gates:
@@ -78,12 +78,12 @@ The helper owns the complete transaction, including these gates:
    A bounded capability check runs before bootstrap download. Missing flags/tool,
    timeout or failure is fatal. Bootstrap uses private retained paths (same-UID
    tampering excluded); native archive gh reads sealed memfd bytes via procfs.
-4. USB/local `--archive` uses exactly the same private immutable snapshot and
-   provenance/content path as download. Offline verification additionally requires
-   an exported GitHub attestation `--bundle` passed to gh's supported bundle option,
-   plus its separately provisioned trust material. Local input paths must be absolute.
-   Offline trust-root setup must be separately qualified. Rollback reauthenticates
-   its retained original archive through gh; mutable local receipts are not provenance.
+4. USB/local `--archive` uses the same private immutable snapshot and provenance/content path as download.
+   Offline use needs exported `--bundle` AND separately provisioned `--trusted-root` (gh `--custom-trusted-root`).
+   Both trust inputs are bounded kernel-sealed snapshots; all local input paths must be absolute.
+   Authenticate public roots out of band; true air-gapped replay remains a separate qualification gate.
+   Rollback reauthenticates the retained original archive through gh; mutable receipts are not provenance.
+   Shell explicit-root mode requires `--helper`; PowerShell always requires `-Helper`. No helper bootstrap in that mode.
 5. Authenticate the snapshot before parsing archives. Verify manifest format,
    target, version, commit, exact member set and every digest before extraction.
    Match release.py bounds on compressed/expanded/member/manifest bytes and count;

@@ -117,7 +117,26 @@ fn scenario(name: &str) {
     fs::create_dir(&tools).unwrap();
     executable(
         &tools.join("gh"),
-        "#!/bin/sh\n# MOCK: byte comparison is not provenance verification.\nif [ \"${3:-}\" = --help ]; then printf '%s\\n' '--repo --signer-workflow --source-ref --source-digest --deny-self-hosted-runners --bundle'; exit 0; fi\nprintf '%s\\n' \"$@\" > \"$KK_GH_LOG\"\n[ \"${KK_GH_FAIL:-0}\" = 0 ] || exit 1\n[ \"$1\" = attestation ] && [ \"$2\" = verify ] || exit 2\ncmp -- \"$3\" \"$KK_EXPECTED\" || exit 3\nif [ \"${KK_REPLACE_LOCAL:-0}\" = 1 ]; then printf 'replaced pathname' > \"$KK_EXPECTED\"; fi\n",
+        r#"#!/bin/sh
+# MOCK: byte comparison is not provenance verification.
+if [ "${3:-}" = --help ]; then
+    printf '%s\n' '--repo --signer-workflow --source-ref --source-digest --deny-self-hosted-runners --bundle'
+    [ "$KK_INSTALL_SCENARIO" = offline_root_incapable ] || printf '%s\n' --custom-trusted-root
+    exit 0
+fi
+printf '%s\n' "$@" > "$KK_GH_LOG"
+[ "${KK_GH_FAIL:-0}" = 0 ] || exit 1
+[ "$1" = attestation ] && [ "$2" = verify ] || exit 2
+cmp -- "$3" "$KK_EXPECTED" || exit 3
+previous=''
+for argument do
+    if [ "$previous" = --custom-trusted-root ]; then
+        cmp -- "$argument" "$KK_INSTALL_ROOT/trusted root é.jsonl" || exit 4
+    fi
+    previous=$argument
+done
+if [ "${KK_REPLACE_LOCAL:-0}" = 1 ]; then printf 'replaced pathname' > "$KK_EXPECTED"; fi
+"#,
     );
     executable(
         &tools.join("curl"),
@@ -206,6 +225,13 @@ cases!(
     redirect_empty,
     redirect_status,
     offline_bundle,
+    offline_trusted_root,
+    offline_trusted_root_rollback,
+    offline_root_without_bundle,
+    offline_root_relative,
+    offline_root_symlink,
+    offline_root_oversized,
+    offline_root_incapable,
     foreign_binary,
     foreign_link,
     foreign_managed_link,
@@ -243,6 +269,7 @@ fn request(root: &Path) -> install::InstallRequest {
         prefix: root.join("prefix space é"),
         archive: Some(root.join("archive.zip")),
         bundle: None,
+        trusted_root: None,
     }
 }
 
@@ -417,10 +444,41 @@ fn transaction_child() {
         assert!(!log.contains("http://github.com/asset"));
         return;
     }
-    if case == "offline_bundle" {
+    if case == "offline_bundle"
+        || case.starts_with("offline_root_")
+        || case.starts_with("offline_trusted_root")
+    {
         let bundle = root.join("attestation bundle é.jsonl");
         fs::write(&bundle, b"mock bundle").unwrap();
         req.bundle = Some(bundle);
+    }
+    if case.starts_with("offline_root_") || case.starts_with("offline_trusted_root") {
+        let root_path = root.join("trusted root é.jsonl");
+        fs::write(&root_path, b"mock separately trusted public root").unwrap();
+        req.trusted_root = Some(root_path.clone());
+        match case.as_str() {
+            "offline_root_without_bundle" => req.bundle = None,
+            "offline_root_relative" => req.trusted_root = Some("relative root.jsonl".into()),
+            "offline_root_symlink" => {
+                let alias = root.join("root alias.jsonl");
+                symlink(&root_path, &alias).unwrap();
+                req.trusted_root = Some(alias);
+            }
+            "offline_root_oversized" => fs::File::options()
+                .write(true)
+                .open(&root_path)
+                .unwrap()
+                .set_len(1024 * 1024 + 1)
+                .unwrap(),
+            _ => {}
+        }
+        if case.starts_with("offline_root_") {
+            assert!(runtime.block_on(install::install(req.clone())).is_err());
+            assert!(!req.prefix.exists());
+            assert!(!root.join("gh.log").exists());
+            assert!(!root.join("curl.log").exists());
+            return;
+        }
     }
     if case == "crash_staging" {
         let stage = req.prefix.join("lib/kk/.stage-interrupted");
@@ -438,6 +496,18 @@ fn transaction_child() {
         Path::new("../lib/kk/0.8.2/kk")
     );
     let before = fs::read(&first.executable).unwrap();
+    if case == "offline_trusted_root_rollback" {
+        let result = runtime
+            .block_on(install::rollback_with_trust(
+                req.prefix.clone(),
+                req.version.clone(),
+                req.bundle.clone(),
+                req.trusted_root.clone(),
+            ))
+            .unwrap();
+        assert_eq!(result.previous.as_deref(), Some("0.8.2"));
+        assert_eq!(fs::read(&result.executable).unwrap(), before);
+    }
     if case == "coherent_conflict" || case == "coherent_rollback" {
         let directory = req.prefix.join("lib/kk/0.8.2");
         let mut forged = before.clone();
@@ -556,8 +626,16 @@ fn transaction_child() {
             assert!(log.contains(flag));
         }
     }
-    if case == "offline_bundle" {
+    if case == "offline_bundle" || case.starts_with("offline_trusted_root") {
         assert!(log.contains("--bundle"));
+    }
+    if case.starts_with("offline_trusted_root") {
+        assert!(log.contains("--custom-trusted-root\n/proc/"));
+        assert!(
+            !log.contains("trusted root é.jsonl"),
+            "gh must read the sealed root snapshot, not its original pathname"
+        );
+        assert!(!root.join("curl.log").exists());
     }
     if case == "snapshot" {
         assert_eq!(fs::read(&archive_path).unwrap(), b"replaced pathname");

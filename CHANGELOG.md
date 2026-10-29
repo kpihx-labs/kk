@@ -5,6 +5,9 @@ current state and Git history for detailed implementation checkpoints.
 
 ## 0.9.0-dev.2 - Unreleased Verification Checkpoint
 
+- Accept explicitly provisioned local trust roots with attestation bundles for
+  installation and rollback; seal/bound both inputs before gh verification and
+  require an already trusted helper for the shell's explicit-root path.
 - Authorize every native archive redirect before connecting, using the same exact
   HTTPS authorities as bootstrap. Preserve the original total deadline, archive
   byte bounds and provenance-before-parsing policy; reject foreign hosts and loops.

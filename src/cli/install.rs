@@ -17,6 +17,9 @@ pub(super) struct InstallArgs {
     /// Exported gh attestation bundle (not an archive-integrity bypass)
     #[arg(long, requires = "archive")]
     pub bundle: Option<PathBuf>,
+    /// Provisioned public Sigstore roots for verification without online root fetching
+    #[arg(long, requires = "bundle")]
+    pub trusted_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -28,6 +31,9 @@ pub(super) struct RollbackArgs {
     /// Optional exported gh attestation bundle for the retained original archive
     #[arg(long)]
     pub bundle: Option<PathBuf>,
+    /// Provisioned public Sigstore roots; never automatically downloaded
+    #[arg(long, requires = "bundle")]
+    pub trusted_root: Option<PathBuf>,
 }
 
 pub(super) async fn install(args: InstallArgs) -> kk::Result<()> {
@@ -37,6 +43,7 @@ pub(super) async fn install(args: InstallArgs) -> kk::Result<()> {
         prefix: args.prefix,
         archive: args.archive,
         bundle: args.bundle,
+        trusted_root: args.trusted_root,
     })
     .await
     .map_err(|error| crate::Error::Io(std::io::Error::other(error)))?;
@@ -44,9 +51,10 @@ pub(super) async fn install(args: InstallArgs) -> kk::Result<()> {
 }
 
 pub(super) async fn rollback(args: RollbackArgs) -> kk::Result<()> {
-    let outcome = kk::install::rollback_with_bundle(args.prefix, args.version, args.bundle)
-        .await
-        .map_err(|error| crate::Error::Io(std::io::Error::other(error)))?;
+    let outcome =
+        kk::install::rollback_with_trust(args.prefix, args.version, args.bundle, args.trusted_root)
+            .await
+            .map_err(|error| crate::Error::Io(std::io::Error::other(error)))?;
     print(&outcome).await
 }
 

@@ -312,6 +312,28 @@ printf '%s\n\n' "${MOCK_STATUS:-200}"
         link.symlink_to(self.tools / "gh")
         self.assertEqual(self.request("--helper", str(link)).returncode, 1)
 
+    def test_trusted_root_is_forwarded_opaquely_for_install_and_rollback(self):
+        helper = self.directory / "trusted helper é"
+        helper.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\nexit 38\n')
+        helper.chmod(0o755)
+        root = "/USB space é/root;touch NOT_EXECUTED.jsonl"
+        for rollback in (False, True):
+            arguments = ["--version", "0.8.2", "--helper", str(helper),
+                         "--bundle", "/USB/bundle", "--trusted-root", root]
+            arguments += ["--rollback"] if rollback else ["--commit", COMMIT, "--archive", "/USB/archive.zip"]
+            result = self.run_shell(*arguments)
+            self.assertEqual(result.returncode, 38, result.stderr)
+            self.assertEqual(result.stdout.splitlines()[-2:], ["--trusted-root", root])
+        self.assertFalse((self.directory / "NOT_EXECUTED.jsonl").exists())
+
+    def test_trusted_root_requires_bundle_and_pretrusted_helper_before_download(self):
+        result = self.request("--trusted-root", "/USB/root.jsonl")
+        self.assertIn("requires --bundle", result.stderr)
+        result = self.request("--archive", "/USB/archive.zip", "--bundle", "/USB/bundle",
+                              "--trusted-root", "/USB/root.jsonl")
+        self.assertIn("explicitly trusted --helper", result.stderr)
+        self.assertEqual(result.returncode, 1)
+
 
 class EntrypointContractTests(unittest.TestCase):
     def test_shell_syntax(self):

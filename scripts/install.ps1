@@ -6,6 +6,7 @@ param(
     [string] $Prefix,
     [string] $Archive,
     [string] $Bundle,
+    [string] $TrustedRoot,
     [string] $Helper,
     [switch] $Rollback,
     [switch] $Help
@@ -15,6 +16,7 @@ if ($Help) {
     Write-Output @'
 Usage: pwsh -File install.ps1 -Version VERSION -Commit COMMIT [-Prefix ABSOLUTE_PATH]
                             [-Archive ABSOLUTE_PATH [-Bundle ABSOLUTE_PATH]]
+                            [-TrustedRoot ABSOLUTE_PATH (requires -Bundle)]
                             -Helper ABSOLUTE_ALREADY_TRUSTED_KK [-Rollback]
 Native Windows artifacts are not shipped; Windows installation is refused.
 Linux PowerShell can invoke an explicitly trusted helper. No hidden dependency install.
@@ -30,12 +32,13 @@ try {
         throw 'Commit must be a full lowercase 40-character SHA.'
     }
     if ($Rollback -and ($Commit -or $Archive)) { throw '-Rollback does not accept Commit or Archive.' }
-    foreach ($Path in @($Prefix, $Archive, $Bundle, $Helper)) {
+    foreach ($Path in @($Prefix, $Archive, $Bundle, $TrustedRoot, $Helper)) {
         if ($Path -and -not [System.IO.Path]::IsPathFullyQualified($Path)) {
             throw 'Paths must be absolute.'
         }
     }
     if ($Bundle -and -not ($Archive -or $Rollback)) { throw '-Bundle requires -Archive or -Rollback.' }
+    if ($TrustedRoot -and -not $Bundle) { throw '-TrustedRoot requires -Bundle.' }
     $Platform = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
     $Architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
     $Linux = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Linux)
@@ -50,6 +53,7 @@ try {
         if ($Rollback) { $Arguments = @('rollback', '--version', $Version, '--prefix', $Prefix) }
         if ($Archive) { $Arguments += @('--archive', $Archive) }
         if ($Bundle) { $Arguments += @('--bundle', $Bundle) }
+        if ($TrustedRoot) { $Arguments += @('--trusted-root', $TrustedRoot) }
         & $Helper @Arguments
         exit $LASTEXITCODE
     }

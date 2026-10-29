@@ -7,6 +7,7 @@ usage() {
     printf '%s\n' \
         'Usage: sh install.sh --version VERSION --commit COMMIT [--prefix ABSOLUTE_PATH]' \
         '                     [--archive ABSOLUTE_PATH [--bundle ABSOLUTE_PATH]]' \
+        '                     [--trusted-root ABSOLUTE_PATH (requires --bundle and --helper)]' \
         '                     [--helper ABSOLUTE_ALREADY_TRUSTED_KK] [--rollback]' \
         'Requires separately installed capable gh, curl, jq, sha256sum, timeout, and native ldconfig.' \
         'Without --helper, Linux downloads and verifies the exact release helper AND notices.' \
@@ -14,7 +15,7 @@ usage() {
         'Local archives must pass the same provenance/content gates. Profiles are untouched.'
 }
 
-version='' commit='' archive='' bundle='' helper='' rollback='' prefix=${HOME:?HOME must be set}/.local
+version='' commit='' archive='' bundle='' trusted_root='' helper='' rollback='' prefix=${HOME:?HOME must be set}/.local
 seen=' '
 while [ "$#" -gt 0 ]; do
     key=$1
@@ -24,7 +25,7 @@ while [ "$#" -gt 0 ]; do
             [ -z "$rollback" ] || fail 'duplicate --rollback'
             rollback=yes
             shift ;;
-        --version|--commit|--prefix|--archive|--bundle|--helper)
+        --version|--commit|--prefix|--archive|--bundle|--trusted-root|--helper)
             case "$seen" in *" $key "*) fail "duplicate argument: $key" ;; esac
             seen="$seen$key "
             [ "$#" -ge 2 ] || fail "missing value for $key"
@@ -36,6 +37,7 @@ while [ "$#" -gt 0 ]; do
                 --prefix) prefix=$2 ;;
                 --archive) archive=$2 ;;
                 --bundle) bundle=$2 ;;
+                --trusted-root) trusted_root=$2 ;;
                 --helper) helper=$2 ;;
             esac
             shift 2 ;;
@@ -65,10 +67,14 @@ if [ -z "$rollback" ]; then
 else
     [ -z "$commit$archive" ] || fail '--rollback does not accept commit or archive'
 fi
-for path in "$prefix" "${archive:-/}" "${bundle:-/}" "${helper:-/}"; do
+for path in "$prefix" "${archive:-/}" "${bundle:-/}" "${trusted_root:-/}" "${helper:-/}"; do
     case "$path" in /*) ;; *) fail 'paths must be absolute' ;; esac
 done
 [ -z "$bundle" ] || [ -n "$archive$rollback" ] || fail '--bundle requires --archive or --rollback'
+if [ -n "$trusted_root" ]; then
+    [ -n "$bundle" ] || fail '--trusted-root requires --bundle'
+    [ -n "$helper" ] || fail '--trusted-root requires an explicitly trusted --helper; offline mode never downloads a helper'
+fi
 
 system=$(uname -s) || fail 'cannot detect operating system'
 machine=$(uname -m) || fail 'cannot detect architecture'
@@ -178,10 +184,12 @@ if [ -n "$helper" ]; then
     if [ -n "$rollback" ]; then
         set -- rollback --version "$version" --prefix "$prefix"
         if [ -n "$bundle" ]; then set -- "$@" --bundle "$bundle"; fi
+        if [ -n "$trusted_root" ]; then set -- "$@" --trusted-root "$trusted_root"; fi
         exec "$helper" "$@"
     fi
     set -- install --version "$version" --commit "$commit" --prefix "$prefix"
     if [ -n "$archive" ]; then set -- "$@" --archive "$archive"; fi
     if [ -n "$bundle" ]; then set -- "$@" --bundle "$bundle"; fi
+    if [ -n "$trusted_root" ]; then set -- "$@" --trusted-root "$trusted_root"; fi
     exec "$helper" "$@"
 fi
