@@ -3,14 +3,14 @@
 mod support;
 use std::{
     io::{BufRead, BufReader},
-    net::{SocketAddr, UdpSocket},
+    net::{SocketAddr, TcpListener, UdpSocket},
     path::Path,
     process::{Child, Command, Stdio},
     sync::mpsc,
     time::Duration,
 };
 
-fn address() -> String {
+fn udp_address() -> String {
     UdpSocket::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -24,7 +24,10 @@ fn cancelled_status_observations_are_not_failed_room_operations() {
     let root = support::private_root();
     let profile = root.path().join("observer");
     call(&profile, &["init"]);
-    call(&profile, &["room", "create", "team", "--bind", &address()]);
+    call(
+        &profile,
+        &["room", "create", "team", "--bind", &udp_address()],
+    );
     let mut server = Process::start(&profile, &["room", "serve", "team"]);
     server.until("ROOM SERVING");
     let body = serde_json::to_vec(&kk::rooms::local::Command::Status).unwrap();
@@ -55,7 +58,10 @@ fn consent_withdrawal_and_status_bypass_saturated_ordinary_ipc_connections() {
     let profile = root.path().join("saturation");
     let inbox = root.path().join("inbox");
     call(&profile, &["init"]);
-    call(&profile, &["room", "create", "team", "--bind", &address()]);
+    call(
+        &profile,
+        &["room", "create", "team", "--bind", &udp_address()],
+    );
     let mut server = Process::start(
         &profile,
         &[
@@ -195,7 +201,7 @@ fn rooms_have_an_actual_cli_enrollment_broadcast_and_cold_resume() {
     for profile in [&alice, &bob, &carol] {
         call(profile, &["init"]);
     }
-    let alice_address = address();
+    let alice_address = udp_address();
     call(
         &alice,
         &[
@@ -211,6 +217,35 @@ fn rooms_have_an_actual_cli_enrollment_broadcast_and_cold_resume() {
     let manifest = std::fs::read(alice.join("rooms/team/manifest.json")).unwrap();
     let mut source = Process::start(&alice, &["room", "serve", "team"]);
     source.until("ROOM SERVING");
+    // A UDP probe cannot reserve a TCP port. Exercise an actually occupied TCP
+    // bind, then let the invitation's live TCP listener allocate port zero.
+    let occupied_tcp = TcpListener::bind("127.0.0.1:0").unwrap();
+    let occupied_address = occupied_tcp.local_addr().unwrap();
+    let blocked_export = alice.join("blocked-invitation.json");
+    let blocked = Command::new(env!("CARGO_BIN_EXE_kk"))
+        .arg("--profile")
+        .arg(&alice)
+        .args(["room", "invite", "team", "--bind"])
+        .arg(occupied_address.to_string())
+        .arg("--invite-out")
+        .arg(&blocked_export)
+        .arg("--confirm")
+        .output()
+        .unwrap();
+    assert!(!blocked.status.success());
+    let diagnostic = format!(
+        "{}{}",
+        String::from_utf8_lossy(&blocked.stdout),
+        String::from_utf8_lossy(&blocked.stderr)
+    );
+    assert!(
+        diagnostic.contains("Address already in use"),
+        "{diagnostic}"
+    );
+    assert!(
+        !blocked_export.exists(),
+        "failed bind exported an invitation"
+    );
     // Export a real invitation, then shut down its owner. Connection refusal
     // must retain only runtime state, and a fresh invite must reuse that name.
     let expired = alice.join("unavailable-invitation.json");
@@ -221,13 +256,22 @@ fn rooms_have_an_actual_cli_enrollment_broadcast_and_cold_resume() {
             "invite",
             "team",
             "--bind",
-            &address(),
+            "127.0.0.1:0",
             "--invite-out",
             expired.to_str().unwrap(),
             "--confirm",
         ],
     );
-    unavailable.until("ROOM INVITATION");
+    let ready = unavailable.until("ROOM INVITATION");
+    let advertised: SocketAddr = ready
+        .split_ascii_whitespace()
+        .next_back()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_ne!(advertised.port(), 0);
+    assert_ne!(advertised, occupied_address);
+    drop(occupied_tcp);
     call(&alice, &["room", "stop", "team"]);
     source.finish();
     assert!(!unavailable.child.wait().unwrap().success());
@@ -241,7 +285,7 @@ fn rooms_have_an_actual_cli_enrollment_broadcast_and_cold_resume() {
             "--invitation",
             expired.to_str().unwrap(),
             "--bind",
-            &address(),
+            &udp_address(),
             "--confirm",
         ])
         .output()
@@ -268,7 +312,7 @@ fn rooms_have_an_actual_cli_enrollment_broadcast_and_cold_resume() {
                 "invite",
                 "team",
                 "--bind",
-                &address(),
+                "127.0.0.1:0",
                 "--invite-out",
                 invitation.to_str().unwrap(),
                 "--role",
@@ -286,7 +330,7 @@ fn rooms_have_an_actual_cli_enrollment_broadcast_and_cold_resume() {
                 "--invitation",
                 invitation.to_str().unwrap(),
                 "--bind",
-                &address(),
+                &udp_address(),
                 "--role",
                 "moderator",
                 "--confirm",
@@ -650,9 +694,9 @@ fn rooms_have_an_actual_cli_enrollment_broadcast_and_cold_resume() {
         serde_json::from_str(&call(&bob, &["room", "status", "team"])).unwrap();
     call(&bob, &["room", "stop", "team"]);
     resumed.finish();
-    let mut moved = address();
+    let mut moved = udp_address();
     if previous["result"]["address"] == moved {
-        moved = address();
+        moved = udp_address();
     }
     resumed = Process::start(&bob, &["room", "serve", "team", "--bind", &moved]);
     resumed.until("ROOM SERVING");
@@ -781,20 +825,20 @@ fn room_names_missing_identity_and_existing_state_fail_without_replacement() {
         let output = Command::new(env!("CARGO_BIN_EXE_kk"))
             .arg("--profile")
             .arg(&profile)
-            .args(["room", "create", name, "--bind", &address()])
+            .args(["room", "create", name, "--bind", &udp_address()])
             .output()
             .unwrap();
         assert!(!output.status.success());
     }
     call(
         &profile,
-        &["room", "create", "retained", "--bind", &address()],
+        &["room", "create", "retained", "--bind", &udp_address()],
     );
     let manifest = std::fs::read(profile.join("rooms/retained/manifest.json")).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_kk"))
         .arg("--profile")
         .arg(&profile)
-        .args(["room", "create", "retained", "--bind", &address()])
+        .args(["room", "create", "retained", "--bind", &udp_address()])
         .output()
         .unwrap();
     assert!(!output.status.success());

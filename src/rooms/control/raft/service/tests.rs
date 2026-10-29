@@ -100,18 +100,28 @@ mod consent {
         connection: &quinn::Connection,
         room: [u8; 32],
         bytes: &[u8],
+        stage: Option<&std::cell::Cell<&'static str>>,
     ) -> (quinn::SendStream, quinn::RecvStream, [u8; 32]) {
+        let trace = |description| {
+            if let Some(stage) = stage {
+                stage.set(description);
+            }
+        };
+        trace("fresh offer: open QUIC stream");
         let (mut send, mut recv) = connection.open_bi().await.unwrap();
+        trace("fresh offer: write control envelope");
         write_frame(
             &mut send,
             serde_json::json!({"room": room, "request": "RoomFile"}),
         )
         .await;
+        trace("fresh offer: read accepted response");
         assert_eq!(
             read_frame(&mut recv).await,
             serde_json::json!({"RoomFile": {"Accepted": room}})
         );
         let hash: [u8; 32] = Sha256::digest(bytes).into();
+        trace("fresh offer: write binary file header");
         send.write_all(&[0]).await.unwrap();
         send.write_all(&(bytes.len() as u64).to_be_bytes())
             .await
@@ -187,7 +197,7 @@ mod consent {
                     .unwrap();
                 stage.set("first offer and resume barrier");
                 let (mut send, mut recv, hash) =
-                    offer(&connection, control.room_id(), &payload).await;
+                    offer(&connection, control.room_id(), &payload, None).await;
                 resume_barrier(&mut recv).await;
                 let publication_release = if let Some((ready, release, _finished)) = pause {
                     stage.set("reach publication barrier");
@@ -256,7 +266,7 @@ mod consent {
                 let fresh = vec![0x71; payload.len()];
                 stage.set("open fresh offer and await acceptance");
                 let (mut send, mut recv, fresh_hash) =
-                    offer(&connection, control.room_id(), &fresh).await;
+                    offer(&connection, control.room_id(), &fresh, Some(&stage)).await;
                 stage.set("fresh offer accepted; await resume prefix");
                 resume_barrier(&mut recv).await;
                 stage.set("fresh payload write and finish");
@@ -287,7 +297,7 @@ mod consent {
                 );
                 stage.set("exhausted budget refuses another reservation");
                 let (_send, mut recv, _) =
-                    offer(&connection, control.room_id(), &vec![0x23; payload.len()]).await;
+                    offer(&connection, control.room_id(), &vec![0x23; payload.len()], None).await;
                 let mut resume = [0; 40];
                 assert!(
                     recv.read_exact(&mut resume).await.is_err(),
@@ -413,7 +423,7 @@ mod consent {
                     .unwrap()
                     .await
                     .unwrap();
-                let (mut send, mut recv, hash) = offer(&connection, room_id, &payload).await;
+                let (mut send, mut recv, hash) = offer(&connection, room_id, &payload, None).await;
                 resume_barrier(&mut recv).await;
                 send.write_all(&payload).await.unwrap();
                 send.finish().unwrap();
@@ -775,7 +785,7 @@ mod consent {
                     .unwrap();
                 for _ in 0..crate::config::NODE_FILE_COUNT_BUDGET {
                     let (mut send, mut recv, hash) =
-                        offer(&connection, control.room_id(), &[]).await;
+                        offer(&connection, control.room_id(), &[], None).await;
                     resume_barrier(&mut recv).await;
                     send.finish().unwrap();
                     assert_eq!(recv.read_to_end(32).await.unwrap(), hash);
@@ -784,7 +794,7 @@ mod consent {
                 }
                 // Zero bytes cannot exhaust the byte budget. Exactly the configured
                 // number of successful real offers must exhaust the attempt budget.
-                let (_send, mut recv, _) = offer(&connection, control.room_id(), &[]).await;
+                let (_send, mut recv, _) = offer(&connection, control.room_id(), &[], None).await;
                 let mut resume = [0; 40];
                 assert!(
                     recv.read_exact(&mut resume).await.is_err(),
