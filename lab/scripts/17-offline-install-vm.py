@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 
 from kk_guest import Guest, declared_peers, virsh
 
+LAB = Path(__file__).resolve().parents[1]
 MAX_PAYLOAD = 256 * 1024 * 1024
 
 
@@ -33,7 +34,7 @@ def exercise(arguments):
     peers = {peer["name"]: peer for peer in declared_peers()}
     if arguments.guest not in peers:
         raise ValueError("only a declared disposable guest may be used")
-    definition = Path(__file__).resolve().parents[1] / "xml" / (arguments.guest + ".xml")
+    definition = LAB / "xml" / (arguments.guest + ".xml")
     expected_uuid = ET.parse(definition).findtext("uuid")
     if not expected_uuid or virsh("domuuid", arguments.guest).strip() != expected_uuid:
         raise ValueError("guest UUID differs from its project definition")

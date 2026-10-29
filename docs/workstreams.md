@@ -5,7 +5,7 @@ Coordinator record for the operator-authorized product expansion. Actual code, t
 | ID | Owner / peer | Files / boundary | Acceptance |
 | --- | --- | --- | --- |
 | W1 cleanup | Main, done | Managed installations only | Obsolete 0.8.0 trashed; active 0.8.2 and all profiles intact |
-| W2 file consent | Main, Linux regression/GUI slice verified | Room receive policy, IPC, CLI/UI | Live toggles, saturated-lane withdrawal and publication revocation pass; native cross-platform qualification remains separate |
+| W2 file consent | Main; diagnosis `ses_e771dde6effezds4e1WXYdv6oC` returned and archived | Room receive policy, IPC, CLI/UI; Native run `40913981568` job `123589176811` | Probe 3 stalls reading fresh Accepted on the same connection after successful old-transfer revocation; receiver phase and root cause unproven. Preserve same-connection progress, no revived grant, nonrefundable budgets and unchanged deadlines |
 | W3 profiles | Main integration; profile executor | `src/profile/`, CLI/UI settings | Human names, explicit catalog, safe selection, no key regeneration |
 | W4 UX workflows | UI executor | Invitation/join forms and feedback | Editable errors, retained non-secret drafts, clear private invitation actions |
 | W5 appearance | UI executor | Profile settings and rendered theme | Quantified hue/clarity; default neutral grey exactly at midpoint |

@@ -11,6 +11,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest import mock
+import uuid
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 with mock.patch.object(sys, "path", [str(SCRIPTS), *sys.path]):
@@ -24,6 +25,14 @@ class OfflineVmTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
+        self.lab = self.root / "lab"
+        (self.lab / "xml").mkdir(parents=True)
+        self.uuid = str(uuid.uuid4())
+        self.definition = self.lab / "xml/fedora-44.xml"
+        self.definition.write_text(f"<domain><uuid>{self.uuid}</uuid></domain>")
+        lab = mock.patch.object(VM, "LAB", self.lab)
+        lab.start()
+        self.addCleanup(lab.stop)
         self.arguments = SimpleNamespace(
             guest="fedora-44", kit=self.root, helper=self.root / "helper", gh=self.root / "gh",
             expected_binary_sha256="a" * 64,
@@ -71,11 +80,9 @@ class OfflineVmTests(unittest.TestCase):
         return {"out": out, "err": "", "code": code}
 
     def exercise(self):
-        uuid = VM.ET.parse(SCRIPTS.parent / "xml/fedora-44.xml").findtext("uuid")
-
         def virsh(action, *_arguments):
             if action == "domuuid":
-                return uuid
+                return self.uuid
             if action == "domstate":
                 return "running"
             if action == "domif-getlink":
@@ -131,6 +138,14 @@ class OfflineVmTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "kit input changed"):
             self.exercise()
         self.guest.interfaces.assert_not_called()
+
+    def test_missing_definition_refuses_before_any_guest_access(self):
+        with mock.patch.object(VM, "LAB", self.root / "unprovisioned"), \
+                mock.patch.object(VM, "Guest") as guest, \
+                mock.patch.object(VM, "virsh") as virsh, self.assertRaises(FileNotFoundError):
+            VM.exercise(self.arguments)
+        guest.assert_not_called()
+        virsh.assert_not_called()
 
 
 if __name__ == "__main__":
