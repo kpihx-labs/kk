@@ -10,7 +10,24 @@ import json
 import time
 import uuid
 
-from kk_guest import Guest
+from kk_guest import CLI, Guest
+
+
+def observed_node_status(reply):
+    """Exit zero may describe an offline device; only an online node is ready."""
+    if reply["code"]:
+        return None
+    value = json.loads(reply["out"])
+    if not isinstance(value, dict) or not isinstance(value.get("node"), dict):
+        raise ValueError("expected aggregate JSON node observation")
+    node = value["node"]
+    if node.get("state") not in ("online", "offline", "unavailable", "error"):
+        raise ValueError("unknown JSON node observation state")
+    if node["state"] != "online":
+        return None
+    if not isinstance(node.get("status"), dict):
+        raise ValueError("online node observation is missing its status")
+    return node["status"]
 
 
 def node_cases(peers, shape, port, results):
@@ -21,24 +38,27 @@ def node_cases(peers, shape, port, results):
     processes = {}
 
     def call(node, *args, check=True, timeout=45):
-        return node["guest"].run("/usr/local/bin/kk", "--profile", node["profile"],
+        return node["guest"].run(CLI, "--profile", node["profile"],
                                  *args, check=check, timeout=timeout)
 
     def status(node):
-        return json.loads(call(node, "status")["out"])
+        value = observed_node_status(call(node, "status", "--json"))
+        if value is None:
+            raise RuntimeError(f"{node['name']}: expected an online private node")
+        return value
 
     def ready(node):
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
-            reply = call(node, "status", check=False)
-            if reply["code"] == 0:
-                return json.loads(reply["out"])
+            value = observed_node_status(call(node, "status", "--json", check=False))
+            if value is not None:
+                return value
             time.sleep(0.1)
         raise TimeoutError(f"{node['name']}: private node control never became ready")
 
     def start(node):
         processes[node["name"]] = node["guest"].start(
-            "/usr/local/bin/kk", "--profile", node["profile"], "serve", "--bind", f"{node['ip']}:{port}",
+            CLI, "--profile", node["profile"], "serve", "--bind", f"{node['ip']}:{port}",
             "--accept-files", "--inbox", node["profile"] + "/inbox", "--max-bytes", "1048576",
             "--file-budget", "2097152")
         ready(node)
@@ -57,7 +77,7 @@ def node_cases(peers, shape, port, results):
             for j in range(i + 1, len(nodes)):
                 other = nodes[j]
                 invite = own["profile"] + f"/invitation-{j}.json"
-                pid = own["guest"].start("/usr/local/bin/kk", "--profile", own["profile"], "pair",
+                pid = own["guest"].start(CLI, "--profile", own["profile"], "pair",
                                          "--listen", f"{own['ip']}:45453", "--as", other["name"],
                                          "--allow", "text,files", "--confirm", "--invite-out", invite,
                                          "--data-port", str(port))
@@ -106,7 +126,7 @@ def node_cases(peers, shape, port, results):
         record("node-file-ring-integrity", status=[status(node) for node in nodes])
         count = status(b)["received_operations"]
         for size, expected in [(65536, 0), (65537, 1)]:
-            pid = a["guest"].start("/usr/local/bin/kk", "--profile", a["profile"], "send",
+            pid = a["guest"].start(CLI, "--profile", a["profile"], "send",
                                      b["name"], "-", "-s", "--timeout", "5", input_data=b"\0" * size)
             reply = a["guest"].wait(pid)
             assert reply["code"] == expected, reply
@@ -120,7 +140,7 @@ def node_cases(peers, shape, port, results):
         uploads = []
         try:
             for target in [b, c]:
-                uploads.append(a["guest"].start("/usr/local/bin/kk", "--profile", a["profile"], "send",
+                uploads.append(a["guest"].start(CLI, "--profile", a["profile"], "send",
                                                target["name"], bulk_path, "-f", "--timeout", "30"))
             deadline = time.monotonic() + 5
             while status(a)["local_file_operations"] != 2:
@@ -151,7 +171,7 @@ def node_cases(peers, shape, port, results):
             for pid in uploads:
                 a["guest"].run("kill", "-INT", str(pid), check=False)
                 a["guest"].wait(pid, timeout=10)
-        denied = a["guest"].run("runuser", "--user", "nobody", "--", "/usr/local/bin/kk",
+        denied = a["guest"].run("runuser", "--user", "nobody", "--", CLI,
                                 "--profile", a["profile"], "status", check=False)
         assert denied["code"] != 0
         duplicate = call(a, "serve", "--bind", a["ip"] + ":45455", check=False)
@@ -164,7 +184,7 @@ def node_cases(peers, shape, port, results):
         destination = a["profile"] + "/inbox/" + identities[1].rsplit(":", 1)[1] + "-" + live_hash + ".bin"
         b["guest"].upload(live_path, live_data)
         shape(b, ["rate", "512kbit", "delay", "50ms"])
-        pid = b["guest"].start("/usr/local/bin/kk", "--profile", b["profile"], "send",
+        pid = b["guest"].start(CLI, "--profile", b["profile"], "send",
                                  a["name"], live_path, "-f", "--timeout", "20")
         try:
             deadline = time.monotonic() + 10
