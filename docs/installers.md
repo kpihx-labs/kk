@@ -61,8 +61,8 @@ The helper owns the complete transaction, including these gates:
    selector or alternate URL. Explicit version and full commit bind the reviewed
    tag. Metadata parsing is bounded; authenticated build manifests remain the sole
    target/version/files authority. No helper-authentication bypass flag exists.
-2. HTTPS-only initial requests and redirects, bounded count, connection and total
-   time, compressed bytes and metadata bytes. Reject oversized chunked bodies too.
+2. Authorize each HTTPS hop against the exact bootstrap authorities above before
+   connecting. Bound hop count, total time, metadata and even chunked body bytes.
    A content-length header alone is not a bound. Tool process groups are stopped
    before leader reaping; cleanup survives caller cancellation. No dependency installs.
 3. Require separately installed `gh` with attestation verification support. Invoke

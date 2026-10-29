@@ -5,6 +5,9 @@ current state and Git history for detailed implementation checkpoints.
 
 ## 0.9.0-dev.2 - Unreleased Verification Checkpoint
 
+- Authorize every native archive redirect before connecting, using the same exact
+  HTTPS authorities as bootstrap. Preserve the original total deadline, archive
+  byte bounds and provenance-before-parsing policy; reject foreign hosts and loops.
 - Keep the failed development tag immutable and use the next prerelease for
   corrected verification wiring.
 - Run the compound two-device HTTP workflow once in a mandatory phase after the

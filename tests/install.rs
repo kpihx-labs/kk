@@ -121,7 +121,24 @@ fn scenario(name: &str) {
     );
     executable(
         &tools.join("curl"),
-        "#!/bin/sh\n# MOCK public download transport, not network evidence.\nprintf '%s\\n' \"$@\" > \"$KK_CURL_LOG\"\ncat -- \"$KK_EXPECTED\"\n",
+        r#"#!/bin/sh
+# MOCK public download transport, not network evidence.
+printf '%s\n' "$@" >> "$KK_CURL_LOG"
+for url do :; done
+case "$KK_INSTALL_SCENARIO" in
+    redirect_allowed)
+        case "$url" in https://github.com/*) printf '\n302\nhttps://release-assets.githubusercontent.com/asset?signature=private\n'; exit 0;; esac ;;
+    redirect_forbidden) printf '\n302\nhttps://127.0.0.1/private\n'; exit 0 ;;
+    redirect_port) printf '\n302\nhttps://github.com:443/asset\n'; exit 0 ;;
+    redirect_userinfo) printf '\n302\nhttps://user@github.com/asset\n'; exit 0 ;;
+    redirect_downgrade) printf '\n302\nhttp://github.com/asset\n'; exit 0 ;;
+    redirect_loop) printf '\n302\nhttps://github.com/loop\n'; exit 0 ;;
+    redirect_empty) printf '\n302\n\n'; exit 0 ;;
+    redirect_status) printf '\n404\n\n'; exit 0 ;;
+esac
+cat -- "$KK_EXPECTED"
+printf '\n200\n\n'
+"#,
     );
     if name == "abi_missing_cache" {
         executable(
@@ -180,6 +197,14 @@ cases!(
     gh_failure,
     snapshot,
     online,
+    redirect_allowed,
+    redirect_forbidden,
+    redirect_port,
+    redirect_userinfo,
+    redirect_downgrade,
+    redirect_loop,
+    redirect_empty,
+    redirect_status,
     offline_bundle,
     foreign_binary,
     foreign_link,
@@ -369,8 +394,28 @@ fn transaction_child() {
         assert!(!root.join("gh.log").exists());
         return;
     }
-    if case == "online" {
+    if case == "online" || case.starts_with("redirect_") {
         req.archive = None;
+    }
+    if case.starts_with("redirect_") && case != "redirect_allowed" {
+        let error = runtime.block_on(install::install(req.clone())).unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.contains("redirect") || message.contains("HTTP"),
+            "{message}"
+        );
+        assert!(!message.contains("signature=private"));
+        assert!(!req.prefix.exists());
+        assert!(!root.join("gh.log").exists());
+        let log = fs::read_to_string(root.join("curl.log")).unwrap();
+        let calls = log.lines().filter(|line| *line == "--disable").count();
+        assert_eq!(calls, if case == "redirect_loop" { 6 } else { 1 });
+        assert!(!log.contains("--location"));
+        assert!(!log.contains("https://127.0.0.1/private"));
+        assert!(!log.contains("https://github.com:443/asset"));
+        assert!(!log.contains("https://user@github.com/asset"));
+        assert!(!log.contains("http://github.com/asset"));
+        return;
     }
     if case == "offline_bundle" {
         let bundle = root.join("attestation bundle é.jsonl");
@@ -493,8 +538,14 @@ fn transaction_child() {
     ] {
         assert!(log.contains(required), "missing {required}");
     }
-    if case == "online" {
+    if case == "online" || case == "redirect_allowed" {
         let log = fs::read_to_string(root.join("curl.log")).unwrap();
+        assert!(!log.contains("--location"));
+        assert!(log.contains("--max-redirs\n0"));
+        assert_eq!(
+            log.lines().filter(|line| *line == "--disable").count(),
+            if case == "redirect_allowed" { 2 } else { 1 }
+        );
         for flag in [
             "--proto\n=https",
             "--proto-redir\n=https",

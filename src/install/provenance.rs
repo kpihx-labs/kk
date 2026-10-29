@@ -189,15 +189,66 @@ pub(super) async fn authenticate(
             "https://github.com/kpihx-labs/kk/releases/download/v{0}/kk-v{0}-linux-{cpu}.tar.gz",
             request.version
         );
+        tokio::time::timeout(Duration::from_secs(125), download(url, &cancel))
+            .await
+            .map_err(|_| Error::Refused("archive download deadline exceeded"))??
+    };
+    verify_snapshot(request, bytes, cancel).await
+}
+
+const REDIRECT_BYTES: usize = 8192;
+
+fn allowed_download_url(url: &str) -> bool {
+    url.len() <= REDIRECT_BYTES
+        && url.bytes().all(|byte| byte.is_ascii_graphic())
+        && [
+            "https://github.com/",
+            "https://release-assets.githubusercontent.com/",
+            "https://objects.githubusercontent.com/",
+        ]
+        .iter()
+        .any(|prefix| url.starts_with(prefix))
+}
+
+// The trailer is emitted by curl AFTER the binary body. Split from the end,
+// never search for a marker inside attacker-controlled archive bytes.
+fn download_response(bytes: &[u8]) -> Result<(&[u8], &[u8], &str)> {
+    let mut fields = bytes.rsplitn(4, |byte| *byte == b'\n');
+    if fields.next() != Some(b"".as_slice()) {
+        return refuse("invalid archive response trailer");
+    }
+    let redirect = fields
+        .next()
+        .filter(|value| value.len() <= REDIRECT_BYTES)
+        .and_then(|value| std::str::from_utf8(value).ok())
+        .ok_or(Error::Refused("invalid archive redirect metadata"))?;
+    let status = fields
+        .next()
+        .filter(|value| value.len() == 3 && value.iter().all(u8::is_ascii_digit))
+        .ok_or(Error::Refused("invalid archive response status"))?;
+    let body = fields
+        .next()
+        .filter(|value| value.len() <= MAX_BYTES)
+        .ok_or(Error::Refused(
+            "archive response body exceeds resource budget",
+        ))?;
+    Ok((body, status, redirect))
+}
+
+async fn download(mut url: String, cancel: &super::Cancel) -> Result<Vec<u8>> {
+    for hop in 0..=5 {
+        cancel.check()?;
+        if !allowed_download_url(&url) {
+            return refuse("refused archive redirect authority or URL");
+        }
         let mut curl = Command::new("curl");
+        // No --location: validate each resolved next URL before connecting.
+        // Keep signed redirect URLs out of stderr and error messages.
         curl.args([
             "--disable",
-            "--fail",
-            "--show-error",
             "--silent",
-            "--location",
             "--max-redirs",
-            "5",
+            "0",
             "--proto",
             "=https",
             "--proto-redir",
@@ -208,12 +259,25 @@ pub(super) async fn authenticate(
             "120",
             "--max-filesize",
             &MAX_BYTES.to_string(),
+            "--write-out",
+            "\n%{http_code}\n%{redirect_url}\n",
             "--url",
             &url,
         ]);
-        run(curl, MAX_BYTES, 125).await?
-    };
-    verify_snapshot(request, bytes, cancel).await
+        let response = run(curl, MAX_BYTES + REDIRECT_BYTES + 6, 125).await?;
+        let (body, status, redirect) = download_response(&response)?;
+        match status {
+            b"200" if redirect.is_empty() => return Ok(body.to_vec()),
+            b"301" | b"302" | b"303" | b"307" | b"308" if hop < 5 => {
+                if !allowed_download_url(redirect) {
+                    return refuse("refused archive redirect authority or URL");
+                }
+                url = redirect.to_owned();
+            }
+            _ => return refuse("unexpected archive HTTP status or redirect limit"),
+        }
+    }
+    refuse("archive redirect limit exceeded")
 }
 
 async fn verifier(bundle: bool) -> Result<()> {
@@ -447,6 +511,43 @@ fn check_libraries(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn download_authorities_are_exact_and_trailers_preserve_binary_bodies() {
+        for url in [
+            "https://github.com/asset",
+            "https://objects.githubusercontent.com/asset",
+            "https://release-assets.githubusercontent.com/asset?signature=opaque",
+        ] {
+            assert!(allowed_download_url(url));
+        }
+        for url in [
+            "https://github.com:443/asset",
+            "https://user@github.com/asset",
+            "https://github.com.evil/asset",
+            "http://github.com/asset",
+            "https://127.0.0.1/",
+            "https://github.com/\nasset",
+            "https://github.com/asset with spaces",
+            "https://github.com",
+        ] {
+            assert!(!allowed_download_url(url));
+        }
+        let body = b"\x00\xff\n302\nhttps://evil.example/\n\n200\n\n";
+        let mut response = body.to_vec();
+        response.extend_from_slice(b"\n200\n\n");
+        let (actual, status, redirect) = download_response(&response).unwrap();
+        assert_eq!(actual, body);
+        assert_eq!(status, b"200");
+        assert_eq!(redirect, "");
+        for invalid in [b"body".as_slice(), b"body\n200\n", b"body\n20\n\n"] {
+            assert!(download_response(invalid).is_err());
+        }
+        let mut response = b"body\n302\n".to_vec();
+        response.extend(std::iter::repeat_n(b'x', REDIRECT_BYTES + 1));
+        response.push(b'\n');
+        assert!(download_response(&response).is_err());
+    }
 
     fn state(pid: u32) -> Option<char> {
         let text = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
