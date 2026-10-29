@@ -10,9 +10,9 @@ This records changes, not live delivery status. See [TODO.md](TODO.md) for the c
 - Keep network-quorum fixture drivers runnable during synchronous private crypto work; add public offline-kit preparation and fail-closed unprivileged guest installer gates. Mocked VM checks use private definitions while runtime UUID checks remain required; native fixture profiles use a private physical temporary root, not shared checkout ancestors. Test-only bounded numeric admission traces and separate Room-policy regrant coverage preserve all OneShot cases.
 - Explicitly release history-key initialization ownership when its operation ends,
   even if a duplicated directory descriptor survives; preserve active exclusivity.
-- Accept explicitly provisioned local trust roots with attestation bundles for
-  installation and rollback; seal/bound both inputs before gh verification and
-  require an already trusted helper for the shell's explicit-root path.
+- Supervise file upload and bounded receipt concurrently; reject early EOF under flow control while requiring both complete authorized upload and exact receipt for success.
+- Accept explicitly provisioned local trust roots with attestation bundles for installation and rollback;
+  seal/bound both inputs before gh verification and require an already trusted helper for the shell's explicit-root path.
 - Authorize every native archive redirect before connecting, using the same exact
   HTTPS authorities as bootstrap. Preserve the original total deadline, archive
   byte bounds and provenance-before-parsing policy; reject foreign hosts and loops.

@@ -44,6 +44,12 @@ also binds the pinned sender certificate. It does not accept the obsolete v1
 layout. A missed receipt can mean the file was already published: retry the same
 stable bytes explicitly instead of deleting state or generating new ciphertext.
 
+The sender observes the bounded receipt while uploading, so response EOF/refusal
+can cancel a flow-control-blocked body. Success still requires the entire
+authorized upload and the exact receipt, never an early receipt alone.
+[Duplex regression evidence](file-duplex-qualification.md) distinguishes this
+correction from the still-unexplained native manual-peer timing failure.
+
 The receipt proves the honest receiver's verified durable publication, not future
 availability or honesty of a compromised peer. For retained ciphertext, see
 [CLI encryption](cli.md#input-and-local-encryption). For offers after sender loss,

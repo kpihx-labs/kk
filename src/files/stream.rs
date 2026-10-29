@@ -193,25 +193,34 @@ where
     if offset > info.bytes || digest(file, offset).await?.as_slice() != &proposal[8..] {
         return Err(Error::Integrity);
     }
-    let mut remaining = info.bytes - offset;
-    let mut buffer = Zeroizing::new(vec![0; config::FILE_CHUNK_BYTES]);
-    while remaining > 0 {
+    let upload = async {
+        let mut remaining = info.bytes - offset;
+        let mut buffer = Zeroizing::new(vec![0; config::FILE_CHUNK_BYTES]);
+        while remaining > 0 {
+            authorize().await?;
+            let count = remaining.min(buffer.len() as u64) as usize;
+            file.read_exact(&mut buffer[..count])
+                .await
+                .map_err(|_| Error::Integrity)?;
+            request.write_all(&buffer[..count]).await?;
+            remaining -= count as u64;
+        }
+        if file.read(&mut [0]).await? != 0 {
+            return Err(Error::Integrity);
+        }
         authorize().await?;
-        let count = remaining.min(buffer.len() as u64) as usize;
-        file.read_exact(&mut buffer[..count])
-            .await
-            .map_err(|_| Error::Integrity)?;
-        request.write_all(&buffer[..count]).await?;
-        remaining -= count as u64;
-    }
-    if file.read(&mut [0]).await? != 0 {
-        return Err(Error::Integrity);
-    }
-    authorize().await?;
-    request.finish().map_err(|_| Error::Network)?;
-    if response.read_to_end(32).await? != info.sha256 {
-        return Err(Error::Integrity);
-    }
+        request.finish().map_err(|_| Error::Network)
+    };
+    let receipt = async {
+        if response.read_to_end(32).await? != info.sha256 {
+            return Err(Error::Integrity);
+        }
+        Ok(())
+    };
+    // A recipient can reject while our upload is flow-control blocked. Observe
+    // its bounded response concurrently; success still requires both full upload
+    // (including final authorization/FIN) and the exact receipt, never either alone.
+    tokio::try_join!(upload, receipt)?;
     Ok(Receipt {
         info,
         resumed_from: offset,

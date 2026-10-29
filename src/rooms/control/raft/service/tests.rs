@@ -191,6 +191,7 @@ mod consent {
         policy: crate::transport::Policy,
     ) {
         let stage = std::cell::Cell::new("create fixture");
+        let started = std::time::Instant::now();
         tokio::time::timeout(
             DEADLINE * 4,
             tokio::task::LocalSet::new().run_until(async {
@@ -223,6 +224,10 @@ mod consent {
                     .unwrap()
                     .await
                     .unwrap();
+                let trace = |phase| {
+                    stage.set(phase);
+                    eprintln!("paced receive {:?}: {phase} at {:?}", connection.remote_address(), started.elapsed());
+                };
                 stage.set("first offer and resume barrier");
                 let (mut send, mut recv, hash) =
                     offer(&connection, control.room_id(), &payload, None).await;
@@ -238,6 +243,7 @@ mod consent {
                 } else {
                     None
                 };
+                trace("withdraw consent");
                 assert!(!control.configure_files(None, size, size * 2).unwrap());
                 assert!(!control.files_enabled().unwrap());
                 if regrant_before_body {
@@ -247,16 +253,20 @@ mod consent {
                             .unwrap()
                     );
                 }
+                trace("withdrawal and optional regrant returned");
                 if let Some(release) = publication_release {
                     // Withdrawal has returned while the old commit worker is
                     // still paused outside its publication gate.
                     release.send(()).unwrap();
                 } else {
+                    trace("revoked transfer body write");
                     let _ = send.write_all(&payload).await;
+                    trace("revoked transfer body write returned");
                     let _ = send.finish();
                 }
-                stage.set("revoked transfer reaches EOF without ACK");
+                trace("revoked transfer reaches EOF without ACK");
                 let ack = recv.read_to_end(32).await;
+                trace("revoked transfer EOF returned");
                 assert!(
                     ack.as_ref().map_or(true, |bytes| bytes.is_empty()),
                     "revoked receive sent ACK bytes: {ack:?}"
@@ -285,6 +295,7 @@ mod consent {
                 drop(recv);
 
                 assert_eq!(control.files_enabled().unwrap(), regrant_before_body);
+                trace("enable receiving for fresh offer");
                 control
                     .configure_files(Some(inbox.clone()), size, size * 2)
                     .unwrap();
@@ -292,7 +303,7 @@ mod consent {
                 // A distinct new offer succeeds, proving regrant is effective rather
                 // than merely leaving the entire receiver permanently disabled.
                 let fresh = vec![0x71; payload.len()];
-                stage.set("open fresh offer and await acceptance");
+                trace("open fresh offer and await acceptance");
                 let (mut send, mut recv, fresh_hash) =
                     offer(&connection, control.room_id(), &fresh, Some(&stage)).await;
                 stage.set("fresh offer accepted; await resume prefix");
