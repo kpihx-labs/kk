@@ -101,7 +101,12 @@ jobs:
           cargo test --locked --offline --target $env:TARGET --lib files:: -- --nocapture
       - name: Execute macOS publication consent, owner revocation and cancellation regressions
         if: runner.os == 'macOS'
-        run: cargo test --locked --offline --target $env:TARGET --lib rooms::control::raft::service::tests::consent -- --nocapture
+        run: |
+          foreach ($iteration in 1..5) {
+            Write-Output "Bounded consent probe $iteration/5; stop on the first failure"
+            cargo test --locked --offline --target $env:TARGET --lib rooms::control::raft::service::tests::consent -- --nocapture
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - name: Execute macOS publication grant lock regressions
         if: runner.os == 'macOS'
         run: cargo test --locked --offline --target $env:TARGET --lib rooms::control::raft::network::file::tests -- --nocapture
