@@ -50,3 +50,13 @@ integrity jobs succeed. The project now selects the hosted container-runner tag
 settings or homelab packages were changed. A regression fails without the route
 and passes with it, and GitLab's CI lint accepts the configuration. Execution of
 the corrected jobs remains a distinct gate.
+
+## Container-route checkpoint
+
+On `03887b85f0752c0eb664c837551ae03c18791a8c`, GitHub Verify `40881343912`
+and Native `40881343914` succeed. GitLab pipeline `3004039518` fails before
+execution: `rust-foundation` (`17575414605`), `browser-adapter` (`17575414606`)
+and `release-integrity` (`17575414607`) all report `ci_quota_exceeded`, with no
+runner assigned and no YAML error. The hosted-container route has therefore not
+yet been exercised on GitLab. No quota, runner setting or homelab package was
+changed to work around this account-level gate.

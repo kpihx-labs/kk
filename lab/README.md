@@ -58,6 +58,23 @@ as automatic inbound traversal or a firewall-policy change.
 
 ## Results And Cleanup
 
+Offline installer qualification has two distinct phases:
+
+```sh
+uv run --no-project lab/scripts/16-offline-kit.py --help
+uv run --no-project lab/scripts/17-offline-install-vm.py --help
+```
+
+The first downloads public artifacts, attestations and separately provisioned
+public roots with an explicitly selected real `gh`; it does not prove isolation.
+The second requires an explicitly started, UUID-bound disposable guest, trusted
+helper/verifier executables and an independently authenticated expected binary
+digest. It tests fresh installation, reinstall and same-version rollback as
+`nobody`, with guest NIC and live hypervisor link down. On failure or uncertain
+process lifetime it keeps the virtual cable disconnected: confirm guest shutdown
+before reconnecting. Always run graceful VM/network cleanup, including on error.
+Executed scope and digests: [installation evidence](../docs/install-qualification.md).
+
 Generated state/reports belong to ignored `tmp/`; generated definitions to `xml/`.
 Check scenario failures, process exits, binary hashes and `cleanup_errors` before
 claiming a pass. Guests/network must stop and shaping must be restored. Failed

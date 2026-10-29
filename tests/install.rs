@@ -130,6 +130,9 @@ printf '%s\n' "$@" > "$KK_GH_LOG"
 cmp -- "$3" "$KK_EXPECTED" || exit 3
 previous=''
 for argument do
+    if [ "$previous" = --bundle ]; then
+        case "$argument" in *.json|*.jsonl) :;; *) exit 5;; esac
+    fi
     if [ "$previous" = --custom-trusted-root ]; then
         cmp -- "$argument" "$KK_INSTALL_ROOT/trusted root é.jsonl" || exit 4
     fi

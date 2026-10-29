@@ -29,6 +29,8 @@ fn pipe_stdio_flow_limits_eof_and_cancellation() {
         "input-wait",
         "hidden-input-wait",
         "output-backpressure",
+        "unreopenable-output",
+        "unreopenable-backpressure",
     ] {
         let mut child = Reap(
             Command::new(std::env::current_exe().unwrap())
@@ -98,7 +100,7 @@ fn pipe_stdio_flow_limits_eof_and_cancellation() {
             diagnostics.contains("fixture finished"),
             "pipe {mode}: {diagnostics}"
         );
-        if matches!(mode, "flow" | "hidden-flow") {
+        if matches!(mode, "flow" | "hidden-flow" | "unreopenable-output") {
             let mut output = String::new();
             child
                 .0
@@ -119,6 +121,18 @@ fn pipe_stdio_child() {
     };
     let input_flags = rustix::fs::fcntl_getfl(std::io::stdin()).unwrap();
     let output_flags = rustix::fs::fcntl_getfl(std::io::stdout()).unwrap();
+    // Only this fixture's newly created pipe is changed. The inherited write
+    // capability remains valid, but Linux cannot reopen its pathname as a user.
+    #[cfg(target_os = "linux")]
+    let output_mode = if mode.starts_with("unreopenable-") {
+        let old = rustix::fs::Mode::from_bits_truncate(
+            rustix::fs::fstat(std::io::stdout()).unwrap().st_mode & 0o7777,
+        );
+        rustix::fs::fchmod(std::io::stdout(), rustix::fs::Mode::empty()).unwrap();
+        Some(old)
+    } else {
+        None
+    };
     #[cfg(target_vendor = "apple")]
     kk::stdio_worker::configure(std::path::PathBuf::from(env!("CARGO_BIN_EXE_kk"))).unwrap();
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -163,7 +177,10 @@ fn pipe_stdio_child() {
                     .is_err()
                 );
             }
-            "output-backpressure" => {
+            "unreopenable-output" => kk::output::line("pipe output fixture".to_owned())
+                .await
+                .unwrap(),
+            "output-backpressure" | "unreopenable-backpressure" => {
                 let writes = async {
                     loop {
                         kk::output::line("x".repeat(65536)).await.unwrap();
@@ -180,6 +197,10 @@ fn pipe_stdio_child() {
     });
     // No shutdown_timeout: it would conceal a detached, blocked worker.
     drop(runtime);
+    #[cfg(target_os = "linux")]
+    if let Some(old) = output_mode {
+        rustix::fs::fchmod(std::io::stdout(), old).unwrap();
+    }
     assert_eq!(
         rustix::fs::fcntl_getfl(std::io::stdin()).unwrap(),
         input_flags

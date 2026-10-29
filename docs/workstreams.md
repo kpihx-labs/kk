@@ -1,7 +1,6 @@
 # Product Workstreams
 
-Coordinator record for the operator-authorized product expansion. Actual code,
-tests and delivery status remain in their owners; this is not a release claim.
+Coordinator record for the operator-authorized product expansion. Actual code, tests and delivery status remain in their owners; this is not a release claim.
 
 | ID | Owner / peer | Files / boundary | Acceptance |
 | --- | --- | --- | --- |
@@ -14,8 +13,9 @@ tests and delivery status remain in their owners; this is not a release claim.
 | W7 platforms | Main, native foundation returned | Storage/IPC/process/capture ports | Actual native Windows/macOS/WSL execution and packaging |
 | W8 distribution | Main, native installer returned | Portable archives/installers | TAR/ZIP transaction and rollback regressions pass; real gh provenance/bootstrap assets/exact-artifact and non-Linux gates remain open |
 | W9 product review | Unassigned | Profiles/history/search/calls/accessibility | Review useful comparable-app patterns; define and test end-to-end cases |
-| W10 current source gate | Main; executor returned | `src/rooms/runtime/tests.rs`, scheduler-progress fixture only | Independent static review accepts two-worker progress while private LocalSet caller blocks; original hosted cause remains unproven until fresh CI evidence |
+| W10 current source gate | Main; executor returned | `src/rooms/runtime/tests.rs` and `src/rooms/control/raft/network/tests.rs`, scheduler-progress fixtures only | Earlier private LocalSet review accepted independent two-worker progress; network fixture now has a separate deterministic blocked-caller real-quorum-read red/green regression, with original deadlines unchanged. Local check passes; historical hosted cause is not inferred from this |
 | W11 distribution review | Main; checker returned | `src/install/provenance.rs`, `tests/install.rs` and installer guides | Exact-authority redirect correction accepted statically; Main passed 52 installer cases and Clippy; real-artifact/offline-root qualification remains open |
+| W12 offline lab | Main owns implementation; read-only second opinion `ses_e7822ada5ffeG2x4n29ZkCMbK6` returned and archived | `lab/scripts/{16-offline-kit,17-offline-install-vm}.py`, two lab test files; no delegated edits | Ten mocked boundaries and 32 lab cases pass. Review found timeout is not process termination: failure now retains hypervisor isolation. Initial gh-suffix and inherited-pipe failures preceded corrected-source fresh/reinstall/same-version rollback success under nobody, exact 0.8.2 bytes, real gh/public roots, guest/network restored off. UUID, isolation, inputs, byte oracle and cleanup evidence: [installation qualification](install-qualification.md) |
 
 ## Peer Rules
 

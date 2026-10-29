@@ -1,12 +1,13 @@
 # Changelog
 
-This records changes, not live delivery status. See [TODO.md](TODO.md) for the
-current state and Git history for detailed implementation checkpoints.
+This records changes, not live delivery status. See [TODO.md](TODO.md) for the current state and Git history for detailed implementation checkpoints.
 
 ## 0.9.0-dev.2 - Unreleased Verification Checkpoint
 
-- Route image-based GitLab checks explicitly to the hosted Linux container runner,
-  preventing accidental shell execution without the declared toolchain image.
+- Route image-based GitLab checks explicitly to the hosted Linux container runner, preventing accidental shell execution without the declared toolchain image.
+- Preserve gh's bundle decoder suffix through a private descriptor-anchored name targeting sealed bytes, with immutable-input and cleanup regressions.
+- Write inherited Linux pipes through nonblocking pipe-to-pipe splice without reopening their names or changing shared flags; retain cancellation and runtime-shutdown checks.
+- Keep network-quorum fixture drivers runnable during synchronous private crypto work, and add public offline-kit preparation plus fail-closed, unprivileged isolated-guest installer gates.
 - Explicitly release history-key initialization ownership when its operation ends,
   even if a duplicated directory descriptor survives; preserve active exclusivity.
 - Accept explicitly provisioned local trust roots with attestation bundles for

@@ -7,7 +7,10 @@ use super::{
 use std::{
     fs::File,
     io::{Read, Write},
-    os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
+    os::{
+        fd::AsRawFd,
+        unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    },
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -166,6 +169,97 @@ fn sealed(bytes: &[u8], cancel: &super::Cancel) -> Result<(File, PathBuf)> {
         file.as_raw_fd()
     ));
     Ok((file, path))
+}
+
+// gh selects the bundle decoder by suffix. Only a private name is on disk;
+// its target remains the kernel-sealed descriptor, never a mutable byte copy.
+struct BundleView {
+    // Drop the temporary name while its procfs parent descriptor is still held.
+    _temporary: tempfile::TempDir,
+    _directory: File,
+    _parent: File,
+    path: PathBuf,
+}
+
+impl BundleView {
+    fn new(frozen: &Path, original: &Path) -> Result<Self> {
+        use rustix::fs::{Mode, OFlags, open, openat, symlinkat};
+        let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        let parent = File::from(open(std::env::temp_dir(), flags, Mode::empty()).map_err(
+            |error| {
+                let error = std::io::Error::from(error);
+                std::io::Error::new(
+                    error.kind(),
+                    format!("opening verification temporary parent: {error}"),
+                )
+            },
+        )?);
+        let metadata = parent.metadata()?;
+        let uid = rustix::process::geteuid().as_raw();
+        if (metadata.uid() != 0 && metadata.uid() != uid)
+            || (metadata.mode() & 0o022 != 0
+                && !(metadata.uid() == 0 && metadata.mode() & 0o1000 != 0))
+        {
+            return refuse("unsafe verification temporary parent");
+        }
+        let parent_path = PathBuf::from(format!(
+            "/proc/{}/fd/{}",
+            std::process::id(),
+            parent.as_raw_fd()
+        ));
+        let temporary = tempfile::Builder::new()
+            .prefix("kk-verification-")
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir_in(parent_path)
+            .map_err(|error| {
+                std::io::Error::new(
+                    error.kind(),
+                    format!("creating private verification name: {error}"),
+                )
+            })?;
+        let name = temporary.path().file_name().ok_or(Error::Refused(
+            "missing private verification directory name",
+        ))?;
+        let directory = File::from(openat(&parent, name, flags, Mode::empty()).map_err(
+            |error| {
+                let error = std::io::Error::from(error);
+                std::io::Error::new(
+                    error.kind(),
+                    format!("opening private verification directory: {error}"),
+                )
+            },
+        )?);
+        let metadata = directory.metadata()?;
+        if metadata.uid() != uid || metadata.mode() & 0o777 != 0o700 {
+            return refuse("unsafe private verification directory");
+        }
+        let leaf = if original
+            .extension()
+            .is_some_and(|extension| extension == "json")
+        {
+            "bundle.json"
+        } else {
+            "bundle.jsonl"
+        };
+        symlinkat(frozen, &directory, leaf).map_err(|error| {
+            let error = std::io::Error::from(error);
+            std::io::Error::new(
+                error.kind(),
+                format!("naming sealed verification input: {error}"),
+            )
+        })?;
+        let path = PathBuf::from(format!(
+            "/proc/{}/fd/{}/{leaf}",
+            std::process::id(),
+            directory.as_raw_fd()
+        ));
+        Ok(Self {
+            _temporary: temporary,
+            _directory: directory,
+            _parent: parent,
+            path,
+        })
+    }
 }
 
 pub(super) async fn authenticate(
@@ -363,12 +457,19 @@ async fn verify_snapshot(
         let Some(path) = path else { continue };
         let path = path.clone();
         let cancel = cancel.clone();
-        let (file, input_path) = super::worker(move || {
+        let (file, input_path, view) = super::worker(move || {
             let data = snapshot(&path, limit, &cancel)?;
-            sealed(&data, &cancel)
+            let (file, frozen_path) = sealed(&data, &cancel)?;
+            let view = if flag == "--bundle" {
+                Some(BundleView::new(&frozen_path, &path)?)
+            } else {
+                None
+            };
+            let input_path = view.as_ref().map_or(frozen_path, |view| view.path.clone());
+            Ok((file, input_path, view))
         })
         .await?;
-        verification_inputs.push(file);
+        verification_inputs.push((file, view));
         gh.arg(flag).arg(input_path);
     }
     cancel.check()?;
@@ -629,6 +730,32 @@ mod tests {
     #[tokio::test]
     async fn success_also_closes_owned_descendants_before_reaping() {
         descendants("normal").await;
+    }
+
+    #[test]
+    fn bundle_names_keep_decoder_suffix_seals_and_directory_binding() {
+        use std::os::unix::fs::MetadataExt;
+        let cancel = super::super::Cancel::default();
+        let (_file, frozen) = sealed(b"public bundle fixture", &cancel).unwrap();
+        for (original, extension) in [
+            ("input.json", "json"),
+            ("input.jsonl", "jsonl"),
+            ("input", "jsonl"),
+        ] {
+            let view = BundleView::new(&frozen, Path::new(original)).unwrap();
+            assert_eq!(view.path.extension().unwrap(), extension);
+            assert_eq!(view._directory.metadata().unwrap().mode() & 0o777, 0o700);
+            assert_eq!(std::fs::read(&view.path).unwrap(), b"public bundle fixture");
+            assert!(std::fs::write(&view.path, b"replacement").is_err());
+            let cleanup = std::fs::canonicalize(view._temporary.path()).unwrap();
+            let moved = view._temporary.path().with_extension("moved");
+            assert!(!moved.exists());
+            std::fs::rename(view._temporary.path(), &moved).unwrap();
+            assert_eq!(std::fs::read(&view.path).unwrap(), b"public bundle fixture");
+            std::fs::rename(&moved, view._temporary.path()).unwrap();
+            drop(view);
+            assert!(!cleanup.exists());
+        }
     }
 
     #[test]
