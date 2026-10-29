@@ -44,6 +44,16 @@ class WorkflowFixtureTests(unittest.TestCase):
         gitlab = (ROOT / ".gitlab-ci.yml").read_text()
         self.assertIn("runuser -u kk-ci -- bash -o pipefail -c 'make rust-test 2>&1 | cat'", gitlab)
 
+    def test_image_jobs_require_the_verified_hosted_container_runner(self):
+        gitlab = (ROOT / ".gitlab-ci.yml").read_text()
+        self.assertRegex(gitlab, r"(?m)^default:\n  tags:\n    - saas-linux-small-amd64\n")
+        for job in ("rust-foundation", "browser-adapter", "release-integrity"):
+            body = re.search(rf"(?ms)^{job}:\n(.*?)(?=^[A-Za-z][\w-]*:|\Z)", gitlab)
+            self.assertIsNotNone(body, f"missing required job: {job}")
+            self.assertIn("  image:", body[1])
+            self.assertNotIn("  tags:", body[1], f"{job} overrides the container-runner contract")
+            self.assertNotIn("  inherit:", body[1], f"{job} disables the runner contract")
+
 
 if __name__ == "__main__":
     unittest.main()

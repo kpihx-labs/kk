@@ -1,6 +1,11 @@
 stages:
   - check
 
+# Shell executors ignore image: and may run checks on an unprepared host.
+default:
+  tags:
+    - saas-linux-small-amd64
+
 rust-foundation:
   stage: check
   image: rust:1.99.1

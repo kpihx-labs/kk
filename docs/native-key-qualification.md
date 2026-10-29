@@ -36,3 +36,17 @@ lease correction, all 18 cases also passed in controlled Linux runs with 128
 descriptors, and with 256 descriptors under a deeper project temporary root.
 Those observations do not establish the ARM cause. Fresh native execution and
 its exact outcome remain required; no native-consent repair is inferred here.
+
+## Hosted follow-up
+
+On `a30ce7f`, Linux Verify `40873064834` and Native `40873064843` succeed.
+All three selected native jobs pass, including both macOS key, stdio and consent
+gates. This validates that snapshot, not a causal explanation of older failures.
+
+GitLab `3003799544` separately fails browser job `17573579185`: its homelab shell
+executor ignores `image:` and reports `make: command not found`. Rust and release
+integrity jobs succeed. The project now selects the hosted container-runner tag
+`saas-linux-small-amd64`, verified online on runner `54907241`; no global runner
+settings or homelab packages were changed. A regression fails without the route
+and passes with it, and GitLab's CI lint accepts the configuration. Execution of
+the corrected jobs remains a distinct gate.

@@ -5,6 +5,8 @@ current state and Git history for detailed implementation checkpoints.
 
 ## 0.9.0-dev.2 - Unreleased Verification Checkpoint
 
+- Route image-based GitLab checks explicitly to the hosted Linux container runner,
+  preventing accidental shell execution without the declared toolchain image.
 - Explicitly release history-key initialization ownership when its operation ends,
   even if a duplicated directory descriptor survives; preserve active exclusivity.
 - Accept explicitly provisioned local trust roots with attestation bundles for
