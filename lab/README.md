@@ -76,6 +76,8 @@ before reconnecting. Always run graceful VM/network cleanup, including on error.
 Executed scope and digests: [installation evidence](../docs/install-qualification.md).
 
 Generated state/reports belong to ignored `tmp/`; generated definitions to `xml/`.
+Native private profiles/logs use a physical 0700 OS temporary workspace rather than
+shared checkout ancestors; the retained report names it. [Candidate evidence](../docs/native-candidate-qualification.md).
 Check scenario failures, process exits, binary hashes and `cleanup_errors` before
 claiming a pass. Guests/network must stop and shaping must be restored. Failed
 reports remain retained. Physical capture, radio and native non-Linux tests are

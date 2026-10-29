@@ -29,6 +29,11 @@ def address(ip, kind=socket.SOCK_DGRAM):
         return f"{ip}:{connection.getsockname()[1]}"
 
 
+def private_workspace():
+    """Keep profile ancestors outside potentially group-writable lab checkouts."""
+    return Path(tempfile.mkdtemp(prefix="kk-native-media-")).resolve(strict=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--receiver", required=True)
@@ -48,7 +53,7 @@ def main():
     host_ip = definition.find("./ip").get("address")
     binary = selected_binary()
     run = uuid.uuid4().hex[:12]
-    directory = Path(tempfile.mkdtemp(prefix="native-media-", dir=ROOT / "tmp"))
+    directory = private_workspace()
     profile = directory / "host"
     remote = "/var/tmp/kk-room-native-" + run
     host_processes, guest_processes, logs = [], [], []
