@@ -155,6 +155,7 @@ mod consent {
     }
 
     async fn receive_case(regrant_before_body: bool, at_publication: bool) {
+        let stage = std::cell::Cell::new("create fixture");
         tokio::time::timeout(
             DEADLINE * 4,
             tokio::task::LocalSet::new().run_until(async {
@@ -162,6 +163,7 @@ mod consent {
                 let (control, alice, bob, room) = fixture(root.path()).await;
                 let (handle, actor, _events) = Actor::new(room);
                 let running = tokio::task::spawn_local(actor.run());
+                stage.set("ready and register actor");
                 handle.ready(DEADLINE).await.unwrap();
                 control.register_room(handle.clone()).await.unwrap();
                 let payload = vec![0x6d; crate::config::FILE_CHUNK_BYTES * 2];
@@ -177,15 +179,18 @@ mod consent {
                     ALPN,
                 )
                 .unwrap();
+                stage.set("connect peer");
                 let connection = endpoint
                     .connect(control.local_addr().unwrap(), crate::config::TLS_NAME)
                     .unwrap()
                     .await
                     .unwrap();
+                stage.set("first offer and resume barrier");
                 let (mut send, mut recv, hash) =
                     offer(&connection, control.room_id(), &payload).await;
                 resume_barrier(&mut recv).await;
                 let publication_release = if let Some((ready, release, _finished)) = pause {
+                    stage.set("reach publication barrier");
                     send.write_all(&payload).await.unwrap();
                     send.finish().unwrap();
                     // Reached only after full-body verification, file syncing
@@ -212,6 +217,7 @@ mod consent {
                     let _ = send.write_all(&payload).await;
                     let _ = send.finish();
                 }
+                stage.set("revoked transfer reaches EOF without ACK");
                 let ack = recv.read_to_end(32).await;
                 assert!(
                     ack.as_ref().map_or(true, |bytes| bytes.is_empty()),
@@ -231,6 +237,7 @@ mod consent {
                     "revoked receive committed its destination"
                 );
                 if at_publication {
+                    stage.set("verify retained private staging");
                     assert_staging_retained(&destination, &payload).await;
                 }
 
@@ -242,11 +249,13 @@ mod consent {
                 // A distinct new offer succeeds, proving regrant is effective rather
                 // than merely leaving the entire receiver permanently disabled.
                 let fresh = vec![0x71; payload.len()];
+                stage.set("fresh offer and resume barrier");
                 let (mut send, mut recv, fresh_hash) =
                     offer(&connection, control.room_id(), &fresh).await;
                 resume_barrier(&mut recv).await;
                 send.write_all(&fresh).await.unwrap();
                 send.finish().unwrap();
+                stage.set("fresh transfer verified ACK");
                 assert_eq!(recv.read_to_end(32).await.unwrap(), fresh_hash);
                 let fresh_destination = inbox.join(format!(
                     "{}-{}.bin",
@@ -267,6 +276,7 @@ mod consent {
                     fresh,
                     "withdrawal must not invalidate files committed before it"
                 );
+                stage.set("exhausted budget refuses another reservation");
                 let (_send, mut recv, _) =
                     offer(&connection, control.room_id(), &vec![0x23; payload.len()]).await;
                 let mut resume = [0; 40];
@@ -282,13 +292,21 @@ mod consent {
                 connection.close(0u32.into(), b"");
                 endpoint.close(0u32.into(), b"");
                 control.unregister_room().unwrap();
+                stage.set("actor shutdown");
                 handle.shutdown(DEADLINE).await.unwrap();
+                stage.set("actor join");
                 drop(running.await.unwrap());
+                stage.set("control shutdown");
                 shutdown(control).await;
             }),
         )
         .await
-        .unwrap();
+        .unwrap_or_else(|error| {
+            panic!(
+                "receive consent fixture timed out at {} (regrant={regrant_before_body}, publication={at_publication}): {error}",
+                stage.get()
+            )
+        });
     }
 
     #[tokio::test]
