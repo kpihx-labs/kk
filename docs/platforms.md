@@ -4,8 +4,8 @@
 | --- | --- | --- |
 | Linux x86_64 | Host/isolated Fedora and Mint; CLI, storage, rooms, copies and native virtual-display tests | Physical radio/devices or an independently audited deployment |
 | Linux aarch64 | Native hosted CI runs the product checks and builds archives | A local ARM VM or physical capture test |
-| Windows native | Earlier snapshot foundation passed; latest corrected source requires fresh hosted results; protected storage remains refused | No full-feature Windows archive or product qualification |
-| macOS native | Earlier runs found compile/stdio blockers; corrected storage, IPC and history-key selections require fresh hosted execution | No full-product support or physical capture claim from compilation or a partial run |
+| Windows native | `a60aab6` native foundation passes; the new PowerShell refusal step still requires hosted execution; protected storage remains refused | No full-feature Windows archive or product qualification |
+| macOS native | `a60aab6` selected storage/IPC/stdio/key and five consent probes pass on both architectures; earlier intermittent consent admission remains unexplained | No full-product support or physical capture claim from compilation or a partial run |
 | WSL2 | Not an executed qualification | Not native Windows support |
 | Mobile browser | Narrow-screen light/dark layout fixture | No physical phone, keyboard or mobile-backend claim |
 
@@ -24,8 +24,8 @@ version. The [hosted runner labels](https://docs.github.com/en/actions/reference
 identify native hosts, not Linux cross-compilation. macOS fixtures use a resolved physical temporary root; production `NOFOLLOW` and ancestor checks remain unchanged.
 
 **Execution status is source-bound.** Earlier Windows foundation passes do not
-qualify the changed tree; earlier macOS runs stopped at compile/stdio blockers.
-Current selected steps need fresh hosted results. Local Linux checks cannot
+qualify another changed tree; earlier macOS runs stopped at compile/stdio blockers.
+The `a60aab6` selected pass does not explain every historical failure. Linux cannot
 establish Windows/macOS behavior. Compiler, lint, runtime or linker failures are
 blockers, not permission to skip a step or claim product support.
 
@@ -35,9 +35,9 @@ blockers, not permission to skip a step or claim product support.
 | Offline locked all-target Clippy, warnings denied | Native target lint acceptance, without suppression | Runtime safety or platform qualification |
 | Explicit binary smoke | Actual native executable runs `--version`, `--help`, and refuses an unknown argument with exit 2 | Initialized profiles, networking, UI or media |
 | Offline locked foundation tests | Public digest parsing; Unix protected identity and inspection, or exact non-Unix refusals; Linux/macOS publication or unsupported-target refusal | Full integration/unit suites, cross-device interoperability or physical devices |
+| Windows-only PowerShell refusal | The actual adapter exits 3 and explains that Windows releases are not shipped; valid synthetic selectors exercise the unsupported contract | A working Windows installer or successful installation |
 | macOS-only selected integrations | File/envelope transfers and nonclobber; `ipc_long_paths` real contact/room/HTTP paths; `history_keys` protected binding/recovery regressions | Cross-device exchange, crypto redesign or complete product qualification |
 | macOS-only selected library tests | `files::`, shared IPC ownership/recovery, room reservations, publication consent/revocation/cancellation and grant-lock regressions; explicit SQLite ancestor-symlink refusal with committed state preserved; full store and [actor-lease ownership](database-ownership.md) regressions | Unselected library suites, complete foreground lifecycle, native UI or capture qualification |
-
 There are no uploads, installers, release calls, signing credentials or write
 permissions in this lane. It does not change the existing release job's gates.
 The always-run job summary reports scope even if an earlier gate fails; it is
@@ -47,15 +47,15 @@ the present contract, never successful product operations.
 ### Existing Test Gating Inventory
 
 The native lane selects the tests above, not unfiltered `cargo test`. Windows
-runs only `platform_foundation`; all-target build/lint still compile applicable
+runs `platform_foundation` plus the PowerShell refusal step; build/lint compile applicable
 code. Guards below do not imply that every Unix suite is qualified on macOS:
 
 | Existing Rust integration suites | Source guard | Native foundation execution |
 | --- | --- | --- |
-| `envelope`, `files` | Whole file `cfg(any(target_os = "linux", target_os = "macos"))` | Selected on both macOS architectures, results pending; excluded on Windows |
+| `envelope`, `files` | Whole file `cfg(any(target_os = "linux", target_os = "macos"))` | Selected on both macOS architectures; `a60aab6` passes; excluded on Windows |
 | `cli_profiles`, `enrollment`, `enrollment_forwarding`, `node`, `pairing`, `pairing_cli`, `room_pairing`, `sensitive`, `voters` | Whole file `cfg(target_os = "linux")` | Not run; empty targets on Windows/macOS |
 | `enrollment_recovery`, `identity`, `network`, `room_cli`, `room_crash`, `rooms` | Whole file `cfg(unix)` | Not run; excluded on Windows, compiled but not executed on macOS |
-| `ipc_long_paths`, `history_keys` | IPC whole-file `cfg(unix)`; key tests use Linux/Apple module guards | Selected on both macOS architectures; fresh results required |
+| `ipc_long_paths`, `history_keys` | IPC whole-file `cfg(unix)`; key tests use Linux/Apple module guards | Selected on both macOS architectures; `a60aab6` passes, not a future-source guarantee |
 | `stdio_pipe`, `stdio_socket`, `stdio_worker`, `stdio_terminal` | Platform-specific source guards | Selected applicable tests on macOS; native PTY/worker outcomes are separate from compilation |
 | `cli` | Mixed: Unix-only inspection, identity, two-process message exchange and SIGINT cases; remaining cases unguarded | Not run; minimum smoke lives in the dedicated foundation target |
 | `packaging` | No platform guard | Compiled, not run; package inventory is not native product qualification |

@@ -75,3 +75,20 @@ The isolated replay above closes offline local-input execution for that exact
 Linux artifact/helper combination only. The earlier workstation boundary remains
 historical; cross-version rollback, physical power loss, new-version replay and
 other platforms are still separate gates. Existing profile data was untouched.
+
+## Unsigned Development CI Artifact, `a60aab6`
+
+On 2026-10-29, Main downloaded artifact `12925205974` from successful Verify run
+`40933771509`, not a release/tag. Its Linux x86_64 TAR and ZIP each pass the source
+verifier over all 852 declared members. All eight per-target checksum entries pass,
+including raw bootstrap executable/notices and both installer entrypoints.
+
+| Subject | SHA-256 |
+| --- | --- |
+| TAR | `a4887c2461b4cc82598edf4b782033a7f231624ea2e9899a454b32a5029117f2` |
+| ZIP | `04951e8684e217219fdce0d0523ca1e5fcc28443e2fc521bffdf312f25c09cc5` |
+| Archived/raw bootstrap executable | `b24a478a435a8ad2ac7485b8456480b2ecf1c0be1974e91c61d3d2b8e2183db0` |
+
+Retained input directory: `target/qualification-a60aab6`. This is internal integrity
+and source-workflow retrieval evidence, not signed release provenance or a passing
+installation. No new tag, public release or stable installation was created.

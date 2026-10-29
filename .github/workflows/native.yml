@@ -68,6 +68,15 @@ jobs:
         run: cargo test --locked --offline --target $env:TARGET --test platform_foundation binary_smoke -- --nocapture
       - name: Assert the native platform contract, including intentional refusals
         run: cargo test --locked --offline --target $env:TARGET --test platform_foundation -- --nocapture
+      - name: Execute Windows PowerShell installation refusal
+        if: runner.os == 'Windows'
+        run: |
+          # Synthetic valid selectors; refusal must happen before any installation.
+          $reply = & pwsh -NoProfile -File ./scripts/install.ps1 -Version 0.0.0 -Commit $env:GITHUB_SHA 2>&1
+          if ($LASTEXITCODE -ne 3) { throw "Expected unsupported Windows refusal, got $LASTEXITCODE : $reply" }
+          if (($reply -join "`n") -notmatch 'not shipped') { throw "Missing explicit unsupported-platform diagnostic: $reply" }
+          Write-Output $reply
+          exit 0 # The expected child exit 3 must not become the step wrapper exit.
       - name: Execute macOS file transfer and envelope storage regressions
         if: runner.os == 'macOS'
         run: cargo test --locked --offline --target $env:TARGET --test files --test envelope -- --nocapture

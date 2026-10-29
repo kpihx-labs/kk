@@ -4,10 +4,10 @@ This records changes, not live delivery status. See [TODO.md](TODO.md) for the c
 
 ## 0.9.0-dev.2 - Unreleased Verification Checkpoint
 
-- Route image-based GitLab checks explicitly to the hosted Linux container runner, preventing accidental shell execution without the declared toolchain image.
+- Route image-based GitLab checks explicitly to hosted Linux container runners, preventing shell execution without the declared image; execute the PowerShell unsupported-installation contract on native Windows, separately from Linux's explicit interpreter-unavailable skip.
 - Preserve gh's bundle decoder suffix through a private descriptor-anchored name targeting sealed bytes, with immutable-input and cleanup regressions.
 - Write inherited Linux pipes through nonblocking pipe-to-pipe splice without reopening their names or changing shared flags; retain cancellation and runtime-shutdown checks.
-- Keep network-quorum fixture drivers runnable during synchronous private crypto work, and add public offline-kit preparation plus fail-closed, unprivileged isolated-guest installer gates.
+- Keep network-quorum fixture drivers runnable during synchronous private crypto work; add public offline-kit preparation and fail-closed unprivileged guest installer gates. Mocked VM checks use private definitions while runtime UUID checks remain required. Test-only bounded numeric admission traces and separate Room-policy regrant coverage preserve all OneShot cases.
 - Explicitly release history-key initialization ownership when its operation ends,
   even if a duplicated directory descriptor survives; preserve active exclusivity.
 - Accept explicitly provisioned local trust roots with attestation bundles for

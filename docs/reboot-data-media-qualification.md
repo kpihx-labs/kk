@@ -27,3 +27,29 @@ cleanup, with digest
 The pages had zero media tiles then: this is not evidence of file transfer under
 simultaneous-media load. Native file-picker interaction, completed browser disk
 saving, physical source selection and final process restart remain separate gates.
+
+## Concurrent-file Continuation, 2026-10-29
+
+Main relaunched both unchanged profiles in foreground panes `%122` and `%125` of
+`kpihx-labs:15`, using explicit profile paths rather than the OS catalog. Both
+retained their exact device identities, two members and epoch one. The development
+binary at source `a60aab6` reports `0.9.0-dev.2`; executable SHA-256 is
+`a81d7dd7b4254611ac5a0baa7b4f882814d12d197e5279efbf26d806dae1f67b`.
+The same owned Edge window/two tabs were reused; no new browser context was made.
+
+| Case | Observed evidence, UTC |
+| --- | --- |
+| Concurrent synthetic sources | At 18:53:28-29 each page held one screen publication and one subscription. Generated red/blue canvases replaced display capture only in those pages, with a 300-second automatic stop; no physical source was requested |
+| File during active media | Morgan submitted a generated 4,194,304-byte file at 18:53:48, after Alex's explicit incoming-file opt-in. At 18:54:03 the modal had closed with `Verified durable recipient storage.`; both pages still held both media tiles |
+| Independent bytes | Browser SHA-256 and recipient filesystem SHA-256 both equal `1dc3290cfda4caed83dd2c6f9298c2f13ee3260a801df977c000c4ac78315df5`; filesystem size is exactly 4,194,304 bytes. Alex's inventory subsequently lists the 4096-KiB file |
+| Media/control progress | Morgan's decoded counter grows from 256 before file submission to 272 after completion and 622 after new chat. Alex grows from 689 before submission to 855 after completion and 889 afterwards. Both retain publication/subscription tiles. A new chat reaches Morgan; sender reports recipient-event-queue acknowledgement, not human reading |
+| Cleanup | At 18:55:21-23 both Stop my media actions leave zero tiles; retained synthetic tracks report ended and the original display-capture functions/timers are restored. Alex's file consent is restored off. Both authenticated UI shutdowns succeed and both panes return to their shells; both QA pages are navigated to blank |
+
+This closes the earlier absence of a file sent while both synthetic media sessions
+were active. Counter snapshots bracket the transfer, not every packet: they do not
+prove a frame was decoded during each individual file-write interval, sustained
+bandwidth/latency, shaped-network contention, native file picking, browser disk-save
+completion, physical capture or new-release artifact qualification. The generated
+file remains in the disposable profile; no existing received file was deleted.
+Closing the extra blank Morgan tab returned `APPROVAL_TIMEOUT`; it remains blank,
+not proven closed. No raw-CDP alternative bypassed that approval boundary.

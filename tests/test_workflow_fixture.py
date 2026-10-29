@@ -1,4 +1,4 @@
-"""Keep the resource-contained UI workflow mandatory in every release check."""
+"""Preserve mandatory product gates and native unsupported-platform checks."""
 
 import re
 import unittest
@@ -53,6 +53,19 @@ class WorkflowFixtureTests(unittest.TestCase):
             self.assertIn("  image:", body[1])
             self.assertNotIn("  tags:", body[1], f"{job} overrides the container-runner contract")
             self.assertNotIn("  inherit:", body[1], f"{job} disables the runner contract")
+
+    def test_native_windows_executes_the_powershell_refusal_contract(self):
+        native = (ROOT / ".github/workflows/native.yml").read_text()
+        step = re.search(
+            r"(?ms)^      - name: Execute Windows PowerShell installation refusal\n"
+            r"(.*?)(?=^      - name:|\Z)", native,
+        )
+        self.assertIsNotNone(step, "Windows must execute the real adapter, not inherit a local skip")
+        self.assertIn("if: runner.os == 'Windows'", step[1])
+        self.assertIn("pwsh -NoProfile -File ./scripts/install.ps1", step[1])
+        self.assertIn("$LASTEXITCODE -ne 3", step[1])
+        self.assertIn("not shipped", step[1])
+        self.assertRegex(step[1], r"(?m)^          exit 0 # The expected child exit 3")
 
 
 if __name__ == "__main__":
