@@ -48,7 +48,7 @@ it does not change the installed release or qualify new distributed bytes.
 | History lifecycle | Actual two-tab disable/re-enable, local clear, unchanged-profile cold restart and bidirectional messages pass; [evidence](docs/reboot-history-qualification.md) |
 | File/media UI | Prior binary/empty/withdrawal checks plus a new 4-MiB file sent with both synthetic publication/subscription pairs active; exact recipient digest, advancing bracketed frame counters and chat pass. [Evidence](docs/reboot-data-media-qualification.md); no per-packet timing, sustained-load or physical-capture claim |
 | Distribution | Earlier bundles had integrity-only evidence; locally built corrected helper now passes real-gh offline installation/reinstall/same-version rollback of authenticated public 0.8.2 TAR bytes as nobody. Current-source published bootstrap, new ZIP/TAR exact-byte replay and inter-version rollback remain open; [executed bindings](docs/install-qualification.md) |
-| Lab preflight | Declared `fedora-44`, `mint-22.3`, `kk-peer-3` definitions/disks retained; Fedora offline replay completed and guest/network confirmed off afterwards. Earlier preflight had no artifact replay; this does not qualify new-version bytes |
+| Lab preflight | Declared definitions/disks retained. Beyond earlier preflight/offline stable replay, the exact `a60aab6` CI executable passes 25 public CLI scenarios across all three guests; retained report `public-room-cli-fe3ecdeb2b0b.json` has no failure/cleanup errors. Guests/network confirmed off afterwards. [Bindings](docs/install-qualification.md), not signed new-release or installer proof |
 
 ## Not Qualified
 

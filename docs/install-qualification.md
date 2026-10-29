@@ -92,3 +92,19 @@ including raw bootstrap executable/notices and both installer entrypoints.
 Retained input directory: `target/qualification-a60aab6`. This is internal integrity
 and source-workflow retrieval evidence, not signed release provenance or a passing
 installation. No new tag, public release or stable installation was created.
+
+### Exact Candidate Public CLI Replay
+
+The same CI executable digest above subsequently passes all 25 public room CLI
+scenarios on independent Fedora, Mint and third-peer guests. Deployment state and
+`lab/tmp/public-room-cli-fe3ecdeb2b0b.json` bind that digest; `failure` is null and
+`cleanup_errors` is empty. Cases include network enrollment, broadcasts, sensitive
+redaction, duplicate-owner refusal, cold resume, authenticated address changes,
+consented file/prefix verification, audience-limited copy offers and retrieval,
+and surviving CLI traffic/copy retrieval after the creator VM is actually off.
+Screen/audio/camera cases exchange synthetic RTP, not codecs or physical sources.
+
+Post-run libvirt checks confirm all three guests shut off and `kk-isolated`
+inactive, persistent and non-autostarted. Shutdown used only the declared guests;
+the separate stop helper's headless-definition rewrite was not invoked. This adds
+exact-byte functional evidence, not signed provenance, installer or native-OS proof.
