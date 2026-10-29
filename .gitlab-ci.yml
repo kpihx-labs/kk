@@ -30,7 +30,7 @@ rust-foundation:
     - runuser -u kk-ci -- cargo clippy --locked --all-targets -- -D warnings
     # The unprivileged shell must own the pipe reopened by cancellable stdio.
     # pipefail preserves a Cargo failure instead of reporting cat's success.
-    - runuser -u kk-ci -- bash -o pipefail -c 'cargo test --locked --all-targets 2>&1 | cat'
+    - runuser -u kk-ci -- bash -o pipefail -c 'make rust-test 2>&1 | cat'
     - runuser -u kk-ci -- cargo doc --locked --no-deps
   variables:
     RUSTDOCFLAGS: -D warnings

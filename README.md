@@ -70,11 +70,20 @@ pinned Ruff through `RUFF`; the installed application needs none of these tools.
 ```sh
 make help           # Actual targets and their purpose
 make check          # Product format, lint, tests, docs and packaging checks
+make rust-test      # Concurrent Rust batch, then the mandatory two-device workflow
+make ui-workflow-check # Run that exact workflow once with its original bounds
 make python-check   # Python release/fixture lint, also included in make check
 make docs-check     # Links, tables, wire names and obsolete command examples
 make sdk-check      # Upstream vectors and independent OPAQUE interoperability
 make lab-check      # Lab tooling checks; does not change VMs
 ```
+
+`make rust-test` runs the concurrent Rust batch, then the exact compound
+two-device UI workflow once outside unrelated crypto/fsync load. The workflow is
+not ignored in ordinary Cargo runs; its assertions and production deadlines are
+unchanged. `make check` and GitLab's Rust lane both require the shared target.
+This separates verification workloads, not a guarantee against operational
+timeouts under arbitrary host load. It does not replace guest or artifact replay.
 
 K&K's original code uses [BUSL-1.1](LICENSE), transitioning to AGPL-3.0-only under
 the terms and date in that file. Imported code retains its own licenses and

@@ -3,12 +3,15 @@ SHELL := /bin/sh
 GITHUB_SSH_COMMAND ?= ssh
 GITLAB_SSH_COMMAND ?= ssh
 RUFF ?= ruff
+UI_WORKFLOW_TEST := ui::tests::ui_http_pairs_independent_devices_owns_foreground_rooms_and_redacts_sensitive_events
 
-.PHONY: help check docs-check ui-check fixture-check packaging-check python-check workflow-check sdk-check hax-check bundle verify-bundle install tag-release publish-tag build fmt run push lab-check lab-test lab-crypto-test lab-control-test lab-room-test lab-enrollment-test lab-room-cli-test lab-native-media-test lab-stop
+.PHONY: help check rust-test ui-workflow-check docs-check ui-check fixture-check packaging-check python-check workflow-check sdk-check hax-check bundle verify-bundle install tag-release publish-tag build fmt run push lab-check lab-test lab-crypto-test lab-control-test lab-room-test lab-enrollment-test lab-room-cli-test lab-native-media-test lab-stop
 
 help: ## Show available tasks
 	@printf '%s\n' \
 	  'make check           Format, lint, tests and documentation' \
+	  'make rust-test       Concurrent Rust batch, then mandatory resource-contained UI workflow' \
+	  'make ui-workflow-check Exact two-device workflow, with original deadlines and assertions' \
 	  'make docs-check      Current guide links, tables, wire tokens and examples' \
 	  'make fixture-check   Offline layout and opaque-input safety regressions' \
 	  'make python-check    Pinned CI Python lint; may require tool cache/network' \
@@ -38,13 +41,20 @@ check: ## Validate offline with local loopback network tests
 	$(MAKE) python-check
 	cargo fmt --package kk -- --check
 	cargo clippy --offline --locked --all-targets -- -D warnings
-	cargo test --offline --locked --all-targets
+	$(MAKE) rust-test
 	cargo test --offline --locked --doc
 	RUSTDOCFLAGS="-D warnings" cargo doc --offline --locked --no-deps
 	$(MAKE) ui-check
 	$(MAKE) fixture-check
 	$(MAKE) packaging-check
 	$(MAKE) docs-check
+
+rust-test: ## Preserve concurrent coverage and run the compound workflow once outside unrelated load
+	cargo test --offline --locked --all-targets -- --skip $(UI_WORKFLOW_TEST)
+	$(MAKE) ui-workflow-check
+
+ui-workflow-check: ## Mandatory integration-sized gate; no retry or deadline changes
+	cargo test --offline --locked --lib $(UI_WORKFLOW_TEST) -- --exact --nocapture
 
 docs-check: ## Pure-Python current documentation consistency checks; no network or VM mutation
 	uv run --no-project python -m unittest discover -s tests -p 'test_docs.py'

@@ -3,6 +3,18 @@
 This records changes, not live delivery status. See [TODO.md](TODO.md) for the
 current state and Git history for detailed implementation checkpoints.
 
+## 0.9.0-dev.2 - Unreleased Verification Checkpoint
+
+- Keep the failed development tag immutable and use the next prerelease for
+  corrected verification wiring.
+- Run the compound two-device HTTP workflow once in a mandatory phase after the
+  concurrent Rust batch, without changing its assertions or production deadlines.
+  Ordinary Cargo test discovery still includes the case.
+- Share that phase through `make rust-test` in local/GitHub and GitLab checks,
+  with regressions guarding exact case selection and release-gate dependency.
+- Do not treat this source checkpoint as authenticated artifact delivery or a
+  completed release; origin verification and exact-byte replay remain required.
+
 ## 0.9.0-dev.1 - Unreleased Development Checkpoint
 
 - Add explicit local profile catalogs, locked settings updates, CLI management
