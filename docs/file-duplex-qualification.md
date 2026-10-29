@@ -32,6 +32,21 @@ the revoked body write, response EOF and re-enable/fresh-offer entry.
 The deterministic early-EOF defect is independently reproduced and corrected;
 it is not established as the cause of that manual wire-peer/native failure.
 Existing native cases, same-connection reuse and assertions remain intact.
+The revoked-body fixture now also polls its terminal response while attempting
+the old body: a receiver that rejects need not drain it to free upload credit.
+EOF cancels only residual old writing; an ACK still fails the unchanged assertion.
+Publication-paused cases retain their existing full-body/barrier sequence. Fresh
+offer success and both lifetime-budget assertions are unchanged. After the earlier
+16-case pass, a new blocked-credit wire-peer regression makes the serial fixture
+mutation fail at eight seconds; restored duplex handling passes in approximately
+0.03 seconds. All 17 local cases and Clippy pass. The helper is shared by receive
+and fetch wire peers, not copied into production adapters.
+
+`1f846ef` Verify passes; native Windows/ARM pass, but Intel job `123700874544`
+fails probe 4 in `live_fetch_withdrawal_does_not_revive_after_regrant`, at the
+whole-case bound (33.11 seconds observed). Its remote wire peer had the same serial
+body/receipt sequence. Hosted qualification of the shared fixture correction is
+pending; no assertion/deadline change, reconnect or retry hides this failure.
 The exact `a60aab6` VM/GUI evidence predates this production sender change;
 new-byte replay and native gates are still required before a release claim.
 

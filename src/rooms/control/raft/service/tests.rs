@@ -144,6 +144,81 @@ mod consent {
         assert_eq!(&resume[8..], Sha256::digest([]).as_slice());
     }
 
+    async fn revoked_body_outcome(
+        send: &mut quinn::SendStream,
+        recv: &mut quinn::RecvStream,
+        payload: &[u8],
+        trace: impl Fn(&'static str),
+    ) -> std::result::Result<Vec<u8>, quinn::ReadToEndError> {
+        let body = async {
+            trace("revoked transfer body write");
+            let _ = send.write_all(payload).await;
+            trace("revoked transfer body write returned");
+            let _ = send.finish();
+        };
+        // A rejecting receiver need not drain the old body to free our credit.
+        // Continue attempting it, but observe its terminal response concurrently.
+        tokio::select! {
+            ack = recv.read_to_end(32) => ack,
+            () = body => {
+                trace("revoked transfer reaches EOF without ACK");
+                recv.read_to_end(32).await
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn revoked_wire_peer_observes_eof_without_remaining_upload_credit() {
+        let root = tempfile::tempdir().unwrap();
+        let alice = Identity::create(&root.path().join("alice")).unwrap();
+        let bob = Identity::create(&root.path().join("bob")).unwrap();
+        let server =
+            crate::transport::server("127.0.0.1:0".parse().unwrap(), &bob, &alice.peer(), ALPN)
+                .unwrap();
+        let address = server.local_addr().unwrap();
+        let client = crate::transport::client(address, &alice, &bob.peer(), ALPN).unwrap();
+        let (release, held) = tokio::sync::oneshot::channel();
+        let reject = async {
+            let connection = crate::transport::accept(&server, &alice.peer())
+                .await
+                .unwrap();
+            let (mut response, request) = connection.accept_bi().await.unwrap();
+            response.finish().unwrap();
+            // Hold the unread request until the caller has observed EOF, not
+            // STOP_SENDING or a freed upload window from dropping this handle.
+            held.await.unwrap();
+            drop(request);
+            connection.close(0u32.into(), b"");
+        };
+        let attempt = async {
+            let connection = client
+                .connect(address, crate::config::TLS_NAME)
+                .unwrap()
+                .await
+                .unwrap();
+            let (mut send, mut recv) = connection.open_bi().await.unwrap();
+            let payload = vec![0x69; crate::config::WINDOW_BYTES as usize * 4];
+            let outcome = tokio::time::timeout(
+                DEADLINE,
+                revoked_body_outcome(&mut send, &mut recv, &payload, |_| {}),
+            )
+            .await;
+            release.send(()).unwrap();
+            assert!(
+                matches!(outcome, Ok(Ok(ref bytes)) if bytes.is_empty()),
+                "terminal response must not wait for upload credit: {outcome:?}"
+            );
+            connection.close(0u32.into(), b"");
+        };
+        tokio::time::timeout(DEADLINE * 2, async {
+            tokio::join!(reject, attempt);
+        })
+        .await
+        .unwrap();
+        server.close(0u32.into(), b"");
+        client.close(0u32.into(), b"");
+    }
+
     async fn shutdown(control: Arc<ControlNode>) {
         match Arc::try_unwrap(control) {
             Ok(control) => control.shutdown().await.unwrap(),
@@ -254,18 +329,15 @@ mod consent {
                     );
                 }
                 trace("withdrawal and optional regrant returned");
-                if let Some(release) = publication_release {
+                let ack = if let Some(release) = publication_release {
                     // Withdrawal has returned while the old commit worker is
                     // still paused outside its publication gate.
                     release.send(()).unwrap();
+                    trace("revoked transfer reaches EOF without ACK");
+                    recv.read_to_end(32).await
                 } else {
-                    trace("revoked transfer body write");
-                    let _ = send.write_all(&payload).await;
-                    trace("revoked transfer body write returned");
-                    let _ = send.finish();
-                }
-                trace("revoked transfer reaches EOF without ACK");
-                let ack = recv.read_to_end(32).await;
+                    revoked_body_outcome(&mut send, &mut recv, &payload, &trace).await
+                };
                 trace("revoked transfer EOF returned");
                 assert!(
                     ack.as_ref().map_or(true, |bytes| bytes.is_empty()),
@@ -676,6 +748,7 @@ mod consent {
     }
 
     async fn fetch_case(regrant_before_body: bool, at_publication: bool) {
+        let started = std::time::Instant::now();
         tokio::time::timeout(
             DEADLINE * 4,
             tokio::task::LocalSet::new().run_until(async {
@@ -705,6 +778,7 @@ mod consent {
                 let (ready, barrier) = tokio::sync::oneshot::channel();
                 let (release, released) = tokio::sync::oneshot::channel();
                 let remote = tokio::task::spawn_local(async move {
+                    let trace = |phase| eprintln!("paced fetch {address} (regrant={regrant_before_body}, publication={at_publication}): {phase} at {:?}", started.elapsed());
                     let connection = endpoint.accept().await.unwrap().await.unwrap();
                     let (mut send, mut recv) = connection.accept_bi().await.unwrap();
                     assert_eq!(
@@ -720,11 +794,11 @@ mod consent {
                     send.write_all(&size.to_be_bytes()).await.unwrap();
                     send.write_all(&hash).await.unwrap();
                     resume_barrier(&mut recv).await;
+                    trace("resume prefix returned; wait body release");
                     ready.send(()).unwrap();
                     released.await.unwrap();
-                    let _ = send.write_all(&payload).await;
-                    let _ = send.finish();
-                    let ack = recv.read_to_end(32).await;
+                    trace("body release returned");
+                    let ack = revoked_body_outcome(&mut send, &mut recv, &payload, trace).await;
                     assert!(
                         ack.as_ref().map_or(true, |bytes| bytes.is_empty()),
                         "revoked fetch sent ACK bytes: {ack:?}"

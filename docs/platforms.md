@@ -5,7 +5,7 @@
 | Linux x86_64 | Host/isolated Fedora and Mint; CLI, storage, rooms, copies and native virtual-display tests | Physical radio/devices or an independently audited deployment |
 | Linux aarch64 | Native hosted CI runs the product checks and builds archives | A local ARM VM or physical capture test |
 | Windows native | `a60aab6` foundation passes; formerly pending PowerShell refusal now executes successfully on `114705b`; protected storage remains refused | No full-feature Windows archive or product qualification |
-| macOS native | `a60aab6` selections pass both architectures; `114705b` Intel passes but ARM consent probe 4 fails, with fresh offer starting only at the global deadline | No full-product support or physical capture claim from compilation or a partial run |
+| macOS native | `a60aab6` selections pass both; `114705b` ARM receive probe 4 fails near the global deadline; `1f846ef` ARM passes but Intel fetch probe 4 fails. Shared duplex wire-peer correction needs fresh hosted proof | No full-product support or physical capture claim from compilation or a partial run |
 | WSL2 | Not an executed qualification | Not native Windows support |
 | Mobile browser | Narrow-screen light/dark layout fixture | No physical phone, keyboard or mobile-backend claim |
 
