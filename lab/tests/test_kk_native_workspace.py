@@ -1,5 +1,6 @@
-"""Native fixture profiles must not inherit a shared checkout ancestor."""
+"""Native fixture security and real TCP-listener allocation remain explicit."""
 
+import ast
 import importlib.util
 import inspect
 import os
@@ -39,6 +40,19 @@ class NativeWorkspaceTests(unittest.TestCase):
 
     def test_native_driver_actually_uses_the_private_workspace(self):
         self.assertIn("directory = private_workspace()", inspect.getsource(NATIVE.main))
+
+    def test_tcp_invitation_port_is_allocated_by_the_actual_listener(self):
+        tree = ast.parse(inspect.getsource(NATIVE.main))
+        invite = next(node.value for node in ast.walk(tree)
+                      if isinstance(node, ast.Assign)
+                      and any(isinstance(target, ast.Name) and target.id == "inviter"
+                              for target in node.targets))
+        position = next(index for index, argument in enumerate(invite.args)
+                        if isinstance(argument, ast.Constant) and argument.value == "--bind")
+        binding = invite.args[position + 1]
+        self.assertIsInstance(binding, ast.JoinedStr)
+        self.assertEqual([part.value for part in binding.values if isinstance(part, ast.Constant)], [":0"])
+        self.assertEqual(sum(isinstance(part, ast.FormattedValue) for part in binding.values), 1)
 
 
 if __name__ == "__main__":

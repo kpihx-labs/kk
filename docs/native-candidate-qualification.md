@@ -31,3 +31,61 @@ these observations alone do not prove every intermediate socket-release timing.
 Neither successful functional execution nor archive integrity supplies signed
 release provenance, installer qualification, physical-network traversal evidence
 or full native Windows/macOS support.
+
+## Production-fix Checkpoint, `1f846ef`
+
+The [production-fix executable binding](file-duplex-qualification.md#executed-production-fix-checkpoint-1f846ef)
+is distinct from the earlier `a60aab6` binary. Report
+`lab/tmp/native-media-452c36fbbda2.json` records 1,459 packets and actual playback,
+fresh decoded private-display pixels during bulk, and nine text acknowledgements
+at 125 KiB/s. Maximum observed ACK is 1.719293 seconds; bulk completion is observed
+at 21.500533 seconds, with the expected recipient digest. Failure is null and
+cleanup_errors is empty; the previous bandwidth policy is restored exactly.
+
+Both Fedora and Mint room processes exit 0 while retaining the known close-grace
+diagnostic; the retained host-room log also contains it. The report does not persist
+every host-process exit code, so no all-host-exit-code claim is inferred. After this
+run, all three guests are confirmed shut off and the
+dedicated network inactive/persistent/non-autostarted. This does not qualify a
+separate build or erase the earlier diagnostics and failed workspace attempt.
+
+## Corrected Fixture Checkpoint, `cfa8145`
+
+The [corrected executable binding](install-qualification.md#corrected-fixture-checkpoint-cfa8145)
+is independently replayed, not inferred byte-identical to `1f846ef`.
+`lab/tmp/public-room-cli-c648942a321c.json` passes all 25 CLI scenarios.
+`lab/tmp/native-media-585869681e93.json` records 1,507 packets with playback=true,
+recorded=false, and fresh decoded private-display pixels during the bulk file.
+At 125 KiB/s, nine text acknowledgements overlap bulk; maximum observed ACK is
+1.644308 seconds and bulk completion is observed at 21.652393 seconds. Recipient
+digest matches. Both reports have failure=null and cleanup_errors=[].
+
+The prior live bandwidth policy is restored exactly. All three guests and the
+dedicated network are confirmed off afterwards; definitions/disks are retained.
+Mint and the host room log retain the known close-grace diagnostic; Fedora exits
+0 without it. Publisher/bulk logs report success; pattern/Xwayland logs are empty.
+These are this candidate's observations, not signed publication or an SLA.
+
+## Listener And Executable Binding Guards
+
+The native invitation listener now binds TCP port zero, rather than a UDP-derived
+neighbour port. Its source guard fails on the old expression and passes after
+the correction. Actual replay `lab/tmp/native-media-7cb86df2295f.json` passes with
+the same corrected executable: 1,491 packets, nine overlapping ACK samples, maximum
+observed ACK 1.670950 seconds at 125 KiB/s, and verified recipient bytes.
+
+Earlier reports recorded the selected host digest and trusted guest-agent upload;
+they did not persist independently measured guest executable digests. The new shared
+guard checks only the public deployed CLI with guest-side SHA-256, before chmod or
+execution, and again at each public/native gate. Invalid expected hashes, mismatched
+digests, missing output and wrong reported paths fail closed. Four red/green tests
+bring the lab suite to 40 passing cases, without exporting private guest files.
+
+Before redeployment, direct probes confirm the retained executable on all three
+guests matches the corrected digest. The strengthened replay passes all 25 public
+CLI scenarios in `lab/tmp/public-room-cli-6e9d4f6ce3fe.json`; its
+`guest_binary_sha256` records all three independent measurements. Native report
+`lab/tmp/native-media-d90222529fd0.json` records both participating guest digests,
+1,466 packets and nine ACK samples during bulk; maximum observed ACK is 1.684260
+seconds, bulk completion 21.928632 seconds. Both reports have null failure and no
+cleanup errors; the prior QoS policy and guest/network shut-off are verified.

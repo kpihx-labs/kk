@@ -46,9 +46,26 @@ and fetch wire peers, not copied into production adapters.
 fails probe 4 in `live_fetch_withdrawal_does_not_revive_after_regrant`, at the
 whole-case bound (33.11 seconds observed). Its remote wire peer had the same serial
 body/receipt sequence. Hosted qualification of the shared fixture correction is
-pending; no assertion/deadline change, reconnect or retry hides this failure.
+initially pending; no assertion/deadline change, reconnect or retry hides this failure.
+At `cfa8145`, Verify `40950864252` and Native `40950864320` both succeed. ARM job
+`123718300554` and Intel job `123718301059` each pass five fail-fast probes of all
+17 consent cases (zero ignored/failed). That qualifies the selected corrected
+fixture snapshot, not every unexecuted native product feature or a Quinn root-cause theory.
 The exact `a60aab6` VM/GUI evidence predates this production sender change;
 new-byte replay and native gates are still required before a release claim.
+The subsequent `cfa8145` executable is now independently replayed; its [binding and
+evidence](install-qualification.md#corrected-fixture-checkpoint-cfa8145) do not authenticate a new release.
+
+## Executed Production-fix Checkpoint, `1f846ef`
+
+Verify run `40945852870`, artifact `12930301087`, supplies executable SHA-256
+`b9e757c16d62ff7f5ea2427c6aa8abb4618298d05173ecd4da18d6072422d620`.
+Both TAR/ZIP verify all 852 members and all eight checksum subjects pass.
+That exact executable passes the 25-scenario three-guest CLI gate, report
+`lab/tmp/public-room-cli-e66cd14cb9c0.json`, with failure=null/cleanup_errors=[].
+Native private-display/bulk/control replay also passes; [metrics and retained
+diagnostics](native-candidate-qualification.md#production-fix-checkpoint-1f846ef).
+This is unsigned candidate functionality, not a new authenticated installation.
 
 Upstream issue [1421](https://github.com/quinn-rs/quinn/issues/1421) and fix
 [1869](https://github.com/quinn-rs/quinn/pull/1869) describe older stopped-stream

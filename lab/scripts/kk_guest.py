@@ -3,12 +3,14 @@
 import base64
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path, PurePosixPath
 import xml.etree.ElementTree as ET
 
 URI = "qemu:///system"
+CLI = "/usr/local/bin/kk"
 
 
 def selected_binary():
@@ -106,6 +108,15 @@ class Guest:
             result = self.wait(pid)
             if result["code"]:
                 raise OSError(f"{self.name}: guest file upload failed: {result['err']}")
+
+    def verify_executable(self, expected):
+        """Read only the public deployed CLI digest, never arbitrary private files."""
+        if not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise ValueError("expected executable digest must be canonical SHA-256")
+        fields = self.run("/usr/bin/sha256sum", CLI)["out"].split()
+        if fields != [expected, CLI]:
+            raise RuntimeError(f"{self.name}: deployed executable digest does not match selected bytes")
+        return fields[0]
 
     def public_certificate(self, identity_directory):
         # Deliberately no arbitrary read/private-key export operation.

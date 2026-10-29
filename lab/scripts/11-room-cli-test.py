@@ -7,10 +7,9 @@ import time
 import uuid
 from pathlib import Path
 
-from kk_guest import Guest, selected_binary, shutdown_guests, virsh
+from kk_guest import CLI, Guest, selected_binary, shutdown_guests, virsh
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = "/usr/local/bin/kk"
 PORT = 45462
 
 
@@ -26,6 +25,7 @@ def main():
     work = "/var/tmp/kk-room-" + run
     profile = work + "/profile"
     nodes = [{**peer, "guest": Guest(peer["name"])} for peer in roster]
+    guest_digests = {node["name"]: node["guest"].verify_executable(binary_hash) for node in nodes}
     active, results, received = {}, [], {}
     media_processes = {}
 
@@ -275,7 +275,7 @@ def main():
                 errors.append(str(error))
         report = ROOT / "tmp" / f"public-room-cli-{run}.json"
         report.write_text(json.dumps({"scope": "Actual public CLI on three independent isolated guests; not fixture commands, Byzantine consensus, native media or physical radio proof",
-                                      "run_id": run, "binary_sha256": binary_hash, "roster": [{"name": node["name"], "ip": node["ip"]} for node in nodes],
+                                      "run_id": run, "binary_sha256": binary_hash, "guest_binary_sha256": guest_digests, "roster": [{"name": node["name"], "ip": node["ip"]} for node in nodes],
                                       "results": results, "failure": str(primary) if primary else None, "cleanup_errors": errors}, indent=2) + "\n")
         print("Evidence: " + str(report), flush=True)
         if errors:

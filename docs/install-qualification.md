@@ -108,3 +108,12 @@ Post-run libvirt checks confirm all three guests shut off and `kk-isolated`
 inactive, persistent and non-autostarted. Shutdown used only the declared guests;
 the separate stop helper's headless-definition rewrite was not invoked. This adds
 exact-byte functional evidence, not signed provenance, installer or native-OS proof.
+
+## Corrected Fixture Checkpoint, `cfa8145`
+
+Unsigned artifact `12931298323` from Verify `40950864252` has executable SHA-256
+`8c09dd29ddb5f5664003f5065744398ffa955434cef8911049595f528907b0c9`.
+Both TAR/ZIP verify 852 members; all eight checksums pass. Inputs remain in
+`target/qualification-cfa8145`. This digest passes 25 three-guest CLI scenarios and
+native contention; [exact reports and limits](native-candidate-qualification.md#corrected-fixture-checkpoint-cfa8145).
+It differs from `1f846ef`, so that earlier binary's results were not substituted.

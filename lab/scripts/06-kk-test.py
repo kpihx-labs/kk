@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from kk_file_cases import file_cases
-from kk_guest import Guest, declared_peers, selected_binary, virsh, shutdown_guests
+from kk_guest import CLI, Guest, declared_peers, selected_binary, virsh, shutdown_guests
 from kk_node_cases import node_cases
 from kk_pair_cases import pair_cases
 from kk_sensitive_cases import sensitive_cases
@@ -49,24 +49,26 @@ def isolate(peer):
 def setup():
     binary = selected_binary()
     data = binary.read_bytes()
+    expected = hashlib.sha256(data).hexdigest()
     run_id = uuid.uuid4().hex[:12]
     work = "/var/tmp/kk-lab-" + run_id
     for peer in PEERS:
         guest = Guest(peer["name"])
         guest.agent("guest-ping")
         print(f"Preparing {guest.name}", flush=True)
-        guest.upload("/usr/local/bin/kk", data)
-        guest.run("/usr/bin/chmod", "0755", "/usr/local/bin/kk")
+        guest.upload(CLI, data)
+        peer["binary_sha256"] = guest.verify_executable(expected)
+        guest.run("/usr/bin/chmod", "0755", CLI)
         if guest.run("/usr/bin/test", "-x", "/usr/sbin/restorecon", check=False)["code"] == 0:
-            guest.run("/usr/sbin/restorecon", "/usr/local/bin/kk")
+            guest.run("/usr/sbin/restorecon", CLI)
             peer["selinux"] = guest.run("getenforce")["out"].strip()
             if peer["selinux"] != "Enforcing":
                 raise RuntimeError(f"{guest.name}: SELinux enforcement was unexpectedly weakened")
-        print(guest.run("/usr/local/bin/kk", "--version")["out"].strip(), flush=True)
+        print(guest.run(CLI, "--version")["out"].strip(), flush=True)
         guest.run("/usr/bin/mkdir", "-m", "0700", work)
         peer["identity"] = work + "/identity"
         peer["certificate"] = work + "/peer.der"
-        peer["fingerprint"] = guest.run("/usr/local/bin/kk", "identity", "create", peer["identity"])["out"].strip()
+        peer["fingerprint"] = guest.run(CLI, "identity", "create", peer["identity"])["out"].strip()
         isolate(peer)
         (ROOT / "xml" / f"{guest.name}.xml").write_text(virsh("dumpxml", guest.name, "--inactive"))
         peer["kernel"] = guest.run("/usr/bin/uname", "-sr")["out"].strip()
@@ -79,7 +81,7 @@ def setup():
     primary = PEERS[:2]
     for own, other in [primary, primary[::-1]]:
         Guest(own["name"]).upload(own["certificate"], Guest(other["name"]).public_certificate(other["identity"]))
-    state = {"run_id": run_id, "binary_sha256": hashlib.sha256(data).hexdigest(), "peers": PEERS}
+    state = {"run_id": run_id, "binary_sha256": expected, "peers": PEERS}
     STATE.parent.mkdir(mode=0o700, exist_ok=True)
     (STATE.parent / f"kk-state-{run_id}.json").write_text(json.dumps(state, indent=2) + "\n")
     STATE.write_text(json.dumps(state, indent=2) + "\n")

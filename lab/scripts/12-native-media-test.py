@@ -17,10 +17,9 @@ import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from kk_guest import Guest, declared_peers, selected_binary, virsh
+from kk_guest import CLI, Guest, declared_peers, selected_binary, virsh
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = "/usr/local/bin/kk"
 
 
 def address(ip, kind=socket.SOCK_DGRAM):
@@ -102,6 +101,10 @@ def main():
         for plugin in ["ximagesrc", "vp8enc", "rtpvp8pay", "rtpstreamdepay", "rtpvp8depay", "vp8dec", "autovideosink"]:
             guest.run("gst-inspect-1.0", plugin)
         results["binary_sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
+        results["guest_binary_sha256"] = {
+            selected.name: selected.verify_executable(results["binary_sha256"])
+            for selected in (guest, third)
+        }
         for selected in [guest, third]:
             selected.run("mkdir", "-m", "0700", remote)
         identities.append(call("init").stdout.strip().removeprefix("IDENTITY sha256:"))
@@ -118,7 +121,7 @@ def main():
             offer = "/var/tmp/kk-room-" + uuid.uuid4().hex[:12]
             third.run("mkdir", "-m", "0700", offer)
             invitation = offer + "/scoped-invitation.json"
-            inviter = third.start(CLI, "--profile", remote + "/profile", "room", "invite", "team", "--bind", f"{controller['ip']}:{int(port) + 1}", "--invite-out", invitation, "--role", "moderator", "--confirm")
+            inviter = third.start(CLI, "--profile", remote + "/profile", "room", "invite", "team", "--bind", f"{controller['ip']}:0", "--invite-out", invitation, "--role", "moderator", "--confirm")
             guest_processes.append((third, inviter))
             deadline = time.monotonic() + 10
             while third.run("test", "-f", invitation, check=False)["code"]:
