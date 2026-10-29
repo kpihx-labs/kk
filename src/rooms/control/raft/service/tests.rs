@@ -240,6 +240,11 @@ mod consent {
                     stage.set("verify retained private staging");
                     assert_staging_retained(&destination, &payload).await;
                 }
+                // This attempt has reached its terminal no-ACK outcome. Retire
+                // both stream handles before the next effect on this connection;
+                // shadowing them below would retain them until the scope ends.
+                drop(send);
+                drop(recv);
 
                 assert_eq!(control.files_enabled().unwrap(), regrant_before_body);
                 control
@@ -249,10 +254,12 @@ mod consent {
                 // A distinct new offer succeeds, proving regrant is effective rather
                 // than merely leaving the entire receiver permanently disabled.
                 let fresh = vec![0x71; payload.len()];
-                stage.set("fresh offer and resume barrier");
+                stage.set("open fresh offer and await acceptance");
                 let (mut send, mut recv, fresh_hash) =
                     offer(&connection, control.room_id(), &fresh).await;
+                stage.set("fresh offer accepted; await resume prefix");
                 resume_barrier(&mut recv).await;
+                stage.set("fresh payload write and finish");
                 send.write_all(&fresh).await.unwrap();
                 send.finish().unwrap();
                 stage.set("fresh transfer verified ACK");
@@ -267,6 +274,8 @@ mod consent {
                     .hash_hex()
                 ));
                 assert_eq!(tokio::fs::read(&fresh_destination).await.unwrap(), fresh);
+                drop(send);
+                drop(recv);
                 control.configure_files(None, size, size * 2).unwrap();
                 control
                     .configure_files(Some(inbox.clone()), size, size * 2)
