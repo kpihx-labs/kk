@@ -89,3 +89,20 @@ CLI scenarios in `lab/tmp/public-room-cli-6e9d4f6ce3fe.json`; its
 1,466 packets and nine ACK samples during bulk; maximum observed ACK is 1.684260
 seconds, bulk completion 21.928632 seconds. Both reports have null failure and no
 cleanup errors; the prior QoS policy and guest/network shut-off are verified.
+
+## Broader Baseline Compatibility
+
+The first broader baseline invocation retains partial report
+`lab/tmp/kk-results-2371f5ec13c1-1793312670632847890.json` but fails in the legacy
+node harness: default status is now human-readable, and successful JSON status may
+legitimately describe an offline node. That partial report is not a baseline pass.
+The adapter now explicitly requests `status --json`, extracts only an online node's
+status, and rejects malformed/legacy/unknown shapes. Five red/green regression
+cases bring lab coverage to 45; readiness deadlines and application behavior are
+unchanged. The initially pending corrected replay now passes all 66 multi-guest
+scenarios; report `lab/tmp/kk-results-ce2745ed2663-1793313646433414997.json` records
+the corrected digest on the host and independently on each guest. It includes
+clean/limited/difficult/blackhole networking, direct/contact files and interruption/
+resume, sensitive input, pairing/revocation, live-node bulk/control progress and
+crash/restart/socket release. Capture stays within the declared guests. All three
+guests and the dedicated network are confirmed off after the run; disks retained.
