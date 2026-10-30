@@ -103,3 +103,10 @@ reserved for its mandatory phase. That passing execution does not identify or
 close the earlier intermittent Welcome failure. The compiler correction and
 response diagnostics can be evaluated independently; no routing/assertion change
 is claimed as its fix.
+
+Correction `1712559` subsequently committed through a successful full hook and
+was pushed to GitHub. Verify `41047460918` and Native `41047460933` both succeeded;
+Native reported an Apple ARM runner-capacity annotation, not a test failure.
+This supersedes the staged/uncommitted checkpoint above, not its failure record
+or the unresolved Welcome cause. Later advisory moderation controls are a separate
+working-tree slice and are not covered by those hosted results.

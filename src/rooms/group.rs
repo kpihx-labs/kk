@@ -233,6 +233,12 @@ impl Group {
     pub fn is_active(&self) -> bool {
         !self.poisoned && self.state.is_active()
     }
+    pub(crate) fn own_rights(&self) -> Option<super::Rights> {
+        self.ready().ok()?;
+        self.member(self.state.own_leaf_index())
+            .ok()
+            .map(|member| member.rights())
+    }
     pub fn peers(&self) -> Vec<Peer> {
         self.members
             .iter()

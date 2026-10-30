@@ -33,6 +33,13 @@ local browser -> authenticated loopback API -> same room/core owners as CLI
 Admission is not a vote. Room identities do not become global contacts. Untrusted
 message text is not rendered as HTML, and the workspace is not durable chat history.
 
+Action availability comes from this device's verified private membership cache.
+Unknown or inactive capabilities disable publishing and administrative controls;
+they never grant backend permission. Every operation still rechecks current quorum,
+epoch and local policy. Invitation choices respect the issuer's delegation ceiling.
+Before removing a voting member, explicitly retire its controller vote. Approving
+the voter set requires administrative data rights; holding a vote grants no data role.
+
 After starting a room, use **Invite a member** and **Download invitation**. Share
 that single-use JSON privately, then import it through **Join with an invitation**
 on the other profile/device. A fingerprint is not an invitation. Both sides compare

@@ -145,6 +145,12 @@ async fn backend_enrollment_orchestrators_preserve_reader_rights_and_no_global_c
             (running.await.unwrap(), joined)
         })
         .await;
+    let reader = joined.room.capabilities();
+    assert!(!reader.publish && !reader.invite && !reader.remove && !reader.control);
+    assert!(reader.admission_roles.is_empty());
+    let moderator = owner.capabilities();
+    assert!(moderator.publish && moderator.invite && moderator.remove && moderator.control);
+    assert_eq!(moderator.admission_roles.len(), 4);
     assert!(matches!(
         joined
             .room

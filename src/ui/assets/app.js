@@ -79,6 +79,8 @@ async function api(path, body) {
 }
 async function act(action) { const value = await api("/api/action", action); await refresh(); return value.result; }
 function room() { return current?.rooms.find((entry) => entry.name === selected); }
+function roomActionAllowed(target, action) { return target?.status?.active === true && target.status.capabilities?.[action] === true; }
+function admissionRoles(target) { const roles = target?.status?.capabilities?.admission_roles; return roomActionAllowed(target, "invite") && Array.isArray(roles) ? [...new Set(roles)].filter(role => ["participant", "reader", "inviter", "moderator"].includes(role)) : []; }
 function memberName(target, id) { return target?.presentation?.find(member => member.id === id)?.display_name || "Unnamed member"; }
 function memberChoice(target, id) { return memberName(target, id) + " / " + brief(id); }
 function memberProvenance(target, id) {
@@ -98,7 +100,7 @@ function field(label, name, type = "text", value = "", note) {
   if (type !== "textarea") input.type = type; if (value) input.value = value;
   wrapper.append(input); if (note) wrapper.append(el("small", "muted", note)); return wrapper;
 }
-function roleField(value = "participant") { const wrapper = el("label", "field", "Accepted data role"); const input = el("select"); input.name = "role"; for (const role of ["participant", "reader", "inviter", "moderator"]) { const option = el("option", "", role); option.value = role; input.append(option); } input.value = value; wrapper.append(input); return wrapper; }
+function roleField(value = "participant", roles = ["participant", "reader", "inviter", "moderator"]) { const wrapper = el("label", "field", "Accepted data role"); const input = el("select"); input.name = "role"; for (const role of roles) { const option = el("option", "", role); option.value = role; input.append(option); } input.value = roles.includes(value) ? value : roles[0] || ""; wrapper.append(input); return wrapper; }
 function modal(title, controls, submit, handler) {
   const revision = ++modalRevision, active = () => revision === modalRevision && $("dialog").open;
   $("dialog-title").textContent = title; $("dialog-content").replaceChildren(...controls); $("dialog-error").textContent = ""; $("dialog-submit").textContent = submit;
@@ -128,15 +130,25 @@ function joinDialog() {
 }
 function retryJoin(operation) { if (!joinDrafts.has(operation.id)) return; joinDraft = {...joinDrafts.get(operation.id)}; dismissedOperations.add(operation.id); joinDrafts.delete(operation.id); joinDialog(); }
 function inviteDialog() {
-  const target = room(); if (!target?.status) return;
+  const target = room(), roles = admissionRoles(target); if (!roles.length) { toast("Inviting is unavailable with this device's cached data rights."); return; }
   const bind = field("Pairing listen IP:port", "bind", "text", "", "Use a different port from this room's data port."); bind.querySelector("input").required = true;
   try { const url = new URL("http://" + target.status.address); url.port = String(Number(url.port) < 65535 ? Number(url.port) + 1 : Number(url.port) - 1); bind.querySelector("input").value = url.host; } catch {}
-  modal("Invite a member", [bind, roleField(), el("p", "dialog-note", "The other device must choose the same accepted role. Compare CONFIRM on both devices before approving.")], "Create single-use invitation", async (data) => { await act({ action: "invite", name: target.name, bind: data.get("bind").trim(), role: data.get("role") }); });
+  modal("Invite a member", [bind, roleField("participant", roles), el("p", "dialog-note", "The other device must choose the same accepted role. Available roles reflect cached data rights, not fresh authorization. Compare CONFIRM on both devices before approving.")], "Create single-use invitation", async (data) => { const latest = room(); if (latest?.name !== target.name || !admissionRoles(latest).includes(data.get("role"))) throw new Error("Room or admission rights changed. Reopen this invitation."); await act({ action: "invite", name: target.name, bind: data.get("bind").trim(), role: data.get("role") }); });
 }
 function controllersDialog() {
-  const target = room(); if (!target?.status) return;
+  const target = room(); if (!roomActionAllowed(target, "control")) { toast("Controller changes require administrative data rights."); return; }
   const list = el("div"); for (const peer of target.status.members) { const row = el("label", "field"); const input = el("input"); input.type = "checkbox"; input.name = "peers"; input.value = peer; input.checked = target.status.voters.includes(peer); row.title = peer; row.append(input, el("span", "", memberChoice(target, peer))); list.append(row); }
-  modal("Choose voting controllers", [el("p", "dialog-note", "Only administrative members are eligible. This changes the consensus voter set, not anyone's data role. A majority must remain available."), list], "Approve exact controller set", async (data) => { await act({ action: "controllers", name: target.name, peers: data.getAll("peers") }); });
+  modal("Choose voting controllers", [el("p", "dialog-note", "Only current data members are eligible; approving the set requires administrative data rights. A vote does not grant publishing or moderation rights. Retire a member's vote before removing its data access. A majority must remain available."), list], "Approve exact controller set", async (data) => { const latest = room(); if (latest?.name !== target.name || !roomActionAllowed(latest, "control")) throw new Error("Room or administrative rights changed. Reopen controller selection."); await act({ action: "controllers", name: target.name, peers: data.getAll("peers") }); });
+}
+function removeMemberDialog(target, peer) {
+  const latest = room();
+  if (latest?.name !== target.name || !roomActionAllowed(latest, "remove")) { toast("Removing data access requires moderation rights."); return; }
+  if (latest.status.voters.includes(peer)) { toast("Retire this member's controller vote before removing data access."); return; }
+  modal("Remove data membership?", [el("p", "dialog-note", "This rotates the private group epoch. Names are presentation only; verify the exact device fingerprint. Previously received data cannot be recalled."), el("code", "fingerprint", peer)], "Remove data access", async () => {
+    const currentRoom = room();
+    if (currentRoom?.name !== target.name || !roomActionAllowed(currentRoom, "remove") || currentRoom.status.voters.includes(peer) || !currentRoom.status.members.includes(peer)) throw new Error("Room, member or controller state changed. Review the current member list.");
+    await act({action:"remove", name:target.name, peer});
+  });
 }
 function addressDialog() {
   const target = room(); if (!target) return;
@@ -222,6 +234,7 @@ function checkedRelation(message) {
 }
 async function conversationAction(action) {
   if (conversationPending) throw new Error("A reply or reaction is already pending.");
+  if (room()?.name !== action.name || !roomActionAllowed(room(), "publish")) throw new Error("Room changed or publishing rights are unavailable.");
   conversationPending = true;
   try { render(); const result = await act(action); if (!result.delivery?.ok) throw new Error(result.delivery?.code || "Operation outcome unavailable; inspect the room before retrying.");
     toast(result.delivery.result.all_acknowledged ? "Acknowledged by recipient event queues, not human reading." : "Partial delivery; inspect peer outcomes before retrying."); return result;
@@ -233,7 +246,7 @@ function replyDialog(message, target) {
   const body = field("Reply", "reply-text", "textarea"); body.querySelector("textarea").maxLength = 65536;
   const sensitive = field("Sensitive reply / exclude from history and notifications", "reply-sensitive", "checkbox"); sensitive.querySelector("input").checked = message.sensitive === true;
   modal("Reply / " + (target.title || name), [el("p", "dialog-note", "Reply to " + memberName(target, message.sender) + ". The original text is not copied. A reference is not a read receipt or remote history permission."), body, sensitive], "Send reply", async data => {
-    if (selected !== name || !room()?.status) throw new Error("Room changed or stopped. Reopen this reply from its original room.");
+    if (selected !== name || !roomActionAllowed(room(), "publish")) throw new Error("Room changed, stopped or publishing rights are unavailable. Reopen this reply from its original room.");
     const text = data.get("reply-text"); if (!text) throw new Error("Write a reply first.");
     await conversationAction({action:"reply", name, target:reference, text, sensitive:data.get("reply-sensitive") === "on"});
   });
@@ -250,31 +263,31 @@ function messageActions(item, message, target) {
   if (!actions) { actions = el("div", "message-actions"); item.append(actions); }
   const reference = messageTarget(message.reference); if (!reference) return;
   const summaries = (current.reactions || []).filter(summary => targetKey(summary.target) === targetKey(reference));
-  const view = JSON.stringify([Boolean(target.status), conversationPending, current.identity, message.message_id, message.kind, message.sensitive, summaries]);
+  const publish = roomActionAllowed(target, "publish"), view = JSON.stringify([publish, conversationPending, current.identity, message.message_id, message.kind, message.sensitive, summaries]);
   if (actions.dataset.view === view) return;
   const active = document.activeElement, focus = actions.contains(active) ? active?.dataset.action : null;
   const detailsOpen = actions.querySelector("details")?.open;
   actions.dataset.view = view; actions.replaceChildren();
-  const reply = el("button", "outline compact", "Reply"); reply.disabled = !target.status || conversationPending;
+  const reply = el("button", "outline compact", "Reply"); reply.disabled = !publish || conversationPending;
   reply.dataset.action = "reply";
   reply.onclick = () => { try { replyDialog(message, target); } catch(error) { toast(error.message); } }; actions.append(reply);
   if (message.message_id) { const details = el("details", "technical-details"); details.open = detailsOpen; details.append(el("summary", "", "Message ID"), el("code", "fingerprint", message.message_id)); actions.append(details); }
   if (message.kind === "reaction") { if (focus) [...actions.querySelectorAll("button")].find(button=>button.dataset.action === focus)?.focus(); return; }
   if (message.sensitive) {
-    const button = el("button", "outline compact", "Sensitive reaction"); button.disabled = !target.status || conversationPending; button.dataset.action = "react-sensitive";
+    const button = el("button", "outline compact", "Sensitive reaction"); button.disabled = !publish || conversationPending; button.dataset.action = "react-sensitive";
     button.onclick = () => {
       const choice = el("label", "field", "Reaction"), select = el("select"); select.name = "reaction";
       for (const value of reactionNames) { const option = el("option", "", value); option.value = value; select.append(option); } choice.append(select);
       const remove = field("Remove your own reaction", "reaction-remove", "checkbox");
       modal("Sensitive reaction / " + (target.title || target.name), [choice, remove, el("p", "dialog-note", "This activity is excluded from persistent history, OS notifications and public reaction counts. No original text is copied.")], "Apply sensitive reaction", async data => {
-        if (selected !== target.name || !room()?.status) throw new Error("Room changed or stopped.");
+        if (selected !== target.name || !roomActionAllowed(room(), "publish")) throw new Error("Room changed, stopped or publishing rights are unavailable.");
         await conversationAction({action:"react", name:target.name, target:reference, value:data.get("reaction"), added:data.get("reaction-remove") !== "on", sensitive:true});
       });
     }; actions.append(button);
   } else for (const value of reactionNames) {
     const summary = summaries.find(entry=>entry.value === value), members = summary?.members || [];
     const own = members.some(member=>member.map(byte=>byte.toString(16).padStart(2,"0")).join("") === current.identity);
-    const button = el("button", "outline compact", value + (members.length ? " " + members.length : "")); button.disabled = !target.status || conversationPending;
+    const button = el("button", "outline compact", value + (members.length ? " " + members.length : "")); button.disabled = !publish || conversationPending;
     button.dataset.action = "react-" + value;
     button.setAttribute("aria-pressed", String(own)); button.title = (own ? "Remove your " : "Add your ") + value + " reaction; counts cover buffered nonsensitive activity";
     button.onclick = async () => { try { await conversationAction({action:"react", name:target.name, target:reference, value, added:!own, sensitive:message.sensitive === true}); } catch(error) { toast(error.message); } };
@@ -376,14 +389,14 @@ function render() {
     const namesError = target.presentation_error || target.status?.profile_names_error;
     $("room-title").textContent = target.title || target.name; $("room-id").textContent = target.id || "Unavailable"; $("room-problem").textContent = target.problem || (namesError ? "Member names unavailable: " + namesError : ""); $("room-problem").hidden = !target.problem && !namesError;
     $("room-state").textContent = target.status ? "FOREGROUND / ONLINE" : (current.phases[target.name]?.state || "OFFLINE").toUpperCase();
-    $("start").hidden = Boolean(target.status); $("stop").hidden = !target.status; $("room-history").disabled = !target.status; $("invite").disabled = !target.status; $("controllers").disabled = !target.status; $("find-copies").disabled = !target.status; $("share-media").disabled = !target.status || !mediaControl; $("receive-media").disabled = !target.status || !mediaControl;
-    $("text").disabled = !target.status; $("send").disabled = !target.status; $("attach").disabled = !target.status; $("allow-files").disabled = fileConsentPending;
+    $("start").hidden = Boolean(target.status); $("stop").hidden = !target.status; $("room-history").disabled = !target.status; $("invite").disabled = !admissionRoles(target).length; $("controllers").disabled = !roomActionAllowed(target, "control"); $("find-copies").disabled = !target.status; $("share-media").disabled = !roomActionAllowed(target, "publish") || !mediaControl; $("receive-media").disabled = !target.status || !mediaControl;
+    $("text").disabled = !roomActionAllowed(target, "publish"); $("text").placeholder = $("text").disabled ? "Publishing unavailable with this device's cached room rights." : "Write to the current room members..."; $("send").disabled = $("text").disabled; $("attach").disabled = $("text").disabled; $("allow-files").disabled = fileConsentPending;
     if (target.status?.files && !fileConsentPending) $("allow-files").checked = target.status.files.accepted;
     $("quorum").textContent = target.status ? target.status.members.length + " MEMBERS / " + target.status.voters.length + " VOTERS / EPOCH " + target.status.epoch : "PERSISTENT KEYS / NO BACKGROUND SERVICE";
     const openPeers = new Set([...$("peers").querySelectorAll(".peer")].filter(card => card.querySelector("details")?.open).map(card => card.dataset.peer));
     $("peers").replaceChildren(...(target.status?.members || []).map((peer) => { const card = el("div", "peer"), self = peer === target.status.owner; card.dataset.peer = peer; const label = el("span"); const name = memberName(target, peer); const details = el("details", "technical-details"); details.open = openPeers.has(peer); details.append(el("summary", "", "Fingerprint"), el("code", "fingerprint", peer)); label.append(el("strong", "", name), el("small", "", (self ? "This device / " : "") + (target.status.voters.includes(peer) ? "Voting controller" : "Data member")), details); card.append(el("span", "peer-avatar", name === "Unnamed member" ? "?" : Array.from(name.trim()).slice(0, 2).join("").toUpperCase()), label);
       label.append(el("small", "muted", memberProvenance(target, peer)));
-      if (!self) { const nickname = el("button", "outline compact", "Nickname"); nickname.onclick = () => nicknameDialog(target, peer); card.append(nickname); const remove = el("button", "peer-remove", "x"); remove.title = "Remove data membership"; remove.onclick = () => modal("Remove data membership?", [el("p", "dialog-note", "Retire this peer's vote separately if necessary. Data removal rotates the private group epoch."), el("code", "fingerprint", peer)], "Remove data access", async () => { await act({ action: "remove", name: target.name, peer }); }); card.append(remove); } return card; }));
+      if (!self) { const nickname = el("button", "outline compact", "Nickname"); nickname.onclick = () => nicknameDialog(target, peer); card.append(nickname); const remove = el("button", "peer-remove", "x"); remove.disabled = !roomActionAllowed(target, "remove") || target.status.voters.includes(peer); remove.title = target.status.voters.includes(peer) ? "Retire this member's controller vote before removing data access" : "Remove data membership / requires moderation rights"; remove.setAttribute("aria-label", remove.title); remove.onclick = () => removeMemberDialog(target, peer); card.append(remove); } return card; }));
     mediaControl?.refreshLabels();
     if (shownRoom !== selected) { shownRoom = selected; rendered.clear(); revealed.clear(); $("messages").replaceChildren(); $("files").replaceChildren(); }
     const messages = current.messages.filter((message) => message.room === selected);
@@ -548,8 +561,8 @@ $("allow-files").onchange = async () => {
   catch (error) { toast(error.message); }
   finally { fileConsentPending = false; await refresh(); render(); }
 };
-$("composer").onsubmit = async (event) => { event.preventDefault(); const text = $("text").value; if (!text || !room()?.status) return; $("send").disabled = true;
-  try { const result = await act({ action: "send", name: selected, text, sensitive: $("sensitive").checked }); $("text").value = ""; $("send-status").textContent = result.delivery.ok ? "Acknowledged by the recipient event queues, not human reading." : "Partial delivery. Inspect the peer state before retrying."; } catch (error) { toast(error.message); } finally { $("send").disabled = !room()?.status; }
+$("composer").onsubmit = async (event) => { event.preventDefault(); const text = $("text").value; if (!text || !roomActionAllowed(room(), "publish")) return; $("send").disabled = true;
+  try { const result = await act({ action: "send", name: selected, text, sensitive: $("sensitive").checked }); $("text").value = ""; $("send-status").textContent = result.delivery.ok ? "Acknowledged by the recipient event queues, not human reading." : "Partial delivery. Inspect the peer state before retrying."; } catch (error) { toast(error.message); } finally { $("send").disabled = !roomActionAllowed(room(), "publish"); }
 };
 $("text").onkeydown = (event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") $("composer").requestSubmit(); };
 $("share-media").onclick = () => mediaControl?.shareDialog(); $("receive-media").onclick = () => mediaControl?.receiveDialog(); $("stop-media").onclick = () => mediaControl?.stopAll();

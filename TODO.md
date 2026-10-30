@@ -22,6 +22,7 @@ and acceptance cases live in [product workstreams](docs/workstreams.md).
 | Scope | Current verification boundary |
 | --- | --- |
 | Message notifications | Backend/CLI/UI default-off preference, bounded generic alerts and privacy/revision regressions implemented; real browser refusal/non-opt-in and bidirectional messages pass. Native OS grant/display remains open; [evidence](docs/notifications.md). This is not full-product completion |
+| Moderation controls | Backend-derived advisory capabilities and delegation-bounded UI choices implemented; full local check and selected actual Edge moderator/participant flow pass. Reader/inviter rendering, actual retirement/removal/revocation and fresh hosted delivery remain open; [evidence](docs/moderation.md) |
 | Replies and reactions | Backend-owned bounded typed MLS operations, audience negotiation, transactional encrypted relations, CLI/UI implemented. Full local check and real two-profile Edge reply, reaction add/remove, sensitive defaults and post-restart scroll replay pass; [evidence/limits](docs/conversation.md). Delivery and complete mixed-version/error qualification remain open |
 | Live incoming files | Publication/cancellation/shutdown and lifetime-budget regressions pass; actual two-UI opt-in, denied retry and binary/empty transfer digests verified |
 | Profiles and useful status | Locked updates, local member labels, CLI profile management and public-only offline/live status pass combined checks |

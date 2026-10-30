@@ -350,7 +350,7 @@ async fn dispatch(
                 };
             Ok(
                 json!({"room": raft::PeerId(status.room), "owner": status.owner, "epoch": status.epoch,
-                "active": status.active, "running": status.running, "busy": status.busy, "members": status.members,
+                "active": status.active, "running": status.running, "busy": status.busy, "members": status.members, "capabilities": status.capabilities,
                 "freshness": "local-durable-cache", "leader_hint": control.current_leader().await, "media": control.media_status()?,
                   "files": {"accepted": control.files_enabled()?}, "profile_names": profile_names, "profile_names_error": profile_names_error,
                  "voters": control.control_membership().membership().voter_ids().collect::<Vec<_>>(), "address": control.local_addr()?}),

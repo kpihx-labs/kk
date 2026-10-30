@@ -23,6 +23,39 @@ pub struct MediaPolicy {
     pub outbound: std::collections::BTreeSet<super::control::raft::PeerId>,
 }
 
+/// Advisory rights from this device's verified private membership cache, never
+/// authorization for a later operation. Quorum, epoch and local vetoes still apply.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct RoomCapabilities {
+    pub publish: bool,
+    pub invite: bool,
+    pub remove: bool,
+    pub control: bool,
+    pub admission_roles: Vec<&'static str>,
+}
+impl RoomCapabilities {
+    fn from_rights(rights: Option<super::Rights>) -> Self {
+        let Some(rights) = rights else {
+            return Self::default();
+        };
+        Self {
+            publish: rights.can_publish(),
+            invite: rights.can_invite(),
+            remove: rights.can_remove(),
+            control: rights.can_control(),
+            admission_roles: [
+                ("participant", super::Rights::PARTICIPANT),
+                ("reader", super::Rights::READER),
+                ("inviter", super::Rights::INVITER),
+                ("moderator", super::Rights::MODERATOR),
+            ]
+            .into_iter()
+            .filter_map(|(name, target)| rights.permits_issuance(target).then_some(name))
+            .collect(),
+        }
+    }
+}
+
 pub struct Room {
     identity: Arc<Identity>,
     control: Arc<ControlNode>,
@@ -109,6 +142,9 @@ impl Room {
     }
     pub fn is_active(&self) -> bool {
         self.group.is_active()
+    }
+    pub fn capabilities(&self) -> RoomCapabilities {
+        RoomCapabilities::from_rights(self.group.own_rights())
     }
 
     /// Records and the final public audience are read in one protected state

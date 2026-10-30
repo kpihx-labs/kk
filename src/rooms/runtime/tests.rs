@@ -12,6 +12,34 @@ use crate::{
 };
 use std::collections::BTreeMap;
 
+#[test]
+fn advisory_capabilities_preserve_verified_role_and_delegation_boundaries() {
+    for (rights, expected) in [
+        (None, (false, false, false, false)),
+        (Some(Rights::READER), (false, false, false, false)),
+        (Some(Rights::PARTICIPANT), (true, false, false, false)),
+        (Some(Rights::INVITER), (true, true, false, false)),
+        (Some(Rights::MODERATOR), (true, true, true, true)),
+    ] {
+        let actions = RoomCapabilities::from_rights(rights);
+        assert_eq!(
+            (
+                actions.publish,
+                actions.invite,
+                actions.remove,
+                actions.control
+            ),
+            expected
+        );
+        let expected_roles: &[&str] = match rights {
+            Some(Rights::INVITER) => &["participant", "reader"],
+            Some(Rights::MODERATOR) => &["participant", "reader", "inviter", "moderator"],
+            _ => &[],
+        };
+        assert_eq!(actions.admission_roles, expected_roles);
+    }
+}
+
 // Keep the independent voters/QUIC drivers runnable while the LocalSet's
 // private-state caller performs synchronous crypto and durable storage work.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -6,6 +6,7 @@ This records changes, not live delivery status. See [TODO.md](TODO.md) for the c
 
 - Add bounded typed room replies and authored reaction add/remove under a distinct MLS context, exact-audience capability negotiation, transactional encrypted history relations and CLI/UI controls; preserve legacy text, sensitive exclusion and per-recipient outcome semantics. Keep buffered reaction counts distinct from durable history restoration.
 - Make live message scrolling immediate so newly appended reply/reaction controls do not depend on an animation completing before interaction; retain independent overflow scrolling and cold-restart browser evidence.
+- Derive advisory UI action availability and invitation-role choices from verified private membership, fail closed on missing/inactive capabilities, and fence stale moderation forms; controller votes remain separate from data rights and backend authorization is unchanged.
 - Route image-based GitLab checks explicitly to hosted Linux container runners, preventing shell execution without the declared image; execute the PowerShell unsupported-installation contract on native Windows, separately from Linux's explicit interpreter-unavailable skip.
 - Preserve gh's bundle decoder suffix through a private descriptor-anchored name targeting sealed bytes, with immutable-input and cleanup regressions.
 - Write inherited Linux pipes through nonblocking pipe-to-pipe splice without reopening their names or changing shared flags; retain cancellation and runtime-shutdown checks.
@@ -22,8 +23,7 @@ This records changes, not live delivery status. See [TODO.md](TODO.md) for the c
 - Run the compound two-device HTTP workflow once in a mandatory phase after the
   concurrent Rust batch, without changing its assertions or production deadlines.
   Ordinary Cargo test discovery still includes the case.
-- Share that phase through `make rust-test` in local/GitHub and GitLab checks,
-  with regressions guarding exact case selection and release-gate dependency.
+- Share that phase through `make rust-test` in local/GitHub and GitLab checks, with regressions guarding exact case selection and release-gate dependency.
 - Do not treat this source checkpoint as authenticated artifact delivery or a completed release; origin verification and exact-byte replay remain required.
 
 ## 0.9.0-dev.1 - Unreleased Development Checkpoint

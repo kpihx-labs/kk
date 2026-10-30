@@ -6,6 +6,7 @@ const source = fs.readFileSync(__dirname + "/../src/ui/assets/app.js", "utf8");
 const reference = () => ({room:Array(32).fill(7),member:Array(32).fill(8),epoch:3,wire_sha256:Array(32).fill(9),event:"IncomingProcessed"});
 function context(extra={}) {
   const ctx=vm.createContext({conversationPending:false,current:{messages:[]},render(){},toast(){},...extra});
+  vm.runInContext(source.slice(source.indexOf("function roomActionAllowed("),source.indexOf("function memberName(")),ctx);
   vm.runInContext(source.slice(source.indexOf("function referenceKey("),source.indexOf("function historyEntries(")),ctx);
   return ctx;
 }
@@ -33,9 +34,9 @@ test("relation rendering rejects cross-room, future and unknown reaction metadat
 
 test("one pending conversation action reserves before network work and preserves partial-delivery meaning",async()=>{
   let resolve,calls=0;const notices=[];
-  const ctx=context({act:async()=>{calls++;return new Promise(done=>{resolve=done;});},toast:value=>notices.push(value)});
-  const pending=ctx.conversationAction({action:"react"});
-  await assert.rejects(ctx.conversationAction({action:"reply"}),/already pending/);
+  const ctx=context({room:()=>({name:"team",status:{active:true,capabilities:{publish:true}}}),act:async()=>{calls++;return new Promise(done=>{resolve=done;});},toast:value=>notices.push(value)});
+  const pending=ctx.conversationAction({action:"react",name:"team"});
+  await assert.rejects(ctx.conversationAction({action:"reply",name:"team"}),/already pending/);
   assert.equal(calls,1);
   resolve({delivery:{ok:true,result:{all_acknowledged:false}}});await pending;
   assert.match(notices[0],/Partial delivery/);assert.equal(ctx.conversationPending,false);
@@ -43,7 +44,7 @@ test("one pending conversation action reserves before network work and preserves
 
 test("reply form copies no original body, defaults sensitive safely and refuses a changed room before network",async()=>{
   const controls=new Map(),calls=[];
-  const ctx=context({selected:"study",room:()=>({status:{}}),memberName:()=>"Friend",
+  const ctx=context({selected:"study",room:()=>({name:"study",status:{active:true,capabilities:{publish:true}}}),memberName:()=>"Friend",
     field:(_label,name)=>{const input={};controls.set(name,input);return{querySelector:()=>input};},
     el:()=>({}),modal:(_title,_items,_submit,handler)=>{ctx.submit=handler;},
     act:async value=>{calls.push(value);return{delivery:{ok:true,result:{all_acknowledged:true}}};}});

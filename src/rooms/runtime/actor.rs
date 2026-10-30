@@ -21,6 +21,7 @@ pub struct Status {
     pub running: bool,
     pub busy: bool,
     pub history: history::Summary,
+    pub capabilities: super::RoomCapabilities,
 }
 impl Status {
     fn snapshot(room: &Room, running: bool, busy: bool) -> Self {
@@ -38,6 +39,7 @@ impl Status {
             running,
             busy,
             history: room.history_summary.clone(),
+            capabilities: room.capabilities(),
         }
     }
 }

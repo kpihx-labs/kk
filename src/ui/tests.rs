@@ -421,8 +421,15 @@ async fn ui_http_pairs_independent_devices_owns_foreground_rooms_and_redacts_sen
         let member = labeled["rooms"][0]["presentation"].as_array().unwrap().iter().find(|entry| entry["id"] == peer_b).unwrap();
         assert_eq!(member["display_name"], "Local friend");
         assert_eq!(member["source"], "local_override");
-        let remote_view = b.state().await;
-        let peer_a = a.state().await["identity"].as_str().unwrap().to_owned();
+         let remote_view = b.state().await;
+         assert_eq!(remote_view["rooms"][0]["status"]["capabilities"], json!({"publish":true,"invite":false,"remove":false,"control":false,"admission_roles":[]}));
+         assert_eq!(labeled["rooms"][0]["status"]["capabilities"], json!({"publish":true,"invite":true,"remove":true,"control":true,"admission_roles":["participant","reader","inviter","moderator"]}));
+         let peer_a = a.state().await["identity"].as_str().unwrap().to_owned();
+         let denied = b.request(Method::POST,"/api/action",Some(json!({"action":"remove","name":"team","peer":peer_a})),Some(&b.app.0.origin),true).await;
+         assert_eq!(denied.status(),StatusCode::BAD_REQUEST);
+         let denied:Value=serde_json::from_slice(&to_bytes(denied.into_body(),config::UI_JSON_BYTES).await.unwrap()).unwrap();
+         assert_eq!(denied["code"],"DENIED");
+         assert_eq!(b.request(Method::POST,"/api/action",Some(json!({"action":"controllers","name":"team","peers":[peer_a],"capabilities":{"control":true}})),Some(&b.app.0.origin),true).await.status(),StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(remote_view["rooms"][0]["presentation"].as_array().unwrap().iter().find(|entry| entry["id"] == peer_a).unwrap()["source"], "unknown");
         assert_eq!(before_label["rooms"][0]["status"]["members"], labeled["rooms"][0]["status"]["members"]);
         let outsider = "ab".repeat(32);
