@@ -581,6 +581,7 @@ pub(super) async fn run(app: App, mut requests: mpsc::Receiver<Request>) -> Resu
                 Action::Send { name, text, sensitive } => {
                     let text = Zeroizing::new(text);
                     let reply = local::request(&app.0.profile, &name, &Command::Text { text: text.to_string(), sensitive }).await?;
+                    reply.check()?;
                     let peer = Peer::load(&app.0.profile.join("identity/certificate.der"))?;
                     let reference = reply.result.get("reference").cloned().map(serde_json::from_value).transpose().map_err(|_| Error::Protocol)?;
                     let id = message(&app, &name, peer.fingerprint(), &text, sensitive, true, reference)?;

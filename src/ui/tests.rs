@@ -544,6 +544,35 @@ async fn ui_http_pairs_independent_devices_owns_foreground_rooms_and_redacts_sen
         assert_eq!(response.status(), StatusCode::OK);
         let forwarded: Value = serde_json::from_slice(&to_bytes(response.into_body(), config::UI_JSON_BYTES).await.unwrap()).unwrap();
         assert_eq!(forwarded["ok"], true);
+        // Exercise destructive moderation only inside these generated profiles.
+        // A controller vote changes quorum, never the participant's data grant;
+        // retiring the vote precedes membership removal and does not erase files.
+        let controllers = a.action(json!({"action":"controllers","name":"team","peers":[peer_a,peer_b]})).await;
+        assert!(controllers["committed"].is_object());
+        a.until(|state|state["rooms"][0]["status"]["voters"].as_array().is_some_and(|voters|voters.len()==2)).await;
+        b.action(json!({"action":"send","name":"team","text":"participant retains publishing while voting","sensitive":false})).await;
+        let voting = b.state().await;
+        assert_eq!(voting["rooms"][0]["status"]["capabilities"]["control"],false);
+        assert_eq!(voting["rooms"][0]["status"]["capabilities"]["publish"],true);
+        let retired = a.action(json!({"action":"controllers","name":"team","peers":[peer_a]})).await;
+        assert!(retired["committed"].is_object());
+        let before_removal = a.until(|state|state["rooms"][0]["status"]["voters"]==json!([peer_a])).await;
+        assert_eq!(before_removal["rooms"][0]["status"]["members"].as_array().unwrap().len(),2);
+        b.action(json!({"action":"send","name":"team","text":"retired voter retains data membership","sensitive":false})).await;
+        let removed = a.action(json!({"action":"remove","name":"team","peer":peer_b})).await;
+        assert_eq!(removed["proposal"].as_array().unwrap().len(),32);
+        assert!(removed["proposal"].as_array().unwrap().iter().all(|byte|byte.as_u64().is_some_and(|value|value<=255)));
+        assert_eq!(removed["meaning"],"data-removal-not-controller-reconfiguration");
+        assert!(removed["epoch"].as_u64().unwrap()>before_removal["rooms"][0]["status"]["epoch"].as_u64().unwrap());
+        a.until(|state|state["rooms"][0]["status"]["members"]==json!([peer_a])).await;
+        let refused = b.request(Method::POST,"/api/action",Some(json!({"action":"send","name":"team","text":"removed device cannot publish","sensitive":false})),Some(&b.app.0.origin),true).await;
+        assert_ne!(refused.status(),StatusCode::OK);
+        let inactive = b.state().await;
+        assert_eq!(inactive["identity"],peer_b);
+        assert_eq!(inactive["rooms"][0]["status"]["active"],false);
+        assert_eq!(inactive["rooms"][0]["status"]["capabilities"]["publish"],false);
+        assert!(!inactive["messages"].as_array().unwrap().iter().any(|message|message["text"]=="removed device cannot publish"));
+        assert_eq!(std::fs::read(&local_copy).unwrap(),bytes);
         std::fs::write(a.app.0.profile.join("labels.json"), b"invalid labels").unwrap();
         let corrupted = a.state().await;
         assert!(corrupted["rooms"][0]["presentation_error"].is_string());

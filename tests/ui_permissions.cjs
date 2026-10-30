@@ -13,8 +13,8 @@ function harness() {
     modal:(title,items,_label,submit)=>dialogs.push({title,items,submit}),
     act:async action=>{
       calls.push(action);
-      if(action.action==="remove") return {proposal:{}};
-      if(action.action==="controllers") return {log_id:{}};
+      if(action.action==="remove") return {proposal:Array(32).fill(7),epoch:2,meaning:"data-removal-not-controller-reconfiguration"};
+      if(action.action==="controllers") return {committed:{leader_id:{term:1,node_id:"self"},index:2}};
       return {};
     },
   });
@@ -62,14 +62,26 @@ test("data removal is separate from votes and fences changed member, room and ri
   target.status.members.push("reader");await dialogs[0].submit();
   assert.equal(calls.length,1);assert.equal(calls[0].peer,"reader");
   assert.equal(Object.hasOwn(calls[0],"capabilities"),false);
+  assert.match(notices.at(-1),/removal accepted and applied locally/);
 });
 
 test("controller selection does not label voting as administrative data access and rechecks stale forms",async()=>{
-  const {ctx,target,calls,dialogs}=harness();ctx.controllersDialog();
+  const {ctx,target,calls,notices,dialogs}=harness();ctx.controllersDialog();
   assert.match(dialogs[0].items[0].text,/vote does not grant publishing or moderation/);
   assert.equal(dialogs[0].items[1].children.length,2);
   const data={getAll:()=>["self","reader"]};
   target.status.capabilities.control=false;await assert.rejects(dialogs[0].submit(data),/administrative rights changed/);
   target.status.capabilities.control=true;await dialogs[0].submit(data);
   assert.equal(calls.length,1);assert.equal(calls[0].peers[1],"reader");
+  assert.equal(notices.at(-1),"Controller set committed. Data access is unchanged.");
+});
+
+test("backend refusals never emit committed controller or applied removal notices",async()=>{
+  for(const action of ["controllers","remove"]) {
+    const {ctx,target,notices,dialogs}=harness();
+    ctx.act=async()=>{throw new Error("DENIED");};
+    if(action==="controllers")ctx.controllersDialog();else ctx.removeMemberDialog(target,"reader");
+    await assert.rejects(dialogs[0].submit({getAll:()=>["self"]}),/DENIED/);
+    assert.equal(notices.length,0);
+  }
 });

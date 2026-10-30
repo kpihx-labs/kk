@@ -20,6 +20,13 @@ test("reply targets ignore local storage direction but preserve every authentica
   assert.deepEqual(Object.keys(ctx.messageTarget(incoming)).sort(),["epoch","member","room","wire_sha256"]);
 });
 
+test("accepted preparation is not a complete delivery acknowledgement",()=>{
+  const ctx=context();
+  assert.equal(ctx.deliveryComplete({ok:true,result:{all_acknowledged:true}}),true);
+  for(const delivery of [undefined,null,{}, {ok:false,result:{all_acknowledged:true}}, {ok:true}, {ok:true,result:{all_acknowledged:false}}, {ok:true,result:{all_acknowledged:"true"}}])
+    assert.equal(ctx.deliveryComplete(delivery),false);
+});
+
 test("relation rendering rejects cross-room, future and unknown reaction metadata rather than treating it as text",()=>{
   const ctx=context(),ref=reference();
   const base={reference:ref,relation:{kind:"reply",target:ctx.messageTarget(ref)}};

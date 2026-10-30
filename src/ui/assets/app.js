@@ -138,7 +138,7 @@ function inviteDialog() {
 function controllersDialog() {
   const target = room(); if (!roomActionAllowed(target, "control")) { toast("Controller changes require administrative data rights."); return; }
   const list = el("div"); for (const peer of target.status.members) { const row = el("label", "field"); const input = el("input"); input.type = "checkbox"; input.name = "peers"; input.value = peer; input.checked = target.status.voters.includes(peer); row.title = peer; row.append(input, el("span", "", memberChoice(target, peer))); list.append(row); }
-  modal("Choose voting controllers", [el("p", "dialog-note", "Only current data members are eligible; approving the set requires administrative data rights. A vote does not grant publishing or moderation rights. Retire a member's vote before removing its data access. A majority must remain available."), list], "Approve exact controller set", async (data) => { const latest = room(); if (latest?.name !== target.name || !roomActionAllowed(latest, "control")) throw new Error("Room or administrative rights changed. Reopen controller selection."); const result = await act({ action: "controllers", name: target.name, peers: data.getAll("peers") }); toast("Controller set updated: " + (result.log_id ? "applied at " + result.log_id : "pending submission")); });
+  modal("Choose voting controllers", [el("p", "dialog-note", "Only current data members are eligible; approving the set requires administrative data rights. A vote does not grant publishing or moderation rights. Retire a member's vote before removing its data access. A majority must remain available."), list], "Approve exact controller set", async (data) => { const latest = room(); if (latest?.name !== target.name || !roomActionAllowed(latest, "control")) throw new Error("Room or administrative rights changed. Reopen controller selection."); await act({ action: "controllers", name: target.name, peers: data.getAll("peers") }); toast("Controller set committed. Data access is unchanged."); });
 }
 function removeMemberDialog(target, peer) {
   const latest = room();
@@ -147,8 +147,8 @@ function removeMemberDialog(target, peer) {
   modal("Remove data membership?", [el("p", "dialog-note", "This rotates the private group epoch. Names are presentation only; verify the exact device fingerprint. Previously received data cannot be recalled."), el("code", "fingerprint", peer)], "Remove data access", async () => {
     const currentRoom = room();
     if (currentRoom?.name !== target.name || !roomActionAllowed(currentRoom, "remove") || currentRoom.status.voters.includes(peer) || !currentRoom.status.members.includes(peer)) throw new Error("Room, member or controller state changed. Review the current member list.");
-    const result = await act({action:"remove", name:target.name, peer});
-    toast("Member removal proposed: " + (result.proposal ? "pending quorum submission" : "submitted"));
+    await act({action:"remove", name:target.name, peer});
+    toast("Data membership removal accepted and applied locally. Previously received data cannot be recalled.");
   });
 }
 function addressDialog() {
@@ -233,12 +233,20 @@ function checkedRelation(message) {
       || (relation.kind === "reaction" && (!reactionNames.includes(relation.value) || typeof relation.added !== "boolean"))) throw new Error("Invalid authenticated conversation relation.");
   return {...relation, target};
 }
+/**
+ * Interpret the backend's complete-recipient queue acknowledgement, never human reading.
+ * @param {object|null|undefined} delivery The room IPC reply and its delivery summary.
+ * @returns {boolean} True only for explicit successful preparation and all-recipient acknowledgement.
+ * @example deliveryComplete({ok:true,result:{all_acknowledged:true}}) // true
+ * @example deliveryComplete({ok:true,result:{all_acknowledged:false}}) // false
+ */
+function deliveryComplete(delivery) { return delivery?.ok === true && delivery.result?.all_acknowledged === true; }
 async function conversationAction(action) {
   if (conversationPending) throw new Error("A reply or reaction is already pending.");
   if (room()?.name !== action.name || !roomActionAllowed(room(), "publish")) throw new Error("Room changed or publishing rights are unavailable.");
   conversationPending = true;
   try { render(); const result = await act(action); if (!result.delivery?.ok) throw new Error(result.delivery?.code || "Operation outcome unavailable; inspect the room before retrying.");
-    toast(result.delivery.result.all_acknowledged ? "Acknowledged by recipient event queues, not human reading." : "Partial delivery; inspect peer outcomes before retrying."); return result;
+    toast(deliveryComplete(result.delivery) ? "Acknowledged by recipient event queues, not human reading." : "Partial delivery; inspect peer outcomes before retrying."); return result;
   } finally { conversationPending = false; if (current) render(); }
 }
 function replyDialog(message, target) {
@@ -563,7 +571,7 @@ $("allow-files").onchange = async () => {
   finally { fileConsentPending = false; await refresh(); render(); }
 };
 $("composer").onsubmit = async (event) => { event.preventDefault(); const text = $("text").value; if (!text || !roomActionAllowed(room(), "publish")) return; $("send").disabled = true;
-  try { const result = await act({ action: "send", name: selected, text, sensitive: $("sensitive").checked }); $("text").value = ""; $("send-status").textContent = result.delivery.ok ? "Acknowledged by the recipient event queues, not human reading." : "Partial delivery. Inspect the peer state before retrying."; } catch (error) { toast(error.message); } finally { $("send").disabled = !roomActionAllowed(room(), "publish"); }
+  try { const result = await act({ action: "send", name: selected, text, sensitive: $("sensitive").checked }); $("text").value = ""; $("send-status").textContent = deliveryComplete(result.delivery) ? "Acknowledged by the recipient event queues, not human reading." : "Partial or unconfirmed delivery. Inspect the peer state before retrying."; } catch (error) { toast(error.message); } finally { $("send").disabled = !roomActionAllowed(room(), "publish"); }
 };
 $("text").onkeydown = (event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") $("composer").requestSubmit(); };
 $("share-media").onclick = () => mediaControl?.shareDialog(); $("receive-media").onclick = () => mediaControl?.receiveDialog(); $("stop-media").onclick = () => mediaControl?.stopAll();

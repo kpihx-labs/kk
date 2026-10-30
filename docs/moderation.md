@@ -61,3 +61,20 @@ Real rendered reader/inviter controls, actual controller retirement/removal and
 revocation feedback, full keyboard/accessibility/error recovery, fresh hosted
 verification and exact released-byte qualification remain required. Cancelled
 dialogs, cached capabilities and automated denial tests do not close those gates.
+
+## Destructive HTTP Regression
+
+The mandatory generated-profile HTTP workflow now exercises an actual two-voter
+configuration, retires the participant's vote, confirms continued publication,
+then removes its data membership and checks the new epoch. The removed device's
+publishing request must fail, its cached access/capabilities become inactive, its
+identity remains unchanged and previously received bytes remain intact.
+
+This exposed a missing IPC refusal check in the UI's plain-text Send adapter:
+denied publication was previously recorded as an outgoing message with HTTP 200.
+The adapter now checks the backend result before recording an event. Partial
+recipient delivery still succeeds as preparation, but the shared UI completion
+predicate requires explicit all-recipient acknowledgement, never human reading.
+The regression first failed on the refusal assertion and passes after correction.
+Proposal digests are byte arrays; tests now match the actual backend response.
+This is real authenticated HTTP/QUIC execution, not an Edge destructive-flow claim.
