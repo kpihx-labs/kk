@@ -10,7 +10,13 @@ function harness() {
   const el = (_tag, _cls, text) => ({text, children:[], append(...children){this.children.push(...children);}});
   const ctx = vm.createContext({target, URL, room:()=>ctx.target, toast:value=>notices.push(value), el, memberChoice:(_target,peer)=>peer,
     field:()=>({querySelector:()=>({})}), roleField:(_value,roles)=>({roles}),
-    modal:(title,items,_label,submit)=>dialogs.push({title,items,submit}), act:async action=>{calls.push(action);},
+    modal:(title,items,_label,submit)=>dialogs.push({title,items,submit}),
+    act:async action=>{
+      calls.push(action);
+      if(action.action==="remove") return {proposal:{}};
+      if(action.action==="controllers") return {log_id:{}};
+      return {};
+    },
   });
   vm.runInContext(source.slice(source.indexOf("function roomActionAllowed("),source.indexOf("function memberName(")),ctx);
   vm.runInContext(source.slice(source.indexOf("function inviteDialog()"),source.indexOf("function addressDialog()")),ctx);

@@ -138,7 +138,7 @@ function inviteDialog() {
 function controllersDialog() {
   const target = room(); if (!roomActionAllowed(target, "control")) { toast("Controller changes require administrative data rights."); return; }
   const list = el("div"); for (const peer of target.status.members) { const row = el("label", "field"); const input = el("input"); input.type = "checkbox"; input.name = "peers"; input.value = peer; input.checked = target.status.voters.includes(peer); row.title = peer; row.append(input, el("span", "", memberChoice(target, peer))); list.append(row); }
-  modal("Choose voting controllers", [el("p", "dialog-note", "Only current data members are eligible; approving the set requires administrative data rights. A vote does not grant publishing or moderation rights. Retire a member's vote before removing its data access. A majority must remain available."), list], "Approve exact controller set", async (data) => { const latest = room(); if (latest?.name !== target.name || !roomActionAllowed(latest, "control")) throw new Error("Room or administrative rights changed. Reopen controller selection."); await act({ action: "controllers", name: target.name, peers: data.getAll("peers") }); });
+  modal("Choose voting controllers", [el("p", "dialog-note", "Only current data members are eligible; approving the set requires administrative data rights. A vote does not grant publishing or moderation rights. Retire a member's vote before removing its data access. A majority must remain available."), list], "Approve exact controller set", async (data) => { const latest = room(); if (latest?.name !== target.name || !roomActionAllowed(latest, "control")) throw new Error("Room or administrative rights changed. Reopen controller selection."); const result = await act({ action: "controllers", name: target.name, peers: data.getAll("peers") }); toast("Controller set updated: " + (result.log_id ? "applied at " + result.log_id : "pending submission")); });
 }
 function removeMemberDialog(target, peer) {
   const latest = room();
@@ -147,7 +147,8 @@ function removeMemberDialog(target, peer) {
   modal("Remove data membership?", [el("p", "dialog-note", "This rotates the private group epoch. Names are presentation only; verify the exact device fingerprint. Previously received data cannot be recalled."), el("code", "fingerprint", peer)], "Remove data access", async () => {
     const currentRoom = room();
     if (currentRoom?.name !== target.name || !roomActionAllowed(currentRoom, "remove") || currentRoom.status.voters.includes(peer) || !currentRoom.status.members.includes(peer)) throw new Error("Room, member or controller state changed. Review the current member list.");
-    await act({action:"remove", name:target.name, peer});
+    const result = await act({action:"remove", name:target.name, peer});
+    toast("Member removal proposed: " + (result.proposal ? "pending quorum submission" : "submitted"));
   });
 }
 function addressDialog() {
