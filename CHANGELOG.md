@@ -8,11 +8,11 @@ This records changes, not live delivery status. See [TODO.md](TODO.md) for the c
 - Preserve gh's bundle decoder suffix through a private descriptor-anchored name targeting sealed bytes, with immutable-input and cleanup regressions.
 - Write inherited Linux pipes through nonblocking pipe-to-pipe splice without reopening their names or changing shared flags; retain cancellation and runtime-shutdown checks.
 - Keep network-quorum fixture drivers runnable during synchronous private crypto work; add public offline-kit preparation and fail-closed unprivileged guest installer gates. Mocked VM checks use private definitions while runtime UUID checks remain required; native profiles use a private physical temporary root. Actual TCP listeners allocate invitation ports; guest executable digests are measured before execution and in reports. Bounded admission traces, Room-policy coverage and duplex wire peers preserve all OneShot cases/assertions.
-- Explicitly release history-key initialization ownership when its operation ends,
-  even if a duplicated directory descriptor survives; preserve active exclusivity.
+- Explicitly release history-key initialization ownership when its operation ends, even if a duplicated directory descriptor survives; preserve active exclusivity.
+- Add backend-owned default-off message alerts with CLI/UI controls, explicit browser permission, generic OS text, sensitive/backfill exclusion and bounded stale-callback/conflict handling; real OS display qualification remains open.
 - Supervise file upload and bounded receipt concurrently; reject early EOF under flow control while requiring both complete authorized upload and exact receipt for success.
-- Accept explicitly provisioned local trust roots with attestation bundles for installation and rollback;
-  seal/bound both inputs before gh verification and require an already trusted helper for the shell's explicit-root path.
+- Accept explicitly provisioned local trust roots with attestation bundles for installation and rollback; seal/bound both inputs before gh verification and require an already trusted helper for the shell's explicit-root path.
+- Default branch delivery to GitHub under operator direction, retaining an explicit validated two-remote synchronization path for GitLab without changing its remote or CI.
 - Authorize every native archive redirect before connecting, using the same exact
   HTTPS authorities as bootstrap. Preserve the original total deadline, archive
   byte bounds and provenance-before-parsing policy; reject foreign hosts and loops.

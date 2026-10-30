@@ -38,6 +38,13 @@ pub(super) enum Command {
         #[arg(long)]
         disable: bool,
     },
+    /// Enable content-free message alerts in a running UI, or turn them off
+    Notifications {
+        #[arg(long, required_unless_present = "disable", conflicts_with = "disable")]
+        enable: bool,
+        #[arg(long)]
+        disable: bool,
+    },
     /// Set a local room nickname; it never changes identity or trust
     #[cfg(unix)]
     Label {
@@ -119,6 +126,19 @@ pub(super) fn run(command: Command, selected: Option<&Path>) -> Result<()> {
                 settings.share_display_name = enable;
                 Ok(())
             })?)
+        }
+        Command::Notifications { enable, disable: _ } => {
+            let directory = profile_directory(selected)?;
+            kk::profile::private_directory(&directory, false)?;
+            let settings = Settings::update_with(&directory, |settings| {
+                settings.message_notifications = enable;
+                Ok(())
+            })?;
+            print(
+                &serde_json::json!({"message_notifications":settings.message_notifications,
+                "running_ui_required":true, "browser_permission_required":true,
+                "content":"generic activity only; sensitive messages excluded"}),
+            )
         }
         #[cfg(unix)]
         Command::Label {
@@ -284,6 +304,15 @@ pub(super) async fn status(directory: &Path, json: bool) -> Result<()> {
             "enabled for room members; not a verified human identity"
         } else {
             "off; your own name is local-only (previously learned names cannot be erased)"
+        }
+    )?;
+    writeln!(
+        io::stdout(),
+        "  Message alerts: {} (running UI and browser permission required; no message previews)",
+        if settings.message_notifications {
+            "enabled"
+        } else {
+            "off"
         }
     )?;
     if let Some(fingerprint) = fingerprint {

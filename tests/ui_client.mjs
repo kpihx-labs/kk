@@ -38,13 +38,13 @@ for (const status of [401, 403]) {
         close() { this.open = false; }, replaceChildren(...children) { this.children = children; } });
       return elements.get(id);
     };
-    let mediaStops = 0, requests = 0;
+    let mediaStops = 0, notificationStops = 0, requests = 0;
     const context = vm.createContext({
       location: { hash: "", pathname: "/" }, history: { replaceState() {} },
       document: { getElementById: node, documentElement: { dataset: {} } },
       sessionStorage: { getItem: (key) => storage.get(key), setItem: (key, value) => storage.set(key, value), removeItem: (key) => storage.delete(key) },
       localStorage: { getItem() {}, setItem() {} }, matchMedia: () => ({ matches: true }),
-      addEventListener() {}, recordStop: () => { mediaStops++; },
+      addEventListener() {}, recordStop: () => { mediaStops++; }, recordNotificationStop: () => { notificationStops++; },
       fetch: async () => {
         requests++;
         return { status, ok: false, json() { assert.fail("Do not parse an unauthenticated response"); } };
@@ -52,7 +52,7 @@ for (const status of [401, 403]) {
       setInterval() { assert.fail("Do not poll with a retired credential"); },
     });
     const boot = vm.runInContext(source, context);
-    vm.runInContext("mediaControl = { stopAll: recordStop }; joinDrafts.set(1, {name:'private-room',bind:'127.0.0.1:1234',role:'reader'});", context);
+    vm.runInContext("mediaControl = { stopAll: recordStop }; notificationControl = { retire: recordNotificationStop }; joinDrafts.set(1, {name:'private-room',bind:'127.0.0.1:1234',role:'reader'});", context);
     await boot;
     assert.equal(storage.has("kk-session"), false);
     assert.equal(storage.get("kk-room"), "studio");
@@ -60,6 +60,7 @@ for (const status of [401, 403]) {
     assert.equal(node("gate").hidden, false);
     assert.match(node("gate-text").textContent, /Relaunch kk ui/);
     assert.equal(mediaStops, 1);
+    assert.equal(notificationStops, 1);
     assert.equal(requests, 1);
     assert.equal(vm.runInContext("token", context), "");
     assert.equal(vm.runInContext("joinDrafts.size", context), 0);

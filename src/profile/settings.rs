@@ -68,6 +68,9 @@ pub struct Settings {
     /// Explicit consent to disclose the display name to authorized room peers.
     #[serde(default)]
     pub share_display_name: bool,
+    /// Local opt-in to content-free UI message alerts; never grants device permission.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub message_notifications: bool,
     #[serde(default)]
     pub appearance: Appearance,
     #[serde(default)]
@@ -79,6 +82,7 @@ impl Default for Settings {
             revision: 0,
             display_name: "My profile".into(),
             share_display_name: false,
+            message_notifications: false,
             appearance: Appearance::default(),
             sidebar_mode: SidebarMode::default(),
         }

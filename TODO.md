@@ -21,6 +21,7 @@ and acceptance cases live in [product workstreams](docs/workstreams.md).
 
 | Scope | Current verification boundary |
 | --- | --- |
+| Message notifications | Backend/CLI/UI default-off preference, bounded generic alerts and privacy/revision regressions implemented; real browser refusal/non-opt-in and bidirectional messages pass. Native OS grant/display remains open; [evidence](docs/notifications.md). This is not full-product completion |
 | Live incoming files | Publication/cancellation/shutdown and lifetime-budget regressions pass; actual two-UI opt-in, denied retry and binary/empty transfer digests verified |
 | Profiles and useful status | Locked updates, local member labels, CLI profile management and public-only offline/live status pass combined checks |
 | Human-facing UI | Live profile-name collision/routing, local aliases and Settings-conflict controls verified; 39 static layout cases pass; broader interactive qualification remains open |
@@ -43,7 +44,7 @@ it does not change the installed release or qualify new distributed bytes.
 | Source | Application/test checkpoint `cfa8145`, package `0.9.0-dev.2`, delivered to both remotes: duplex sender `1f846ef`, shared revoked-wire-peer correction, and `97eb1dd` private native workspace. Later harness work adds TCP-zero allocation and measured guest digests, not a new release |
 | Hosted verification | `cfa8145` Verify `40950864252` and Native `40950864320` succeed. Both macOS jobs pass five fail-fast probes of all 17 consent cases, zero ignored/failed. Earlier `1f846ef` Intel and `114705b` ARM failures are retained in the [duplex evidence](docs/file-duplex-qualification.md), not hidden by retries or deadline changes |
 | Native foundation | Selected Windows and both macOS foundation/storage/IPC/history/consent gates pass on `cfa8145`, including actual PowerShell refusal on Windows. This is the corrected fixture snapshot, not a proof of every historical Quinn wakeup cause, complete native product support or physical capture |
-| GitLab account gate | `cfa8145` pipeline `3005857813`, like `1f846ef` pipeline `3005730397`: all three jobs refuse before runner assignment with `ci_quota_exceeded`, no YAML error. Account allocation must be restored legitimately before release promotion; no quota, billing or global runner change made |
+| GitLab deferred | Operator direction 2026-10-30: GitHub is active delivery; GitLab push/CI is nonblocking and deferred. Preserve remote, CI and explicit later synchronization. Earlier quota failures remain recorded; do not stop other product lots, buy allocation or alter global runners |
 | Historical tag | `v0.9.0-dev.1` remains immutable at `7f93adf`; its failed verification is not replaced or promoted |
 | History lifecycle | Actual two-tab disable/re-enable, local clear, unchanged-profile cold restart and bidirectional messages pass; [evidence](docs/reboot-history-qualification.md) |
 | File/media UI | Prior binary/empty/withdrawal checks plus a new 4-MiB file sent with both synthetic publication/subscription pairs active; exact recipient digest, advancing bracketed frame counters and chat pass. [Evidence](docs/reboot-data-media-qualification.md); no per-packet timing, sustained-load or physical-capture claim |

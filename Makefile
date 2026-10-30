@@ -2,6 +2,7 @@ SHELL := /bin/sh
 .DEFAULT_GOAL := help
 GITHUB_SSH_COMMAND ?= ssh
 GITLAB_SSH_COMMAND ?= ssh
+PUSH_REMOTES ?= github
 RUFF ?= ruff
 UI_WORKFLOW_TEST := ui::tests::ui_http_pairs_independent_devices_owns_foreground_rooms_and_redacts_sensitive_events
 
@@ -109,7 +110,7 @@ ui-check: ## Offline browser-adapter syntax and standard RTP unit tests
 	node --check src/ui/assets/media.js
 	node --check src/ui/assets/rtp.js
 	node --check src/ui/assets/audio-worklet.js
-	node --test tests/ui_rtp.mjs tests/ui_client.mjs tests/ui_workflows.cjs tests/ui_media.mjs tests/ui_layout.cjs tests/ui_history.mjs
+	node --test tests/ui_rtp.mjs tests/ui_client.mjs tests/ui_workflows.cjs tests/ui_media.mjs tests/ui_layout.cjs tests/ui_history.mjs tests/ui_notifications.cjs
 
 build: ## Build the release CLI
 	cargo build --offline --locked --release
@@ -147,11 +148,15 @@ lab-native-media-test: ## Actual native capture/playback across a private shaped
 lab-stop: ## Gracefully stop only the dedicated lab
 	$(MAKE) -C lab kk-stop
 
-push: ## Push the current branch to both authorized SSH remotes
+push: ## Push via SSH; GitHub now, PUSH_REMOTES="github gitlab" for later synchronization
 	@set -e; branch="$$(git branch --show-current)"; test -n "$$branch"; \
-	for remote in github gitlab; do \
+	test -n '$(strip $(PUSH_REMOTES))'; \
+	for remote in $(PUSH_REMOTES); do \
+		case "$$remote" in github|gitlab) ;; *) printf '%s\n' "Refusing unauthorized remote $$remote" >&2; exit 1 ;; esac; \
 		url="$$(git remote get-url "$$remote")"; \
 		case "$$url" in git@*:*) ;; *) printf '%s\n' "Refusing non-SSH remote $$remote" >&2; exit 1 ;; esac; \
 	done; \
-	GIT_SSH_COMMAND='$(GITHUB_SSH_COMMAND)' git push github "$$branch"; \
-	GIT_SSH_COMMAND='$(GITLAB_SSH_COMMAND)' git push gitlab "$$branch"
+	for remote in $(PUSH_REMOTES); do \
+		case "$$remote" in github) transport='$(GITHUB_SSH_COMMAND)' ;; gitlab) transport='$(GITLAB_SSH_COMMAND)' ;; esac; \
+		GIT_SSH_COMMAND="$$transport" git push "$$remote" "$$branch"; \
+	done

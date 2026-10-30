@@ -2,6 +2,66 @@ use super::*;
 use std::{sync::mpsc, thread, time::Duration};
 
 #[test]
+fn message_alerts_are_default_off_and_only_explicit_updates_enable_them() {
+    let legacy: Settings = serde_json::from_str(r#"{"display_name":"Legacy"}"#).unwrap();
+    assert!(!legacy.message_notifications);
+    assert!(
+        serde_json::to_value(&legacy)
+            .unwrap()
+            .get("message_notifications")
+            .is_none()
+    );
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("profile");
+    let initial = Settings::load(&directory).unwrap();
+    assert!(!initial.message_notifications);
+    assert!(!directory.exists());
+    let enabled = Settings::update_with_revision(&directory, initial.revision, |settings| {
+        settings.message_notifications = true;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(enabled.revision, initial.revision + 1);
+    assert!(
+        Settings::update(&directory, Some("Renamed".into()), None)
+            .unwrap()
+            .message_notifications
+    );
+    let disabled = Settings::update_with(&directory, |settings| {
+        settings.message_notifications = false;
+        Ok(())
+    })
+    .unwrap();
+    let before = std::fs::read(directory.join("settings.json")).unwrap();
+    assert!(!disabled.message_notifications);
+    assert!(
+        serde_json::to_value(&disabled)
+            .unwrap()
+            .get("message_notifications")
+            .is_none()
+    );
+    assert!(matches!(
+        Settings::update_with_revision(&directory, enabled.revision, |settings| {
+            settings.message_notifications = true;
+            Ok(())
+        }),
+        Err(Error::SettingsConflict)
+    ));
+    assert_eq!(
+        std::fs::read(directory.join("settings.json")).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn invalid_message_notification_metadata_is_not_coerced_to_consent() {
+    for value in [r#""on""#, "1", "null", "[]"] {
+        let input = format!(r#"{{"display_name":"Profile","message_notifications":{value}}}"#);
+        assert!(serde_json::from_str::<Settings>(&input).is_err());
+    }
+}
+
+#[test]
 fn sharing_defaults_off_for_legacy_settings_and_survives_partial_updates() {
     let legacy: Settings = serde_json::from_str(
         r#"{"display_name":"Legacy","appearance":{"hue":null,"clarity":50,"saturation":20}}"#,

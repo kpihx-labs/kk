@@ -56,6 +56,8 @@ pub(super) enum Action {
         #[serde(default)]
         share_display_name: Option<bool>,
         #[serde(default)]
+        message_notifications: Option<bool>,
+        #[serde(default)]
         sidebar_mode: Option<crate::profile::SidebarMode>,
     },
     Profiles,
@@ -487,10 +489,11 @@ pub(super) async fn run(app: App, mut requests: mpsc::Receiver<Request>) -> Resu
                 Action::Transfer(_) => unreachable!("owned transfers run in their bounded task lane"),
                 Action::Copies { .. } => unreachable!("owned copy operations run in their bounded task lane"),
                 Action::Init => Ok(json!({"identity": crate::profile::identity(&app.0.profile, true)?.peer().fingerprint()})),
-                Action::Settings { expected_revision, display_name, appearance, share_display_name, sidebar_mode } => Ok(json!(crate::profile::Settings::update_with_revision(&app.0.profile, crate::profile::Settings::parse_revision(&expected_revision)?, |settings| {
+                Action::Settings { expected_revision, display_name, appearance, share_display_name, message_notifications, sidebar_mode } => Ok(json!(crate::profile::Settings::update_with_revision(&app.0.profile, crate::profile::Settings::parse_revision(&expected_revision)?, |settings| {
                     if let Some(name) = display_name { settings.display_name = name; }
                     if let Some(appearance) = appearance { settings.appearance = appearance; }
                     if let Some(share) = share_display_name { settings.share_display_name = share; }
+                    if let Some(enabled) = message_notifications { settings.message_notifications = enabled; }
                     if let Some(mode) = sidebar_mode { settings.sidebar_mode = mode; }
                     Ok(())
                 })?)),

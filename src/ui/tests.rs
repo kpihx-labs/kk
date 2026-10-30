@@ -312,12 +312,22 @@ async fn ui_requires_private_session_exact_host_and_same_origin_without_port_lea
             assert_eq!(device.state().await["settings"]["display_name"], "My profile");
             assert_eq!(device.state().await["settings"]["share_display_name"], false);
             assert_eq!(device.state().await["settings"]["sidebar_mode"], "expanded");
+            assert!(!crate::profile::Settings::load(&device.app.0.profile).unwrap().message_notifications);
+            device.action(json!({"action":"settings", "message_notifications":true})).await;
+            assert!(crate::profile::Settings::load(&device.app.0.profile).unwrap().message_notifications);
             for mode in ["compact", "expanded"] {
                 device.action(json!({"action":"settings", "sidebar_mode":mode})).await;
                 assert_eq!(device.state().await["settings"]["sidebar_mode"], mode);
                 assert_eq!(serde_json::to_value(crate::profile::Settings::load(&device.app.0.profile).unwrap()).unwrap()["sidebar_mode"], mode);
             }
             device.action(json!({"action":"settings", "sidebar_mode":"auto"})).await;
+            assert_eq!(device.state().await["settings"]["message_notifications"], true);
+            let notification_revision = device.state().await["settings"]["revision"].clone();
+            device.action(json!({"action":"settings", "message_notifications":false})).await;
+            let notification_bytes = std::fs::read(device.app.0.profile.join("settings.json")).unwrap();
+            let stale_notifications = device.request(Method::POST, "/api/action", Some(json!({"action":"settings", "expected_revision":notification_revision, "message_notifications":true})), Some(&device.app.0.origin), true).await;
+            assert_eq!(stale_notifications.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(std::fs::read(device.app.0.profile.join("settings.json")).unwrap(), notification_bytes);
             device.action(json!({"action":"settings", "share_display_name":true})).await;
             device.action(json!({"action":"settings", "display_name":"Alice"})).await;
             device.action(json!({"action":"settings", "appearance":{"hue":120,"clarity":60,"saturation":30}})).await;

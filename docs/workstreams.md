@@ -12,7 +12,7 @@ Coordinator record for the operator-authorized product expansion. Actual code, t
 | W6 media | Backend-test and UI-media executors | Shared media core and adapters | Concurrent participant screens, device controls, lifecycle/load tests |
 | W7 platforms | Main, native foundation returned | Storage/IPC/process/capture ports | Actual native Windows/macOS/WSL execution and packaging |
 | W8 distribution | Main, native installer returned | Portable archives/installers | TAR/ZIP transaction and rollback regressions pass; real gh provenance/bootstrap assets/exact-artifact and non-Linux gates remain open |
-| W9 product review | Unassigned | Profiles/history/search/calls/accessibility | Review useful comparable-app patterns; define and test end-to-end cases |
+| W9 product completion | Main, message notifications active | Settings/backend, CLI/UI notification adapters; then typed replies/reactions and accessibility | Default-off content-free alerts, explicit permission, no sensitive/backfilled notifications; full acceptance map below, not only passing tests |
 | W10 current source gate | Main; executor returned | `src/rooms/runtime/tests.rs` and `src/rooms/control/raft/network/tests.rs`, scheduler-progress fixtures only | Earlier private LocalSet review accepted independent two-worker progress; network fixture now has a separate deterministic blocked-caller real-quorum-read red/green regression, with original deadlines unchanged. Local check passes; historical hosted cause is not inferred from this |
 | W11 distribution review | Main; checker returned | `src/install/provenance.rs`, `tests/install.rs` and installer guides | Exact-authority redirect correction accepted statically; Main passed 52 installer cases and Clippy; real-artifact/offline-root qualification remains open |
 | W12 offline lab | Main owns implementation; read-only second opinion `ses_e7822ada5ffeG2x4n29ZkCMbK6` returned and archived | `lab/scripts/{16-offline-kit,17-offline-install-vm}.py`, two lab test files; no delegated edits | Ten mocked boundaries and 32 lab cases pass. Review found timeout is not process termination: failure now retains hypervisor isolation. Initial gh-suffix and inherited-pipe failures preceded corrected-source fresh/reinstall/same-version rollback success under nobody, exact 0.8.2 bytes, real gh/public roots, guest/network restored off. UUID, isolation, inputs, byte oracle and cleanup evidence: [installation qualification](install-qualification.md) |
@@ -83,23 +83,20 @@ is authorized by these intermediate checks.
 
 ## Product Acceptance Map
 
-- Human identity: current profile visible; names first, fingerprints in details;
-  profile creation/selection/renaming/settings from CLI and UI without key loss.
-- Room workflows: obvious single-use private invitation export; editable join
-  errors and retained non-secret drafts/suggestions; no stored invitation secrets.
-- Appearance: bounded quantized hue/clarity choices; neutral grey at clarity 50
-  reproduces the current dark default; settings persisted per profile.
-- Meeting UX: simultaneous participant screens, explicit subscriptions, device
-  selection and stop controls; lifecycle, contention and real end-to-end tests.
-- Messaging: [names/history design](messaging-design.md), replies/reactions,
-  notifications, moderation and accessibility; no UI-only persistence shortcuts.
-- Platforms: native Windows/macOS and WSL require storage, authenticated local
-  IPC, foreground I/O, process cleanup and media implementations plus actual
-  execution. Cross-builds alone never qualify support.
-- Distribution: verified portable tar/zip, USB use, authenticated shell and
-  PowerShell installation, safe update/rollback; runtime needs no build toolchain.
-- Qualification: [two-profile/two-pane/two-tab UI gate](ui-qualification.md),
-  error/cancel/retry/restart, permissions, accessibility and exact released bytes.
+| Capability | Implemented / demonstrated | Required for full closure |
+| --- | --- | --- |
+| Human identity | Profile catalog, names-first exact-ID routing, local labels, revisioned settings; CLI/UI regressions | Keep every edit/nonsecret retry workflow usable; qualify all profile/error paths without key loss |
+| Invitations/join | Single-use private invitations, bilateral comparison, editable nonsecret drafts | Full interactive cancel/retry/expiry/role workflows; never retain invitation capabilities |
+| Appearance | Quantized hue/clarity, neutral midpoint, persisted settings, contrast regressions | Actual desktop/mobile interaction and accessibility, not static fixtures alone |
+| History/search | Backend-transactional opt-in encrypted history, references, literal search, restart/clear | Exact released-byte workflow, pruning/authorization UX; no observer-side persistence shortcuts |
+| Notifications | Backend/CLI/UI implementation and automated/privacy tests pass; actual Edge default-off/refusal/messages pass | Actual OS permission acceptance/display remains open (native focus refused); [behavior and evidence](notifications.md), no sensitive/backfilled alerts |
+| Replies/reactions | Stable authenticated reference exists; group application event is still text-only | Explicit bounded typed payload/capability contract, authenticated target/author, transactional history and complete CLI/UI; [design](messaging-design.md) |
+| Moderation | Membership rights/removal exist in the backend | Discoverable role/moderation controls, revocation feedback and actual authorization/error flows |
+| Meetings | Multiple synthetic screen publications, native private-display decode during bulk/control | Complete controls/device choice and explicitly consented real-device/portal/network lifecycle qualification |
+| Native targets | Windows/macOS foundation and selected Apple storage/IPC/stdio tests pass | Windows protected storage/IPC/runtime implementation; complete macOS/WSL execution/packaging/media; cross-build is not support |
+| Distribution | TAR/ZIP integrity, selected candidate VM replay; authenticated stable 0.8.2 installation | New signed GitHub assets, bootstrap/USB/update/inter-version rollback on exact bytes, no runtime compiler dependency |
+| Delivery | GitHub active; GitLab SSH remote and CI retained | GitLab quota is deferred/nonblocking; preserve a repeatable later synchronization, not a reason to stop product work |
+| Full-product gate | [Two-profile/two-pane/two-tab](ui-qualification.md) slices exist | Every requested capability implemented and its actual error/cancel/retry/restart/permissions/accessibility gates closed |
 
 ## Role And Integration Discipline
 

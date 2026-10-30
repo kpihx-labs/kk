@@ -143,7 +143,7 @@ test("default appearance removes overrides and restores neutral CSS", () => {
 
 test("name sharing requires explicit checkbox consent and labels disclose provenance", async () => {
   const controls = [], calls = [], theme = {};
-  const context = {current:{settings:{display_name:"Sam",share_display_name:false,appearance:{hue:null,clarity:50,saturation:20}}},
+  const context = {notificationControl:{permission:()=>"unsupported"}, current:{settings:{display_name:"Sam",share_display_name:false,appearance:{hue:null,clarity:50,saturation:20}}},
     $: () => theme,
     field: (_label, name, _type, value) => { const input = {value}; const wrapper = {name,input,querySelector:()=>input,append(){}}; controls.push(wrapper); return wrapper; },
     el: (_tag,_cls,text) => ({text, children:[], append(...nodes){this.children.push(...nodes);}}), modal: (_title,items,_submit,handler) => { context.items = items; context.submit = handler; }, act: async action => calls.push(action)};
@@ -163,7 +163,7 @@ test("name sharing requires explicit checkbox consent and labels disclose proven
 test("a stale settings dialog cannot resubmit unchanged name-sharing consent", async () => {
   const saved = {display_name:"Sam",share_display_name:true,sidebar_mode:"expanded",appearance:{hue:null,clarity:50,saturation:20}};
   const calls = [], theme = {};
-  const context = {current:{settings:structuredClone(saved)}, $:()=>theme,
+  const context = {notificationControl:{permission:()=>"unsupported"}, current:{settings:structuredClone(saved)}, $:()=>theme,
     field:(_label,_name,_type,value)=>({querySelector:()=>({value}),append(){}}),
     el:()=>({append(){}}), modal:(_title,_items,_submit,handler)=>{context.submit = handler;},
     act:async action=>{calls.push(action);for(const key of Object.keys(action))if(key!=="action")saved[key]=action[key];context.current.settings=structuredClone(saved);},
@@ -186,11 +186,42 @@ test("a stale settings dialog cannot resubmit unchanged name-sharing consent", a
   assert.deepEqual(Object.keys(calls[1]).sort(),["action","expected_revision"]);
 });
 
+test("notification opt-in requires browser permission and stale dialogs cannot undo opt-out", async () => {
+  let permission="default", prompts=0;
+  const saved={revision:"0",display_name:"Sam",share_display_name:false,message_notifications:false,sidebar_mode:"expanded",appearance:{hue:null,clarity:50,saturation:20}};
+  const controls=new Map(),theme={},dialog={open:false},calls=[];
+  const context={current:{settings:structuredClone(saved)},modalRevision:0,$:id=>id==="dialog"?dialog:theme,
+    notificationControl:{permission:()=>permission,allow:async()=>{prompts++;permission="granted";}},
+    field:(_label,name,_type,value)=>{const input={value};const wrapper={querySelector:()=>input,append(){}};controls.set(name,input);return wrapper;},
+    el:(_tag,_class,text)=>({text,append(){}}),modal:(_t,items,_s,handler)=>{context.items=items;context.submit=handler;dialog.open=true;},
+    api:async()=>({settings:structuredClone(saved)}),
+    act:async action=>{calls.push(action);if(action.expected_revision!==saved.revision)throw Object.assign(new Error("conflict"),{code:"SETTINGS_CONFLICT"});for(const key of Object.keys(action))if(!["action","expected_revision"].includes(key))saved[key]=action[key];saved.revision=String(BigInt(saved.revision)+1n);context.current.settings=structuredClone(saved);}};
+  vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf('$("theme").onclick'),source.indexOf('$("profiles").onclick')),context);
+  const values={display_name:"Sam",share_display_name:null,message_notifications:"on",sidebar_mode:"expanded",hue:"",clarity:"50",saturation:"20"};
+  theme.onclick();
+  await assert.rejects(context.submit({get:key=>values[key]??null}),/Allow notifications in this browser first/);
+  assert.equal(calls.length,0);assert.equal(prompts,0);
+  await context.items.find(item=>item.text==="Allow notifications in this browser").onclick();
+  assert.equal(prompts,1);assert.equal(controls.get("message_notifications").checked,true);
+  await context.submit({get:key=>values[key]??null});assert.equal(saved.message_notifications,true);
+  theme.onclick();saved.message_notifications=false;saved.revision="2";
+  controls.get("display_name").value="Edited";values.display_name="Edited";
+  await assert.rejects(context.submit({get:key=>values[key]??null}),/Settings changed elsewhere/);
+  assert.equal(saved.message_notifications,false);assert.equal(saved.display_name,"Sam");
+  assert.equal(controls.get("message_notifications").checked,false);
+  assert.equal(controls.get("display_name").value,"Edited");
+  values.message_notifications=null;
+  await context.submit({get:key=>values[key]??null});
+  assert.equal(saved.message_notifications,false);assert.equal(saved.display_name,"Edited");
+  assert.equal(Object.hasOwn(calls.at(-1),"message_notifications"),false);
+});
+
 test("settings conflicts reload consent and retain edits across opt-out, opt-in and ABA", async () => {
   for (const scenario of ["opt-out", "opt-in", "ABA"]) {
     const saved={revision:"0",display_name:"Sam",share_display_name:scenario==="opt-out",sidebar_mode:"expanded",appearance:{hue:null,clarity:50,saturation:20}};
     const controls=new Map(),theme={},calls=[]; let failRead=false;
-    const context={current:{settings:structuredClone(saved)},$:()=>theme,
+    const context={notificationControl:{permission:()=>"unsupported"},current:{settings:structuredClone(saved)},$:()=>theme,
       field:(_label,name,_type,value)=>{const input={value};const wrapper={querySelector:()=>input,append(){}};controls.set(name,input);return wrapper;},
       el:()=>({append(){}}),modal:(_t,_i,_s,handler)=>{context.submit=handler;},
       refresh:async()=>{throw new Error("background refresh is not a fresh consent read");},

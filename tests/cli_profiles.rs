@@ -46,6 +46,76 @@ fn fresh_status_and_inventory_are_useful_without_creating_state() {
 }
 
 #[test]
+fn notification_preference_is_explicit_profile_local_and_preserves_identity() {
+    let root = support::private_root();
+    let created = success(
+        root.path(),
+        &["profile", "create", "alerts", "--name", "Work"],
+    );
+    let directory = Path::new(created["directory"].as_str().unwrap());
+    let certificate = std::fs::read(directory.join("identity/certificate.der")).unwrap();
+    assert_ne!(created["settings"]["message_notifications"], true);
+    let enabled = success(
+        root.path(),
+        &[
+            "--profile-name",
+            "alerts",
+            "profile",
+            "notifications",
+            "--enable",
+        ],
+    );
+    assert_eq!(enabled["message_notifications"], true);
+    let renamed = success(
+        root.path(),
+        &["--profile-name", "alerts", "profile", "rename", "Renamed"],
+    );
+    assert_eq!(renamed["message_notifications"], true);
+    let disabled = success(
+        root.path(),
+        &[
+            "--profile-name",
+            "alerts",
+            "profile",
+            "notifications",
+            "--disable",
+        ],
+    );
+    assert_ne!(disabled["message_notifications"], true);
+    assert!(
+        !run(
+            root.path(),
+            &["--profile-name", "alerts", "profile", "notifications"]
+        )
+        .status
+        .success()
+    );
+    assert!(
+        !run(
+            root.path(),
+            &[
+                "--profile-name",
+                "alerts",
+                "profile",
+                "notifications",
+                "--enable",
+                "--disable"
+            ]
+        )
+        .status
+        .success()
+    );
+    assert_eq!(
+        std::fs::read(directory.join("identity/certificate.der")).unwrap(),
+        certificate
+    );
+    assert_ne!(
+        success(root.path(), &["profile", "show"])["settings"]["message_notifications"],
+        true
+    );
+}
+
+#[test]
 fn named_profiles_select_rename_and_unregister_without_deleting_identity() {
     let root = support::private_root();
     let created = success(

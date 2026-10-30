@@ -3,7 +3,7 @@ const launchCode = location.hash.slice(1); history.replaceState(null, "", locati
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const node = document.createElement(tag); if (cls) node.className = cls; if (text !== undefined) node.textContent = text; return node; };
 let token = sessionStorage.getItem("kk-session") || "";
-let current = null, selected = sessionStorage.getItem("kk-room") || "", refreshing = false, mediaControl = null;
+let current = null, selected = sessionStorage.getItem("kk-room") || "", refreshing = false, mediaControl = null, notificationControl = null;
 let shownRoom = "", rendered = new Map(), revealed = new Map(), toastTimer;
 let fileConsentPending = false;
 let operationView = "";
@@ -13,13 +13,61 @@ let joinDraft = {name:"", bind:"", role:"participant"};
 const joinDrafts = new Map();
 const dismissedOperations = new Set();
 const brief = (fp) => fp ? fp.slice(0, 8) + ":" + fp.slice(-8) : "";
+function messageNotifications(platform, view) {
+  let cursor = null, enabled = false, lastPermission = "default", active = null, activeRoom = null, timer = null, retired = false, failed = false, permissionPending = false, generation = 0;
+  const supported = () => typeof platform.Notification === "function";
+  const permission = () => supported() ? platform.Notification.permission : "unsupported";
+  const close = () => { generation++; if (timer !== null) platform.clearTimeout(timer); timer = null; try { active?.close(); } catch {} active = null; activeRoom = null; };
+  return {
+    permission,
+    async allow() {
+      if (retired || !supported()) throw new Error("System notifications are unavailable in this session/browser.");
+      if (permissionPending) throw new Error("A notification permission request is already pending.");
+      permissionPending = true;
+      let result;
+      try { result = permission() === "default" ? await platform.Notification.requestPermission() : permission(); }
+      finally { permissionPending = false; }
+      if (retired) throw new Error("This notification session has ended.");
+      if (result !== "granted") throw new Error("Notifications were not allowed. Change this site's browser permission or keep alerts off.");
+      failed = false;
+      return result;
+    },
+    observe(state) {
+      if (retired) return;
+      const allowed = state?.settings?.message_notifications === true, access = permission();
+      const ready = cursor !== null && enabled && allowed && access === "granted" && lastPermission === "granted" && !failed;
+      let newest = cursor ?? 0, candidate = null;
+      for (const message of state?.messages || []) {
+        if (!Number.isSafeInteger(message.id) || message.id <= 0) continue;
+        newest = Math.max(newest, message.id);
+        if (ready && message.id > cursor && message.outgoing === false && message.sensitive === false
+            && typeof message.room === "string" && (state.rooms || []).some(room => room.name === message.room)
+            && (view.hidden() || !view.focused() || message.room !== view.selected())) candidate = message.room;
+      }
+      cursor = newest; enabled = allowed; lastPermission = access;
+      if (!allowed || access !== "granted" || (activeRoom !== null && !(state.rooms || []).some(room => room.name === activeRoom))) close();
+      if (candidate === null) return;
+      close();
+      try {
+        // No room/member names, bodies, previews or references cross into the OS.
+        active = new platform.Notification("K&K", {body:"New message received. Open K&K to view it.", tag:"kk-message-activity", silent:true});
+        activeRoom = candidate;
+        const ticket = generation;
+        active.onclick = () => { if (!retired && ticket === generation && enabled && permission() === "granted") { close(); view.open(candidate); } };
+        timer = platform.setTimeout(() => { if (ticket === generation) close(); }, 10000);
+      } catch { failed = true; close(); view.unavailable(); }
+    },
+    close,
+    retire() { retired = true; close(); },
+  };
+}
 function toast(text) { $("toast").textContent = text; $("toast").hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $("toast").hidden = true; }, 5500); }
 async function api(path, body) {
   const headers = { Authorization: "Bearer " + token };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const response = await fetch(path, { method: body === undefined ? "GET" : "POST", headers, body: body === undefined ? undefined : JSON.stringify(body), cache: "no-store" });
   if (response.status === 401 || response.status === 403) {
-    token = ""; sessionStorage.removeItem("kk-session"); mediaControl?.stopAll(); historyView = null; joinDrafts.clear(); joinDraft = {name:"", bind:"", role:"participant"}; $("dialog").close(); $("dialog-content").replaceChildren();
+    token = ""; sessionStorage.removeItem("kk-session"); mediaControl?.stopAll(); notificationControl?.retire(); historyView = null; joinDrafts.clear(); joinDraft = {name:"", bind:"", role:"participant"}; $("dialog").close(); $("dialog-content").replaceChildren();
     const message = "This private session expired or the local service restarted. Relaunch kk ui and use its new private browser launch.";
     $("gate-text").textContent = message; $("gate").hidden = false; $("workspace").hidden = true;
     throw new Error(message);
@@ -294,7 +342,7 @@ function renderOperations() {
     (replacement || $("action-center").querySelector("summary"))?.focus();
   }
 }
-async function refresh() { if (!token || refreshing) return; refreshing = true; try { current = await api("/api/state"); $("connection").textContent = "LOCAL / CONNECTED"; render(); await loadFiles(); } catch (error) { $("connection").textContent = "LOCAL / UNAVAILABLE"; mediaControl?.stopAll(); } finally { refreshing = false; } }
+async function refresh() { if (!token || refreshing) return; refreshing = true; try { current = await api("/api/state"); notificationControl?.observe(current); $("connection").textContent = "LOCAL / CONNECTED"; render(); await loadFiles(); } catch (error) { $("connection").textContent = "LOCAL / UNAVAILABLE"; mediaControl?.stopAll(); notificationControl?.close(); } finally { refreshing = false; } }
 function applyAppearance(appearance) {
   const style = document.documentElement.style;
   const keys = ["--bg", "--surface", "--ink", "--muted", "--line", "--accent", "--accent-soft"];
@@ -324,19 +372,32 @@ function applyAppearance(appearance) {
   style.setProperty("--accent-soft", color(surface));
 }
 $("theme").onclick = () => {
-  const baseline = {revision:current.settings.revision ?? "0", display_name:current.settings.display_name, share_display_name:current.settings.share_display_name === true, sidebar_mode:current.settings.sidebar_mode || "expanded", appearance:{...current.settings.appearance}};
+  const baseline = {revision:current.settings.revision ?? "0", display_name:current.settings.display_name, share_display_name:current.settings.share_display_name === true, message_notifications:current.settings.message_notifications === true, sidebar_mode:current.settings.sidebar_mode || "expanded", appearance:{...current.settings.appearance}};
   const settings = current.settings, name = field("Display name", "display_name", "text", settings.display_name); name.querySelector("input").required = true; name.querySelector("input").maxLength = 64;
   const share = field("Share this display name with room members", "share_display_name", "checkbox"); share.querySelector("input").checked = settings.share_display_name === true;
+  const notifications = field("Content-free system message notifications", "message_notifications", "checkbox"); notifications.querySelector("input").checked = settings.message_notifications === true;
+  const allowNotifications = el("button", "outline compact", "Allow notifications in this browser"); allowNotifications.type = "button";
+  const notificationStatus = el("p", "dialog-note", "Browser permission: " + notificationControl.permission());
+  notificationStatus.role = "status";
+  allowNotifications.disabled = notificationControl.permission() === "unsupported";
+  allowNotifications.onclick = async () => {
+    const revision = modalRevision;
+    allowNotifications.disabled = true; notificationStatus.textContent = "Waiting for the browser's notification permission. No profile change is saved yet.";
+    try { await notificationControl.allow(); if (revision !== modalRevision || !$("dialog").open) return; notifications.querySelector("input").checked = true; notificationStatus.textContent = "Browser allowed. Save settings to enable this profile's alerts."; }
+    catch (error) { if (revision === modalRevision && $("dialog").open) notificationStatus.textContent = error.message; }
+    finally { if (revision === modalRevision && $("dialog").open) allowNotifications.disabled = notificationControl.permission() === "unsupported"; }
+  };
   const sidebar = el("label", "field", "Sidebar mode"), sidebarSelect = el("select"); sidebarSelect.name = "sidebar_mode";
   for (const mode of ["expanded", "compact", "auto"]) { const option = el("option", "", mode); option.value = mode; sidebarSelect.append(option); }
   sidebarSelect.value = settings.sidebar_mode || "expanded"; sidebar.append(sidebarSelect);
   const hue = field("Hue (0-350 in steps of 10; blank for neutral)", "hue", "number", settings.appearance.hue === null ? "" : String(settings.appearance.hue)); const hueInput = hue.querySelector("input"); hueInput.min = 0; hueInput.max = 350; hueInput.step = 10;
   const clarity = field("Clarity (0-100)", "clarity", "range", String(settings.appearance.clarity)); const saturation = field("Saturation (0-100)", "saturation", "range", String(settings.appearance.saturation));
   for (const wrapper of [clarity, saturation]) { const input = wrapper.querySelector("input"); input.min = 0; input.max = 100; input.step = 10; const value = el("small", "muted", input.value); input.oninput = () => { value.textContent = input.value; }; wrapper.append(value); }
-  modal("Profile settings", [name, share, sidebar, el("p", "dialog-note", "Sharing is off by default. When off, your own name remains visible only here. Previously shared names cannot be erased from other members' knowledge or local nicknames. Names are not verified human identities."), hue, clarity, saturation, el("p", "dialog-note", "Neutral hue, clarity 50 and saturation 20 restore the original dark grey palette. Settings belong to the running profile.")], "Save settings", async data => {
+  modal("Profile settings", [name, share, sidebar, el("p", "dialog-note", "Sharing is off by default. When off, your own name remains visible only here. Previously shared names cannot be erased from other members' knowledge or local nicknames. Names are not verified human identities."), notifications, allowNotifications, notificationStatus, el("p", "dialog-note", "Alerts are off by default, only while this UI is open. No text, names or sensitive-message alerts are sent to the OS; alerts may appear on the lock screen. Browser permission is separate and may need renewal when the local origin changes."), hue, clarity, saturation, el("p", "dialog-note", "Neutral hue, clarity 50 and saturation 20 restore the original dark grey palette. Settings belong to the running profile.")], "Save settings", async data => {
     const raw = data.get("hue"), action = {action:"settings", expected_revision:baseline.revision};
-    const values = {display_name:data.get("display_name"), share_display_name:data.get("share_display_name") === "on", sidebar_mode:data.get("sidebar_mode")};
+    const values = {display_name:data.get("display_name"), share_display_name:data.get("share_display_name") === "on", message_notifications:data.get("message_notifications") === "on", sidebar_mode:data.get("sidebar_mode")};
     for (const key of Object.keys(values)) if (values[key] !== baseline[key]) action[key] = values[key];
+    if (action.message_notifications === true && notificationControl.permission() !== "granted") throw new Error("Allow notifications in this browser first, or keep system alerts off.");
     const appearance = {hue:raw === "" ? null : Number(raw), clarity:Number(data.get("clarity")), saturation:Number(data.get("saturation"))};
     if (Object.keys(appearance).some(key => appearance[key] !== baseline.appearance[key])) action.appearance = appearance;
     try { await act(action); } catch (error) {
@@ -351,8 +412,9 @@ $("theme").onclick = () => {
         if (appearance[key] === baseline.appearance[key]) { const input = wrapper.querySelector("input"); input.value = latest.appearance[key] === null ? "" : String(latest.appearance[key]); input.oninput?.(); }
       }
       share.querySelector("input").checked = latest.share_display_name === true;
-      Object.assign(baseline, {revision:latest.revision, display_name:latest.display_name, share_display_name:latest.share_display_name === true, sidebar_mode:latest.sidebar_mode, appearance:{...latest.appearance}});
-      throw new Error("Settings changed elsewhere. Current sharing consent has been reloaded; review it and your retained edits, then save again.");
+      notifications.querySelector("input").checked = latest.message_notifications === true;
+      Object.assign(baseline, {revision:latest.revision, display_name:latest.display_name, share_display_name:latest.share_display_name === true, message_notifications:latest.message_notifications === true, sidebar_mode:latest.sidebar_mode, appearance:{...latest.appearance}});
+      throw new Error("Settings changed elsewhere. Current sharing and notification consent has been reloaded; review it and your retained edits, then save again.");
     }
   });
 };
@@ -406,16 +468,22 @@ $("composer").onsubmit = async (event) => { event.preventDefault(); const text =
 };
 $("text").onkeydown = (event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") $("composer").requestSubmit(); };
 $("share-media").onclick = () => mediaControl?.shareDialog(); $("receive-media").onclick = () => mediaControl?.receiveDialog(); $("stop-media").onclick = () => mediaControl?.stopAll();
-addEventListener("pagehide", () => mediaControl?.stopAll());
+addEventListener("pagehide", () => { mediaControl?.stopAll(); notificationControl?.retire(); });
+addEventListener("focus", () => notificationControl?.close());
 $("attach").onclick = () => $("file-input").click();
 $("file-input").onchange = (event) => { const file = event.target.files[0]; if (!file) return; if (file.size > (current?.files.max_bytes || 0)) { toast("This file exceeds the configured upload limit."); return; }
   fileDialog("Send " + file.name, async (name, to, sensitive) => { const response = await fetch("/api/rooms/" + encodeURIComponent(name) + "/files?to=" + encodeURIComponent(to) + "&sensitive=" + sensitive, { method: "POST", headers: { Authorization: "Bearer " + token, "Content-Type": "application/octet-stream" }, body: file }); return response.json(); }); event.target.value = "";
 };
+notificationControl = messageNotifications(globalThis, {
+  hidden: () => document.hidden, focused: () => document.hasFocus(), selected: () => selected,
+  open: name => { window.focus(); if (current?.rooms.some(item => item.name === name)) { selected = name; sessionStorage.setItem("kk-room", selected); render(); } },
+  unavailable: () => toast("System notifications are unavailable. Review browser permission in Settings; messages remain in the workspace."),
+});
 (async () => {
   try { const bootstrap = launchCode;
     if (bootstrap) { const response = await fetch("/api/bootstrap", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: bootstrap }) }); if (!response.ok) throw new Error("This private launch link expired or was already used."); token = (await response.json()).session; sessionStorage.setItem("kk-session", token); }
     if (!token) throw new Error("Start kk ui on this device and use its private browser launch. No credential is printed in the terminal.");
-    current = await api("/api/state"); $("gate").hidden = true; $("workspace").hidden = false;
+    current = await api("/api/state"); notificationControl.observe(current); $("gate").hidden = true; $("workspace").hidden = false;
     const media = await import("/media.js"); mediaControl = media.setupMedia({ token: () => token, room, memberName, memberChoice, config: () => current.media, toast, modal, el });
     render(); setInterval(refresh, 1000);
   } catch (error) { $("gate-text").textContent = error.message; }
