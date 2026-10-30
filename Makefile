@@ -36,7 +36,7 @@ help: ## Show available tasks
 	  'make lab-room-cli-test Public room CLI and lifecycle across three guests' \
 	  'make lab-native-media-test MEDIA_RECEIVER=... [MEDIA_XVFB=...] Native private-display contention' \
 	  'make lab-stop        Stop the dedicated guests and network' \
-	  'make push            Push this branch to both SSH remotes'
+	  'make push            Push this branch to GitHub; PUSH_REMOTES="github gitlab" syncs both'
 
 check: ## Validate offline with local loopback network tests
 	$(MAKE) python-check
@@ -110,7 +110,7 @@ ui-check: ## Offline browser-adapter syntax and standard RTP unit tests
 	node --check src/ui/assets/media.js
 	node --check src/ui/assets/rtp.js
 	node --check src/ui/assets/audio-worklet.js
-	node --test tests/ui_rtp.mjs tests/ui_client.mjs tests/ui_workflows.cjs tests/ui_media.mjs tests/ui_layout.cjs tests/ui_history.mjs tests/ui_notifications.cjs
+	node --test tests/ui_rtp.mjs tests/ui_client.mjs tests/ui_workflows.cjs tests/ui_media.mjs tests/ui_layout.cjs tests/ui_history.mjs tests/ui_notifications.cjs tests/ui_conversation.cjs
 
 build: ## Build the release CLI
 	cargo build --offline --locked --release

@@ -88,6 +88,17 @@ pub enum Command {
         text: String,
         sensitive: bool,
     },
+    Reply {
+        target: crate::rooms::conversation::Target,
+        text: String,
+        sensitive: bool,
+    },
+    React {
+        target: crate::rooms::conversation::Target,
+        value: crate::rooms::conversation::Reaction,
+        added: bool,
+        sensitive: bool,
+    },
     File {
         source: PathBuf,
         target: raft::PeerId,
@@ -118,7 +129,9 @@ pub enum Command {
 }
 impl Command {
     fn deadline(&self) -> Duration {
-        if matches!(self, Self::Invite(_)) {
+        if matches!(self, Self::Reply { .. } | Self::React { .. }) {
+            config::ROOM_CONVERSATION_TIMEOUT
+        } else if matches!(self, Self::Invite(_)) {
             config::ROOM_INVITATION_WAIT + DEADLINE
         } else if matches!(
             self,
@@ -132,7 +145,10 @@ impl Command {
 }
 impl Drop for Command {
     fn drop(&mut self) {
-        if let Self::Text { text, .. } | Self::HistorySearch { text, .. } = self {
+        if let Self::Text { text, .. }
+        | Self::Reply { text, .. }
+        | Self::HistorySearch { text, .. } = self
+        {
             text.zeroize();
         }
     }
@@ -441,35 +457,32 @@ async fn dispatch(
             let publication = handle
                 .publication_referenced(text.clone(), *sensitive, Duration::from_secs(60))
                 .await?;
-            let reference = publication.reference;
-            let publication = publication.publication;
-            let mut acknowledged = Vec::new();
-            let mut failed = Vec::new();
-            let deliveries = publication
-                .members
-                .into_iter()
-                .filter(|target| *target != control.id())
-                .map(|target| {
-                    let wire = &publication.wire;
-                    async move {
-                        (
-                            target,
-                            control
-                                .send_room_text(target, wire, crate::config::DEFAULT_TIMEOUT)
-                                .await,
-                        )
-                    }
-                });
-            for (target, result) in futures_util::future::join_all(deliveries).await {
-                match result {
-                    Ok(()) => acknowledged.push(target),
-                    Err(error) => failed.push(json!({"peer": target, "code": error.code()})),
-                }
-            }
-            Ok(
-                json!({"bytes": text.len(), "acknowledged": acknowledged, "failed": failed, "reference": reference,
-                "all_acknowledged": failed.is_empty(), "ack_meaning": "durable-replay-processing-and-event-queue-not-human-reading"}),
-            )
+            Ok(deliver_application(control, publication, text.len()).await)
+        }
+        Command::Reply {
+            target,
+            text,
+            sensitive,
+        } => {
+            let operation = crate::rooms::conversation::Operation::Reply {
+                target: target.clone(),
+                text: crate::ReceivedText::from_bytes(text.as_bytes(), *sensitive)?,
+            };
+            structured_application(control, handle, operation).await
+        }
+        Command::React {
+            target,
+            value,
+            added,
+            sensitive,
+        } => {
+            let operation = crate::rooms::conversation::Operation::Reaction {
+                target: target.clone(),
+                value: *value,
+                added: *added,
+                sensitive: *sensitive,
+            };
+            structured_application(control, handle, operation).await
         }
         Command::Invite(options) => {
             let server = PairServer::bind_room(
@@ -504,6 +517,65 @@ async fn dispatch(
             )
         }
     }
+}
+
+async fn deliver_application(
+    control: &ControlNode,
+    publication: crate::rooms::runtime::ReferencedPublication,
+    bytes: usize,
+) -> Value {
+    let reference = publication.reference;
+    let publication = publication.publication;
+    let mut acknowledged = Vec::new();
+    let mut failed = Vec::new();
+    let deliveries = publication
+        .members
+        .into_iter()
+        .filter(|target| *target != control.id())
+        .map(|target| {
+            let wire = &publication.wire;
+            async move {
+                (
+                    target,
+                    control
+                        .send_room_text(target, wire, config::DEFAULT_TIMEOUT)
+                        .await,
+                )
+            }
+        });
+    for (target, result) in futures_util::future::join_all(deliveries).await {
+        match result {
+            Ok(()) => acknowledged.push(target),
+            Err(error) => failed.push(json!({"peer":target,"code":error.code()})),
+        }
+    }
+    json!({"bytes":bytes,"acknowledged":acknowledged,"failed":failed,"message_id":crate::rooms::conversation::Target::from(&reference).to_string(),"reference":reference,
+        "all_acknowledged":failed.is_empty(),"ack_meaning":"durable-replay-processing-and-event-queue-not-human-reading"})
+}
+
+async fn structured_application(
+    control: &ControlNode,
+    handle: &Handle,
+    operation: crate::rooms::conversation::Operation,
+) -> Result<Value> {
+    if operation
+        .target()
+        .is_some_and(|target| target.room != control.room_id())
+    {
+        return Err(Error::Denied);
+    }
+    tokio::time::timeout(config::ROOM_CONVERSATION_TIMEOUT, async {
+        let audience = control
+            .conversation_audience(config::ROOM_CONVERSATION_TIMEOUT)
+            .await?;
+        let bytes = operation.body().len();
+        let publication = handle
+            .publication_conversation(operation, audience, config::ROOM_CONVERSATION_TIMEOUT)
+            .await?;
+        Ok(deliver_application(control, publication, bytes).await)
+    })
+    .await
+    .map_err(|_| Error::Timeout)?
 }
 
 fn is_control(command: &Command) -> bool {
@@ -679,7 +751,33 @@ async fn run(
                 continue;
             }
             let text = match event {
-                Event::Text(text) | Event::ReferencedText { text, .. } => text,
+                Event::Text(text) => text,
+                Event::ReferencedText { text, reference } => {
+                    crate::output::line(format!(
+                        "ROOM MESSAGE_ID {}",
+                        crate::rooms::conversation::Target::from(&reference)
+                    ))
+                    .await?;
+                    text
+                }
+                Event::Conversation { conversation, .. } => {
+                    let operation = &conversation.operation;
+                    let kind = match operation {
+                        crate::rooms::conversation::Operation::Reply { .. } => "REPLY",
+                        crate::rooms::conversation::Operation::Reaction { .. } => "REACTION",
+                        crate::rooms::conversation::Operation::Text(_) => "TEXT",
+                    };
+                    let detail = if operation.sensitive() && !options.reveal {
+                        format!("[sensitive, {} bytes]", operation.body().len())
+                    } else {
+                        let relation = serde_json::to_string(&operation.relation())
+                            .map_err(|_| Error::Protocol)?;
+                        format!("{} {}", relation, operation.body().escape_debug())
+                    };
+                    crate::output::line(format!("ROOM {kind} {} {detail}", conversation.sender))
+                        .await?;
+                    continue;
+                }
             };
             let line = if text.content.sensitive && !options.reveal {
                 format!(

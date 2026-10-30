@@ -38,15 +38,16 @@ struct Message {
     id: u64,
     room: String,
     sender: String,
-    text: Zeroizing<String>,
-    sensitive: bool,
+    operation: crate::rooms::conversation::Operation,
     outgoing: bool,
     reference: Option<crate::rooms::group::StableReference>,
 }
 impl Message {
     fn view(&self) -> Value {
-        json!({"id": self.id, "room": self.room, "sender": self.sender, "sensitive": self.sensitive, "outgoing": self.outgoing,
-            "reference": self.reference, "bytes": self.text.len(), "text": if self.sensitive { None } else { Some(self.text.as_str()) }})
+        let sensitive = self.operation.sensitive();
+        json!({"id": self.id, "room": self.room, "sender": self.sender, "sensitive": sensitive, "outgoing": self.outgoing,
+            "reference": self.reference, "message_id":self.reference.as_ref().map(|value| crate::rooms::conversation::Target::from(value).to_string()),
+            "kind":self.operation.kind(), "relation":if sensitive { None } else { self.operation.relation() }, "bytes": self.operation.body().len(), "text": if sensitive { None } else { Some(self.operation.body()) }})
     }
 }
 struct Operation {

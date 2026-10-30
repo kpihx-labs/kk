@@ -86,8 +86,9 @@ demonstrate the actual member presentation, not decorative wording.
 ## Implemented Announcement Boundary
 
 The current name slice uses a private authenticated Profile metadata request,
-not a new MLS chat payload. The typed-payload/history sections above remain future
-design requirements, not implemented support. Each foreground serve/join binds its
+not a new MLS chat payload. The structured conversation implementation and its
+qualification limits are now described in [conversation](conversation.md).
+Each foreground serve/join binds its
 explicit selected profile root to the control service before signaling readiness;
 the backend verifies that root's public certificate against its own identity.
 

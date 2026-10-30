@@ -98,6 +98,8 @@ pub struct Row {
     pub wire_sha256: [u8; 32],
     pub captured_at: u64,
     pub body: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relation: Option<crate::rooms::conversation::Relation>,
 }
 impl Drop for Row {
     fn drop(&mut self) {
@@ -394,6 +396,20 @@ impl Provider {
         capture: Capture<'_>,
         now: u64,
     ) -> Result<Recorded> {
+        self.history_record_related(tx, binding, identity, capture, None, now)
+    }
+    pub(crate) fn history_record_related(
+        &self,
+        tx: &Transaction,
+        binding: &Binding,
+        identity: Option<&Identity>,
+        capture: Capture<'_>,
+        relation: Option<crate::rooms::conversation::Relation>,
+        now: u64,
+    ) -> Result<Recorded> {
+        if let Some(relation) = &relation {
+            relation.validate(binding.room, capture.epoch, capture.body)?;
+        }
         self.history_mutate(tx, |connection| {
             if version(connection)? == 1 {
                 return Ok(Recorded::Off);
@@ -414,7 +430,7 @@ impl Provider {
                 .filter(|id| *id <= i64::MAX as u64)
                 .ok_or_else(invalid)?;
             let row = Row {
-                version: 1,
+                version: if relation.is_some() { 2 } else { 1 },
                 binding: binding.clone(),
                 id,
                 event: capture.event,
@@ -422,6 +438,7 @@ impl Provider {
                 wire_sha256: capture.wire_sha256,
                 captured_at: now,
                 body: capture.body.to_owned(),
+                relation,
             };
             let plaintext = private_json(&row)?;
             let ciphertext = record::seal(plaintext, &binding.validate()?)?;
@@ -581,13 +598,21 @@ fn unlocked(
         let plaintext = record::open(&bytes, identity)?;
         let row: Row = serde_json::from_slice(&plaintext).map_err(|_| invalid())?;
         if id <= 0
-            || row.version != 1
+            || !matches!(
+                (row.version, row.relation.is_some()),
+                (1, false) | (2, true)
+            )
             || row.id != id as u64
             || row.binding != *binding
             || row.captured_at > state.clock
             || row.body.len() > config::MAX_MESSAGE_BYTES
         {
             return Err(invalid());
+        }
+        if let Some(relation) = &row.relation {
+            relation
+                .validate(binding.room, row.epoch, &row.body)
+                .map_err(|_| invalid())?;
         }
         rows.push((row, bytes.len()));
     }

@@ -6,6 +6,7 @@ let token = sessionStorage.getItem("kk-session") || "";
 let current = null, selected = sessionStorage.getItem("kk-room") || "", refreshing = false, mediaControl = null, notificationControl = null;
 let shownRoom = "", rendered = new Map(), revealed = new Map(), toastTimer;
 let fileConsentPending = false;
+let conversationPending = false;
 let operationView = "";
 let historyView = null;
 let modalRevision = 0;
@@ -40,7 +41,7 @@ function messageNotifications(platform, view) {
       for (const message of state?.messages || []) {
         if (!Number.isSafeInteger(message.id) || message.id <= 0) continue;
         newest = Math.max(newest, message.id);
-        if (ready && message.id > cursor && message.outgoing === false && message.sensitive === false
+        if (ready && message.id > cursor && message.outgoing === false && message.sensitive === false && message.kind !== "reaction"
             && typeof message.room === "string" && (state.rooms || []).some(room => room.name === message.room)
             && (view.hidden() || !view.focused() || message.room !== view.selected())) candidate = message.room;
       }
@@ -200,12 +201,94 @@ function referenceKey(reference) {
   if (!reference || !bytes(reference.room) || !bytes(reference.member) || !bytes(reference.wire_sha256) || !Number.isSafeInteger(reference.epoch) || reference.epoch < 0 || !["OutgoingPrepared", "IncomingProcessed"].includes(reference.event)) return null;
   return JSON.stringify([reference.room, reference.member, reference.epoch, reference.event, reference.wire_sha256]);
 }
+function messageTarget(reference) {
+  if (reference?.event !== undefined && !referenceKey(reference)) return null;
+  if (!referenceKey({...reference, event:"IncomingProcessed"})) return null;
+  return {room:[...reference.room], member:[...reference.member], epoch:reference.epoch, wire_sha256:[...reference.wire_sha256]};
+}
+function targetKey(target) {
+  const value = messageTarget(target);
+  return value ? JSON.stringify([value.room, value.member, value.epoch, value.wire_sha256]) : null;
+}
+const reactionNames = ["like", "love", "laugh", "surprised", "sad", "thanks"];
+function checkedRelation(message) {
+  const relation = message.relation;
+  if (!relation) return null;
+  const target = messageTarget(relation.target);
+  if (!target || !message.reference || JSON.stringify(target.room) !== JSON.stringify(message.reference.room)
+      || target.epoch > message.reference.epoch || !["reply", "reaction"].includes(relation.kind)
+      || (relation.kind === "reaction" && (!reactionNames.includes(relation.value) || typeof relation.added !== "boolean"))) throw new Error("Invalid authenticated conversation relation.");
+  return {...relation, target};
+}
+async function conversationAction(action) {
+  if (conversationPending) throw new Error("A reply or reaction is already pending.");
+  conversationPending = true;
+  try { render(); const result = await act(action); if (!result.delivery?.ok) throw new Error(result.delivery?.code || "Operation outcome unavailable; inspect the room before retrying.");
+    toast(result.delivery.result.all_acknowledged ? "Acknowledged by recipient event queues, not human reading." : "Partial delivery; inspect peer outcomes before retrying."); return result;
+  } finally { conversationPending = false; if (current) render(); }
+}
+function replyDialog(message, target) {
+  const reference = messageTarget(message.reference), name = target.name;
+  if (!reference || message.room !== name) throw new Error("Authenticated message reference unavailable for this room.");
+  const body = field("Reply", "reply-text", "textarea"); body.querySelector("textarea").maxLength = 65536;
+  const sensitive = field("Sensitive reply / exclude from history and notifications", "reply-sensitive", "checkbox"); sensitive.querySelector("input").checked = message.sensitive === true;
+  modal("Reply / " + (target.title || name), [el("p", "dialog-note", "Reply to " + memberName(target, message.sender) + ". The original text is not copied. A reference is not a read receipt or remote history permission."), body, sensitive], "Send reply", async data => {
+    if (selected !== name || !room()?.status) throw new Error("Room changed or stopped. Reopen this reply from its original room.");
+    const text = data.get("reply-text"); if (!text) throw new Error("Write a reply first.");
+    await conversationAction({action:"reply", name, target:reference, text, sensitive:data.get("reply-sensitive") === "on"});
+  });
+}
+function relationLabel(message, target) {
+  const relation = checkedRelation(message);
+  if (!relation) return null;
+  const known = current.messages.some(entry => entry.room === message.room && targetKey(entry.reference) === targetKey(relation.target));
+  const label = relation.kind === "reply" ? "Reply to " + memberName(target, relation.target.member.map(byte=>byte.toString(16).padStart(2,"0")).join("")) : (relation.added ? "Added " : "Removed ") + relation.value;
+  return el("small", "muted conversation-relation", label + (known ? " / authenticated message reference" : " / original message unavailable in this view"));
+}
+function messageActions(item, message, target) {
+  let actions = item.querySelector(".message-actions");
+  if (!actions) { actions = el("div", "message-actions"); item.append(actions); }
+  const reference = messageTarget(message.reference); if (!reference) return;
+  const summaries = (current.reactions || []).filter(summary => targetKey(summary.target) === targetKey(reference));
+  const view = JSON.stringify([Boolean(target.status), conversationPending, current.identity, message.message_id, message.kind, message.sensitive, summaries]);
+  if (actions.dataset.view === view) return;
+  const active = document.activeElement, focus = actions.contains(active) ? active?.dataset.action : null;
+  const detailsOpen = actions.querySelector("details")?.open;
+  actions.dataset.view = view; actions.replaceChildren();
+  const reply = el("button", "outline compact", "Reply"); reply.disabled = !target.status || conversationPending;
+  reply.dataset.action = "reply";
+  reply.onclick = () => { try { replyDialog(message, target); } catch(error) { toast(error.message); } }; actions.append(reply);
+  if (message.message_id) { const details = el("details", "technical-details"); details.open = detailsOpen; details.append(el("summary", "", "Message ID"), el("code", "fingerprint", message.message_id)); actions.append(details); }
+  if (message.kind === "reaction") { if (focus) [...actions.querySelectorAll("button")].find(button=>button.dataset.action === focus)?.focus(); return; }
+  if (message.sensitive) {
+    const button = el("button", "outline compact", "Sensitive reaction"); button.disabled = !target.status || conversationPending; button.dataset.action = "react-sensitive";
+    button.onclick = () => {
+      const choice = el("label", "field", "Reaction"), select = el("select"); select.name = "reaction";
+      for (const value of reactionNames) { const option = el("option", "", value); option.value = value; select.append(option); } choice.append(select);
+      const remove = field("Remove your own reaction", "reaction-remove", "checkbox");
+      modal("Sensitive reaction / " + (target.title || target.name), [choice, remove, el("p", "dialog-note", "This activity is excluded from persistent history, OS notifications and public reaction counts. No original text is copied.")], "Apply sensitive reaction", async data => {
+        if (selected !== target.name || !room()?.status) throw new Error("Room changed or stopped.");
+        await conversationAction({action:"react", name:target.name, target:reference, value:data.get("reaction"), added:data.get("reaction-remove") !== "on", sensitive:true});
+      });
+    }; actions.append(button);
+  } else for (const value of reactionNames) {
+    const summary = summaries.find(entry=>entry.value === value), members = summary?.members || [];
+    const own = members.some(member=>member.map(byte=>byte.toString(16).padStart(2,"0")).join("") === current.identity);
+    const button = el("button", "outline compact", value + (members.length ? " " + members.length : "")); button.disabled = !target.status || conversationPending;
+    button.dataset.action = "react-" + value;
+    button.setAttribute("aria-pressed", String(own)); button.title = (own ? "Remove your " : "Add your ") + value + " reaction; counts cover buffered nonsensitive activity";
+    button.onclick = async () => { try { await conversationAction({action:"react", name:target.name, target:reference, value, added:!own, sensitive:message.sensitive === true}); } catch(error) { toast(error.message); } };
+    actions.append(button);
+  }
+  if (focus) [...actions.querySelectorAll("button")].find(button=>button.dataset.action === focus)?.focus();
+}
 function historyEntries(rows, live) {
   const entries = new Map();
   for (const row of rows) {
     const key = referenceKey(row.reference), record = row.record;
     if (!key || !record || record.event !== row.reference.event || record.epoch !== row.reference.epoch || JSON.stringify(record.wire_sha256) !== JSON.stringify(row.reference.wire_sha256) || typeof record.body !== "string") throw new Error("Invalid authenticated history reference; records not displayed.");
-    entries.set(key, {key, text:record.body, reference:row.reference, stored:true, sender:row.reference.member.map(byte => byte.toString(16).padStart(2, "0")).join(""), sensitive:false});
+    const entry = {key, text:record.body, relation:record.relation || null, kind:record.relation?.kind || "text", reference:row.reference, stored:true, sender:row.reference.member.map(byte => byte.toString(16).padStart(2, "0")).join(""), sensitive:false};
+    checkedRelation(entry); entries.set(key, entry);
   }
   for (const message of live) {
     const key = referenceKey(message.reference);
@@ -231,7 +314,9 @@ function renderHistoryEntries(view) {
   view.list.replaceChildren(...entries.map(entry => {
     const item = el("article", "history-record"), event = referenceKey(entry.reference) ? entry.reference.event : null;
     const fact = event === "OutgoingPrepared" ? "Outgoing prepared / outcome uncertain" : event === "IncomingProcessed" ? "Incoming processed" : "Live only / authenticated stable reference unavailable";
-    item.append(el("small", "muted", memberName(room(), entry.sender) + " / " + fact + (entry.stored ? " / local encrypted record" : " / bounded memory")), el("div", "message-body", entry.sensitive ? "Sensitive / excluded from stored history; reveal only in live chat." : entry.text));
+    item.append(el("small", "muted", memberName(room(), entry.sender) + " / " + fact + (entry.stored ? " / local encrypted record" : " / bounded memory")), el("div", "message-body", entry.sensitive ? "Sensitive / excluded from stored history; reveal only in live chat." : entry.kind === "reaction" ? "Reaction activity" : entry.text));
+    if (!entry.sensitive) { const relation = relationLabel({...entry,room:view.name}, room()); if (relation) item.append(relation); }
+    messageActions(item, {...entry,room:view.name}, room());
     return item;
   }));
   if (!entries.length) view.list.append(el("p", "muted", view.searched ? "No disclosable records on this page." : "Submit a search to read stored records. Live messages are shown separately until an authenticated reference is available."));
@@ -304,12 +389,12 @@ function render() {
     const messages = current.messages.filter((message) => message.room === selected);
     if (!messages.length && !$("messages").querySelector(".empty-message")) { const empty = el("div", "empty-message"); empty.append(el("span", "line-art"), el("h2", "", "A direct conversation."), el("p", "", "Live messages use bounded memory. Room actions / Local history opens the optional encrypted archive.")); $("messages").append(empty); }
     for (const message of messages) {
-      if (rendered.has(message.id)) { const meta = rendered.get(message.id).querySelector(".message-meta"); meta.textContent = (message.outgoing ? memberName(target, target.status?.owner) : memberName(target, message.sender)) + (message.sensitive ? " / SENSITIVE" : " / ENCRYPTED"); continue; }
+      if (rendered.has(message.id)) { const item = rendered.get(message.id), meta = item.querySelector(".message-meta"); meta.textContent = (message.outgoing ? memberName(target, target.status?.owner) : memberName(target, message.sender)) + (message.sensitive ? " / SENSITIVE" : " / ENCRYPTED"); messageActions(item, message, target); continue; }
       $("messages").querySelector(".empty-message")?.remove(); const item = el("article", "message" + (message.outgoing ? " outgoing" : ""));
       const meta = el("div", "message-meta", (message.outgoing ? memberName(target, target.status?.owner) : memberName(target, message.sender)) + (message.sensitive ? " / SENSITIVE" : " / ENCRYPTED")); meta.title = message.sender; item.append(meta);
       const body = el("div", "message-body" + (message.sensitive ? " sensitive" : ""));
-      if (message.sensitive) { body.append(el("span", "", "Hidden on this device / " + message.bytes + " bytes")); const reveal = el("button", "", "Reveal"); reveal.onclick = async () => { try { const value = await act({ action: "reveal", id: message.id }); body.textContent = value.text; revealed.set(message.id, true); } catch (error) { toast(error.message); } }; body.append(reveal); }
-      else body.textContent = message.text; item.append(body); rendered.set(message.id, item); $("messages").append(item); $("messages").scrollTop = $("messages").scrollHeight;
+      if (message.sensitive) { body.append(el("span", "", "Hidden on this device / " + message.bytes + " bytes")); const reveal = el("button", "", "Reveal"); reveal.onclick = async () => { try { const value = await act({ action: "reveal", id: message.id }); body.textContent = value.text; const relation = relationLabel({...message, relation:value.relation}, target); if (relation) body.append(relation); revealed.set(message.id, true); } catch (error) { toast(error.message); } }; body.append(reveal); }
+      else { body.textContent = message.kind === "reaction" ? "Reaction activity" : message.text; const relation = relationLabel(message, target); if (relation) body.append(relation); } item.append(body); messageActions(item, message, target); rendered.set(message.id, item); $("messages").append(item); $("messages").scrollTop = $("messages").scrollHeight;
     }
     const retained = new Set(messages.map((message) => message.id)); for (const [id, node] of rendered) if (!retained.has(id)) { node.remove(); rendered.delete(id); revealed.delete(id); }
   }

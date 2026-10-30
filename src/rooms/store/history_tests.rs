@@ -653,6 +653,7 @@ fn hard_row_limit_and_policy_shrink_prune_in_transaction() {
             wire_sha256: [9; 32],
             captured_at: 101,
             body: "bounded".to_owned(),
+            relation: None,
         };
         let ciphertext = crate::envelope::record::seal(
             Zeroizing::new(serde_json::to_vec(&row).unwrap()),

@@ -131,6 +131,7 @@ enum Request {
     RoomText(Vec<u8>),
     RoomFile,
     ProfileGet,
+    ConversationCapabilities,
     FileAvailability([u8; 32]),
     FileFetch([u8; 32]),
     MediaOffer(media::Offer),
@@ -144,6 +145,7 @@ enum Request {
 }
 #[derive(Serialize, Deserialize)]
 enum Response {
+    ConversationCapabilities(crate::rooms::conversation::Capabilities),
     Submit(Submission),
     ReadBarrier(Barrier),
     Configuration(Reply<openraft::StoredMembership<PeerId, Node>>),
@@ -1062,7 +1064,7 @@ impl Client {
                 Request::ReadBarrier => 1,
                 Request::Configuration => 1,
                 Request::RoomText(_) => -1,
-                Request::ProfileGet => -1,
+                Request::ProfileGet | Request::ConversationCapabilities => -1,
                 Request::RoomFile | Request::FileFetch(_) => -2,
                 Request::FileAvailability(_) => -1,
                 Request::MediaOffer(_) | Request::MediaEnd(_) => 0,
@@ -1267,12 +1269,23 @@ async fn serve_connection(
                     file::trace(&shared, send.id(), "envelope parsed");
                     let deadline = match envelope.request {
                         Request::RoomFile | Request::FileFetch(_) => config::DEFAULT_FILE_TIMEOUT,
-                        Request::ProfileGet => config::ROOM_PROFILE_TIMEOUT,
+                        Request::ProfileGet | Request::ConversationCapabilities => config::ROOM_PROFILE_TIMEOUT,
                         _ => config::DEFAULT_TIMEOUT,
                     };
                     let _ = tokio::time::timeout(deadline, async {
                         if envelope.room != shared.room || !authorized(&shared, id)? { return Err(Error::Denied); }
                         let response = match envelope.request {
+                            Request::ConversationCapabilities => {
+                                drop(_permit);
+                                let (handle, peer) = profile::port(&shared, id)?;
+                                let epoch = handle.authorize_profile_metadata(peer, deadline).await?;
+                                let _data = shared.room_data.clone().try_acquire_owned().map_err(|_| Error::Denied)?;
+                                send_frame(&mut send, &Response::ConversationCapabilities(crate::rooms::conversation::Capabilities {
+                                    epoch, version:crate::rooms::conversation::VERSION,
+                                })).await?;
+                                send.finish().map_err(|_| Error::Network)?;
+                                return Ok(());
+                            },
                             Request::ProfileGet => {
                                 // Metadata authorization synchronizes the private room
                                 // through quorum RPCs; never occupy that control lane.

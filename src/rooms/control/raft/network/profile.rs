@@ -381,7 +381,7 @@ fn check_identity(directory: &Path, expected: &Peer) -> Result<()> {
     Ok(())
 }
 
-fn port(shared: &Shared, id: PeerId) -> Result<(crate::rooms::runtime::Handle, Peer)> {
+pub(super) fn port(shared: &Shared, id: PeerId) -> Result<(crate::rooms::runtime::Handle, Peer)> {
     let handle = shared
         .room_port
         .read()
@@ -399,6 +399,90 @@ fn port(shared: &Shared, id: PeerId) -> Result<(crate::rooms::runtime::Handle, P
 }
 
 impl Factory {
+    /// Probe the exact current private audience over pinned room-scoped TLS.
+    /// Optional/old protocol failures never fall back to encoding JSON as text.
+    pub async fn conversation_audience(
+        &self,
+        nodes: &std::collections::BTreeMap<PeerId, Node>,
+        timeout: Duration,
+    ) -> Result<crate::rooms::conversation::Audience> {
+        transport::validate_duration(timeout, config::MAX_FILE_TIMEOUT)?;
+        tokio::time::timeout(timeout, async {
+            let handle = self
+                .shared
+                .room_port
+                .read()
+                .map_err(|_| Error::Protocol)?
+                .clone()
+                .ok_or(Error::Denied)?;
+            handle.synchronize(timeout).await?;
+            let before = handle.status(timeout).await?;
+            let own = PeerId::from_peer(&self.shared.identity.peer());
+            let members: std::collections::BTreeSet<_> = before.members.iter().copied().collect();
+            if before.room != self.shared.room
+                || before.owner != own
+                || !before.active
+                || !members.contains(&own)
+                || members.is_empty()
+                || members.len() > config::ROOM_MAX_MEMBERS
+            {
+                return Err(Error::Denied);
+            }
+            for target in members.iter().copied().filter(|peer| *peer != own) {
+                let node = nodes.get(&target).ok_or(Error::Denied)?;
+                let (_, peer) = port(&self.shared, target)?;
+                let epoch = handle
+                    .authorize_profile_metadata(peer.clone(), timeout)
+                    .await?;
+                if epoch != before.epoch {
+                    return Err(Error::Denied);
+                }
+                let client = Client {
+                    shared: Arc::downgrade(&self.shared),
+                    target,
+                    node: node.clone(),
+                };
+                let (response, connection) = client
+                    .exchange_policy(
+                        Request::ConversationCapabilities,
+                        RPCOption::new(bounded_timeout(timeout)?),
+                        ExchangePolicy::OptionalProfile,
+                    )
+                    .await?;
+                transport::verify_peer(&connection, &peer)?;
+                match response {
+                    Response::ConversationCapabilities(value)
+                        if value.epoch == before.epoch
+                            && value.version == crate::rooms::conversation::VERSION => {}
+                    _ => {
+                        return Err(Error::Node(
+                            "room member does not support structured conversation",
+                        ));
+                    }
+                }
+                if handle.authorize_profile_metadata(peer, timeout).await? != before.epoch {
+                    return Err(Error::Denied);
+                }
+            }
+            handle.synchronize(timeout).await?;
+            let after = handle.status(timeout).await?;
+            if before.room != after.room
+                || before.epoch != after.epoch
+                || !after.active
+                || members != after.members.iter().copied().collect()
+            {
+                return Err(Error::Denied);
+            }
+            crate::rooms::conversation::Audience::negotiated(
+                before.room,
+                before.epoch,
+                members.into_iter().map(|peer| peer.0).collect(),
+            )
+        })
+        .await
+        .map_err(|_| Error::Timeout)?
+    }
+
     #[cfg(all(test, unix))]
     pub(in crate::rooms::control::raft) fn profile_link_id(&self, target: PeerId) -> Option<usize> {
         let slots = self.shared.slots.try_lock().ok()?;

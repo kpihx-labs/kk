@@ -50,6 +50,33 @@ pub enum Event {
         text: Text,
         reference: crate::rooms::group::StableReference,
     },
+    Conversation {
+        conversation: crate::rooms::group::Conversation,
+        reference: crate::rooms::group::StableReference,
+    },
+}
+impl Event {
+    fn conversation(
+        conversation: crate::rooms::group::Conversation,
+        reference: crate::rooms::group::StableReference,
+    ) -> Self {
+        match conversation.operation {
+            crate::rooms::conversation::Operation::Text(content) => Self::ReferencedText {
+                text: Text {
+                    sender: conversation.sender,
+                    content,
+                },
+                reference,
+            },
+            operation => Self::Conversation {
+                conversation: crate::rooms::group::Conversation {
+                    sender: conversation.sender,
+                    operation,
+                },
+                reference,
+            },
+        }
+    }
 }
 
 /// Ciphertext and its exact epoch audience, captured in one actor operation.
@@ -65,6 +92,11 @@ pub struct ReferencedPublication {
 const HISTORY_QUEUE: usize = 2;
 
 enum Command {
+    EncryptConversation {
+        operation: crate::rooms::conversation::Operation,
+        audience: crate::rooms::conversation::Audience,
+        reply: oneshot::Sender<Result<ReferencedPublication>>,
+    },
     History {
         operation: history::Operation,
         reply: oneshot::Sender<Result<history::Summary>>,
@@ -148,6 +180,7 @@ impl Command {
             Self::History { reply, .. } => reply.is_closed(),
             Self::HistorySearch { reply, .. } => reply.is_closed(),
             Self::EncryptReferenced { reply, .. } => reply.is_closed(),
+            Self::EncryptConversation { reply, .. } => reply.is_closed(),
             Self::AcceptReferenced { reply, .. } => reply.is_closed(),
             Self::MediaPolicy(reply) => reply.is_closed(),
             Self::Synchronize(reply) | Self::Shutdown(reply) => reply.is_closed(),
@@ -285,6 +318,19 @@ impl Handle {
         self.call(deadline, |reply| Command::EncryptReferenced {
             text,
             sensitive,
+            reply,
+        })
+        .await
+    }
+    pub async fn publication_conversation(
+        &self,
+        operation: crate::rooms::conversation::Operation,
+        audience: crate::rooms::conversation::Audience,
+        deadline: Duration,
+    ) -> Result<ReferencedPublication> {
+        self.call(deadline, |reply| Command::EncryptConversation {
+            operation,
+            audience,
             reply,
         })
         .await
@@ -593,6 +639,31 @@ impl Actor {
     async fn execute(&mut self, command: Command, expires: Instant) -> bool {
         let deadline = expires.saturating_duration_since(Instant::now());
         match command {
+            Command::EncryptConversation {
+                operation,
+                audience,
+                reply,
+            } => {
+                let result = self
+                    .room
+                    .encrypt_conversation_referenced(&operation, &audience, deadline)
+                    .await
+                    .map(|(wire, reference)| ReferencedPublication {
+                        publication: Publication {
+                            wire,
+                            members: self
+                                .room
+                                .peers()
+                                .iter()
+                                .map(crate::rooms::control::raft::PeerId::from_peer)
+                                .collect(),
+                        },
+                        reference,
+                    });
+                if !reply.is_closed() {
+                    let _ = reply.send(before_deadline(result, expires));
+                }
+            }
             Command::History { operation, reply } => {
                 let result = self.room.history_operation(operation, deadline).await;
                 let _ = reply.send(before_deadline(result, expires));
@@ -630,14 +701,13 @@ impl Actor {
                 let result = match self.events.try_reserve() {
                     Ok(permit) => match self
                         .room
-                        .decrypt_text_referenced(&peer, &wire, deadline)
+                        .decrypt_conversation_referenced(&peer, &wire, deadline)
                         .await
                     {
-                        Ok((text, reference)) if !reply.is_closed() && Instant::now() < expires => {
-                            permit.send(Event::ReferencedText {
-                                text,
-                                reference: reference.clone(),
-                            });
+                        Ok((conversation, reference))
+                            if !reply.is_closed() && Instant::now() < expires =>
+                        {
+                            permit.send(Event::conversation(conversation, reference.clone()));
                             Ok(reference)
                         }
                         Ok(_) => Err(Error::Cancelled),
@@ -683,11 +753,13 @@ impl Actor {
                 let result = match self.events.try_reserve() {
                     Ok(permit) => match self
                         .room
-                        .decrypt_text_referenced(&peer, &wire, deadline)
+                        .decrypt_conversation_referenced(&peer, &wire, deadline)
                         .await
                     {
-                        Ok((text, reference)) if !reply.is_closed() && Instant::now() < expires => {
-                            permit.send(Event::ReferencedText { text, reference });
+                        Ok((conversation, reference))
+                            if !reply.is_closed() && Instant::now() < expires =>
+                        {
+                            permit.send(Event::conversation(conversation, reference));
                             Ok(())
                         }
                         Ok(_) => Err(Error::Cancelled),

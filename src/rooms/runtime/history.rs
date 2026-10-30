@@ -339,38 +339,13 @@ impl Room {
         sensitive: bool,
         deadline: Duration,
     ) -> Result<(Vec<u8>, StableReference)> {
-        crate::transport::validate_duration(deadline, config::MAX_FILE_TIMEOUT)?;
         if text.len() > config::MAX_MESSAGE_BYTES {
             return Err(Error::MessageTooLarge);
         }
-        let expires = tokio::time::Instant::now() + deadline;
-        tokio::time::timeout(deadline, async {
-            let before = self.synchronize(deadline).await?;
-            self.history_reader(&before)?;
-            if !before
-                .member_rights(&self.identity.peer().fingerprint_bytes())
-                .is_some_and(|rights| rights.can_publish())
-            {
-                return Err(Error::Denied);
-            }
-            let revision = self.profile.revision()?;
-            let result = self
-                .group
-                .encrypt_text_referenced(text, sensitive, now()?)?;
-            #[cfg(test)]
-            after_private_operation();
-            let after = self.synchronize(deadline).await?;
-            self.history_reader(&after)?;
-            if before.epoch() != after.epoch() || revision != self.profile.revision()? {
-                return Err(Error::Denied);
-            }
-            if tokio::time::Instant::now() >= expires {
-                return Err(Error::Timeout);
-            }
-            Ok(result)
+        self.application_operation(None, deadline, |group| {
+            group.encrypt_text_referenced(text, sensitive, now()?)
         })
         .await
-        .map_err(|_| Error::Timeout)?
     }
     pub async fn decrypt_text_referenced(
         &mut self,
@@ -378,30 +353,74 @@ impl Room {
         wire: &[u8],
         deadline: Duration,
     ) -> Result<(Text, StableReference)> {
-        crate::transport::validate_duration(deadline, config::MAX_FILE_TIMEOUT)?;
         if wire.len() > config::ROOM_MAX_WIRE_BYTES {
             return Err(Error::MessageTooLarge);
         }
+        self.application_operation(Some(sender), deadline, |group| {
+            group.decrypt_text_referenced(wire, Some(sender), now()?)
+        })
+        .await
+    }
+    pub async fn encrypt_conversation_referenced(
+        &mut self,
+        operation: &crate::rooms::conversation::Operation,
+        audience: &crate::rooms::conversation::Audience,
+        deadline: Duration,
+    ) -> Result<(Vec<u8>, StableReference)> {
+        self.application_operation(None, deadline, |group| {
+            audience.validate(
+                group.room_id(),
+                group.epoch(),
+                group.peers().iter().map(Peer::fingerprint_bytes).collect(),
+            )?;
+            group.encrypt_conversation_referenced(operation, now()?)
+        })
+        .await
+    }
+    pub async fn decrypt_conversation_referenced(
+        &mut self,
+        sender: &Peer,
+        wire: &[u8],
+        deadline: Duration,
+    ) -> Result<(crate::rooms::group::Conversation, StableReference)> {
+        if wire.len() > config::ROOM_MAX_WIRE_BYTES {
+            return Err(Error::MessageTooLarge);
+        }
+        self.application_operation(Some(sender), deadline, |group| {
+            group.decrypt_conversation_referenced(wire, Some(sender), now()?)
+        })
+        .await
+    }
+    async fn application_operation<T>(
+        &mut self,
+        sender: Option<&Peer>,
+        deadline: Duration,
+        operation: impl FnOnce(&mut crate::rooms::group::Group) -> Result<T>,
+    ) -> Result<T> {
+        crate::transport::validate_duration(deadline, config::MAX_FILE_TIMEOUT)?;
         let expires = tokio::time::Instant::now() + deadline;
         tokio::time::timeout(deadline, async {
             let before = self.synchronize(deadline).await?;
             self.history_reader(&before)?;
-            self.sender(sender)?;
+            if let Some(sender) = sender {
+                self.sender(sender)?;
+            }
+            let publisher = sender.unwrap_or(&self.identity.peer()).fingerprint_bytes();
             if !before
-                .member_rights(&sender.fingerprint_bytes())
+                .member_rights(&publisher)
                 .is_some_and(|rights| rights.can_publish())
             {
                 return Err(Error::Denied);
             }
             let revision = self.profile.revision()?;
-            let result = self
-                .group
-                .decrypt_text_referenced(wire, Some(sender), now()?)?;
+            let result = operation(&mut self.group)?;
             #[cfg(test)]
             after_private_operation();
             let after = self.synchronize(deadline).await?;
             self.history_reader(&after)?;
-            self.sender(sender)?;
+            if let Some(sender) = sender {
+                self.sender(sender)?;
+            }
             if before.epoch() != after.epoch() || revision != self.profile.revision()? {
                 return Err(Error::Denied);
             }

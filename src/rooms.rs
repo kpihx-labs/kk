@@ -3,6 +3,7 @@
 
 use crate::{Error, Identity, Peer, Result, signed};
 pub mod control;
+pub mod conversation;
 mod database;
 pub mod enrollment;
 pub mod group;

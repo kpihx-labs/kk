@@ -14,7 +14,9 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, rc::Rc};
 use tls_codec::{DeserializeBytes, Serialize as TlsSerialize};
 use zeroize::Zeroizing;
+mod application;
 mod applied;
+pub use application::Conversation;
 mod durable;
 mod enrollment;
 mod history;
@@ -51,6 +53,12 @@ pub struct Group {
 pub struct Text {
     pub sender: String,
     pub content: ReceivedText,
+}
+
+struct Application {
+    sender: String,
+    conversation: bool,
+    plaintext: Zeroizing<Vec<u8>>,
 }
 
 impl Group {
@@ -535,6 +543,16 @@ impl Group {
             .map(|(wire, _)| wire)
     }
     fn encrypt_text_mut(&mut self, text: &str, sensitive: bool) -> Result<Vec<u8>> {
+        self.application_ready()?;
+        if text.len() > config::MAX_MESSAGE_BYTES {
+            return Err(Error::MessageTooLarge);
+        }
+        let mut plaintext = Zeroizing::new(Vec::with_capacity(1 + text.len()));
+        plaintext.push(u8::from(sensitive));
+        plaintext.extend_from_slice(text.as_bytes());
+        self.encrypt_application_bytes(TEXT_AAD, &plaintext)
+    }
+    fn application_ready(&self) -> Result<()> {
         self.ready()?;
         if self.pending.is_some()
             || !self
@@ -544,16 +562,13 @@ impl Group {
         {
             return Err(Error::Denied);
         }
-        if text.len() > config::MAX_MESSAGE_BYTES {
-            return Err(Error::MessageTooLarge);
-        }
-        let mut plaintext = Zeroizing::new(Vec::with_capacity(1 + text.len()));
-        plaintext.push(u8::from(sensitive));
-        plaintext.extend_from_slice(text.as_bytes());
-        self.state.set_aad(TEXT_AAD.to_vec());
+        Ok(())
+    }
+    fn encrypt_application_bytes(&mut self, aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
+        self.state.set_aad(aad.to_vec());
         let message = self
             .state
-            .create_message(&self.actor.provider, &self.actor.signer, &plaintext)
+            .create_message(&self.actor.provider, &self.actor.signer, plaintext)
             .map_err(|_| Error::Authentication)?;
         encode(&message)
     }
@@ -568,13 +583,30 @@ impl Group {
             .map(|(text, _)| text)
     }
     fn decrypt_text_from_mut(&mut self, wire: &[u8], expected: Option<[u8; 32]>) -> Result<Text> {
+        let application = self.decrypt_application_mut(wire, expected, false)?;
+        let (flag, bytes) = application.plaintext.split_first().ok_or(Error::Protocol)?;
+        if *flag > 1 {
+            return Err(Error::Protocol);
+        }
+        Ok(Text {
+            sender: application.sender,
+            content: ReceivedText::from_bytes(bytes, *flag == 1)?,
+        })
+    }
+    fn decrypt_application_mut(
+        &mut self,
+        wire: &[u8],
+        expected: Option<[u8; 32]>,
+        allow_conversation: bool,
+    ) -> Result<Application> {
         self.ready()?;
         let message = protocol(wire, ContentType::Application)?;
         let processed = self
             .state
             .process_message(&self.actor.provider, message)
             .map_err(|_| Error::Authentication)?;
-        if processed.aad() != TEXT_AAD {
+        let conversation = allow_conversation && processed.aad() == super::conversation::AAD;
+        if processed.aad() != TEXT_AAD && !conversation {
             return Err(Error::Protocol);
         }
         let sender = match processed.sender() {
@@ -591,14 +623,10 @@ impl Group {
         let ProcessedMessageContent::ApplicationMessage(message) = processed.into_content() else {
             return Err(Error::Protocol);
         };
-        let plaintext = Zeroizing::new(message.into_bytes());
-        let (flag, bytes) = plaintext.split_first().ok_or(Error::Protocol)?;
-        if *flag > 1 {
-            return Err(Error::Protocol);
-        }
-        Ok(Text {
+        Ok(Application {
             sender: fingerprint,
-            content: ReceivedText::from_bytes(bytes, *flag == 1)?,
+            conversation,
+            plaintext: Zeroizing::new(message.into_bytes()),
         })
     }
 }

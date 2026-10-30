@@ -104,6 +104,191 @@ fn rows(group: &mut Group) -> usize {
 }
 
 #[test]
+fn conversation_reply_preserves_legacy_text_and_captures_authenticated_relation() {
+    use crate::rooms::conversation::{Operation, Relation, Target};
+    let mut pair = Pair::new();
+    enable(&mut pair.alice, store::Policy::default());
+    enable(&mut pair.bob, store::Policy::default());
+    let legacy = r#"{"kind":"reply","body":"still ordinary legacy text"}"#;
+    let (wire, original) = pair
+        .alice
+        .encrypt_text_referenced(legacy, false, TIME)
+        .unwrap();
+    let (received, incoming) = pair
+        .bob
+        .decrypt_conversation_referenced(&wire, Some(&pair.profiles[0].peer()), TIME)
+        .unwrap();
+    assert_eq!(received.operation.body(), legacy);
+    assert!(matches!(received.operation, Operation::Text(_)));
+    assert_eq!(Target::from(&original), Target::from(&incoming));
+    let target = Target::from(&incoming);
+    let reply = Operation::Reply {
+        target: target.clone(),
+        text: ReceivedText::from_bytes(b"reply body", false).unwrap(),
+    };
+    let (wire, reference) = pair
+        .bob
+        .encrypt_conversation_referenced(&reply, TIME)
+        .unwrap();
+    let (received, incoming_reply) = pair
+        .alice
+        .decrypt_conversation_referenced(&wire, Some(&pair.profiles[1].peer()), TIME)
+        .unwrap();
+    assert_eq!(received.sender, pair.profiles[1].peer().fingerprint());
+    assert_eq!(received.operation.body(), "reply body");
+    assert_eq!(
+        received.operation.relation(),
+        Some(Relation::Reply {
+            target: target.clone()
+        })
+    );
+    assert_eq!(Target::from(&reference), Target::from(&incoming_reply));
+    for group in [&mut pair.alice, &mut pair.bob] {
+        let stored = page(group);
+        assert_eq!(stored.rows[0].record.version, 1);
+        assert!(stored.rows[0].record.relation.is_none());
+        assert_eq!(stored.rows[1].record.version, 2);
+        assert_eq!(stored.rows[1].record.body, "reply body");
+        assert_eq!(
+            stored.rows[1].record.relation,
+            Some(Relation::Reply {
+                target: target.clone()
+            })
+        );
+    }
+}
+
+#[test]
+fn conversation_legacy_rejection_author_mismatch_and_sensitive_capture_remain_fail_closed() {
+    use crate::rooms::conversation::{Operation, Target};
+    let mut pair = Pair::new();
+    enable(&mut pair.bob, store::Policy::default());
+    let (_, original) = pair
+        .alice
+        .encrypt_text_referenced("target", false, TIME)
+        .unwrap();
+    let reply = Operation::Reply {
+        target: Target::from(&original),
+        text: ReceivedText::from_bytes(b"private reply", true).unwrap(),
+    };
+    let (wire, _) = pair
+        .alice
+        .encrypt_conversation_referenced(&reply, TIME)
+        .unwrap();
+    assert!(matches!(
+        pair.bob.decrypt_text_referenced(&wire, None, TIME),
+        Err(Error::Protocol)
+    ));
+    assert!(matches!(
+        pair.bob
+            .decrypt_conversation_referenced(&wire, Some(&pair.profiles[1].peer()), TIME),
+        Err(Error::Authentication)
+    ));
+    assert_eq!(rows(&mut pair.bob), 0);
+    let (received, _) = pair
+        .bob
+        .decrypt_conversation_referenced(&wire, Some(&pair.profiles[0].peer()), TIME)
+        .unwrap();
+    assert!(received.operation.sensitive());
+    assert_eq!(received.operation.body(), "private reply");
+    assert_eq!(rows(&mut pair.bob), 0);
+    assert!(
+        pair.bob
+            .decrypt_conversation_referenced(&wire, None, TIME)
+            .is_err()
+    );
+}
+
+#[test]
+fn conversation_capture_failure_retries_exact_wire_without_releasing_dirty_ratchets() {
+    use crate::rooms::conversation::Operation;
+    let mut pair = Pair::new();
+    enable(
+        &mut pair.alice,
+        store::Policy {
+            encrypted_bytes: 1,
+            ..store::Policy::default()
+        },
+    );
+    let operation =
+        Operation::Text(ReceivedText::from_bytes(b"transactional conversation", false).unwrap());
+    assert!(
+        pair.alice
+            .encrypt_conversation_referenced(&operation, TIME)
+            .is_err()
+    );
+    assert_eq!(rows(&mut pair.alice), 0);
+    pair.alice
+        .history_enable(store::Policy::default(), TIME)
+        .unwrap();
+    let (wire, _) = pair
+        .alice
+        .encrypt_conversation_referenced(&operation, TIME)
+        .unwrap();
+    enable(
+        &mut pair.bob,
+        store::Policy {
+            encrypted_bytes: 1,
+            ..store::Policy::default()
+        },
+    );
+    assert!(
+        pair.bob
+            .decrypt_conversation_referenced(&wire, None, TIME)
+            .is_err()
+    );
+    assert_eq!(rows(&mut pair.bob), 0);
+    pair.bob
+        .history_enable(store::Policy::default(), TIME)
+        .unwrap();
+    let (received, _) = pair
+        .bob
+        .decrypt_conversation_referenced(&wire, None, TIME)
+        .unwrap();
+    assert_eq!(received.operation.body(), "transactional conversation");
+    assert_eq!(page(&mut pair.bob).rows[0].record.id, 1);
+}
+
+#[test]
+fn conversation_reaction_add_remove_remain_typed_and_authored_by_mls_identity() {
+    use crate::rooms::conversation::{Operation, Reaction, Relation, Target};
+    let mut pair = Pair::new();
+    enable(&mut pair.bob, store::Policy::default());
+    let (_, original) = pair
+        .alice
+        .encrypt_text_referenced("target", false, TIME)
+        .unwrap();
+    let target = Target::from(&original);
+    for added in [true, false] {
+        let operation = Operation::Reaction {
+            target: target.clone(),
+            value: Reaction::Thanks,
+            added,
+            sensitive: false,
+        };
+        let (wire, _) = pair
+            .alice
+            .encrypt_conversation_referenced(&operation, TIME)
+            .unwrap();
+        let (received, _) = pair
+            .bob
+            .decrypt_conversation_referenced(&wire, Some(&pair.profiles[0].peer()), TIME)
+            .unwrap();
+        assert_eq!(received.sender, pair.profiles[0].peer().fingerprint());
+        assert_eq!(received.operation.body(), "");
+        let relation = Some(Relation::Reaction {
+            target: target.clone(),
+            value: Reaction::Thanks,
+            added,
+        });
+        assert_eq!(received.operation.relation(), relation);
+        let stored = page(&mut pair.bob);
+        assert_eq!(stored.rows.last().unwrap().record.version, 2);
+        assert_eq!(stored.rows.last().unwrap().record.relation, relation);
+    }
+}
+
+#[test]
 fn default_off_v1_future_only_and_sensitive_exclusion() {
     let mut pair = Pair::new();
     let first = send(&mut pair.alice, "before opt-in", false);

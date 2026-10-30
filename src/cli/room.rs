@@ -88,6 +88,26 @@ pub enum Command {
         #[arg(long, requires = "file")]
         to: Option<String>,
     },
+    /// Reply to an authenticated message ID; sensitive input uses stdin, never argv
+    Reply {
+        name: String,
+        #[arg(long)]
+        to: kk::rooms::conversation::Target,
+        payload: Option<String>,
+        #[arg(short = 's', long)]
+        sensitive: bool,
+    },
+    /// Add/remove only this authenticated device's reaction to a message ID
+    React {
+        name: String,
+        #[arg(long)]
+        to: kk::rooms::conversation::Target,
+        value: kk::rooms::conversation::Reaction,
+        #[arg(long)]
+        remove: bool,
+        #[arg(short = 's', long)]
+        sensitive: bool,
+    },
     /// Single-use scoped PAKE invitation, with confirmation on both devices
     Invite {
         name: String,
@@ -337,6 +357,45 @@ pub(super) async fn run(command: Command, selected: Option<&Path>) -> Result<()>
                 .collect::<Result<_>>()?;
             report(local::request(&profile, &name, &local::Command::Controllers { voters }).await?)
         }
+        Command::Reply {
+            name,
+            to,
+            payload,
+            sensitive,
+        } => {
+            let text = kk::input::text(payload.as_deref(), sensitive).await?;
+            report(
+                local::request(
+                    &profile,
+                    &name,
+                    &local::Command::Reply {
+                        target: to,
+                        text: text.to_string(),
+                        sensitive,
+                    },
+                )
+                .await?,
+            )
+        }
+        Command::React {
+            name,
+            to,
+            value,
+            remove,
+            sensitive,
+        } => report(
+            local::request(
+                &profile,
+                &name,
+                &local::Command::React {
+                    target: to,
+                    value,
+                    added: !remove,
+                    sensitive,
+                },
+            )
+            .await?,
+        ),
         Command::Remove { name, member } => {
             let member = PeerId::try_from(member).map_err(|_| {
                 Error::Configuration("member requires its canonical full certificate digest")

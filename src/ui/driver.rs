@@ -105,6 +105,21 @@ pub(super) enum Action {
         #[serde(default)]
         sensitive: bool,
     },
+    Reply {
+        name: String,
+        target: crate::rooms::conversation::Target,
+        text: String,
+        #[serde(default)]
+        sensitive: bool,
+    },
+    React {
+        name: String,
+        target: crate::rooms::conversation::Target,
+        value: crate::rooms::conversation::Reaction,
+        added: bool,
+        #[serde(default)]
+        sensitive: bool,
+    },
     Invite {
         name: String,
         bind: SocketAddr,
@@ -264,6 +279,26 @@ fn message(
     outgoing: bool,
     reference: Option<crate::rooms::group::StableReference>,
 ) -> Result<u64> {
+    record_message(
+        app,
+        room,
+        sender,
+        crate::rooms::conversation::Operation::Text(crate::ReceivedText::from_bytes(
+            text.as_bytes(),
+            sensitive,
+        )?),
+        outgoing,
+        reference,
+    )
+}
+fn record_message(
+    app: &App,
+    room: &str,
+    sender: String,
+    operation: crate::rooms::conversation::Operation,
+    outgoing: bool,
+    reference: Option<crate::rooms::group::StableReference>,
+) -> Result<u64> {
     let mut data = app
         .0
         .data
@@ -274,8 +309,7 @@ fn message(
         id,
         room: room.into(),
         sender,
-        text: Zeroizing::new(text.to_owned()),
-        sensitive,
+        operation,
         outgoing,
         reference,
     });
@@ -340,6 +374,7 @@ async fn monitor(
             event = events.recv(), if open => match event {
                 Some(Event::Text(text)) => { if let Err(error) = message(&app, &name, text.sender, text.content.text(), text.content.sensitive, false, None) { break Err(error); } },
                 Some(Event::ReferencedText { text, reference }) => { if let Err(error) = message(&app, &name, text.sender, text.content.text(), text.content.sensitive, false, Some(reference)) { break Err(error); } },
+                Some(Event::Conversation { conversation, reference }) => { if let Err(error) = record_message(&app, &name, conversation.sender, conversation.operation, false, Some(reference)) { break Err(error); } },
                 None => open = false,
             },
         }
@@ -551,6 +586,25 @@ pub(super) async fn run(app: App, mut requests: mpsc::Receiver<Request>) -> Resu
                     let id = message(&app, &name, peer.fingerprint(), &text, sensitive, true, reference)?;
                     Ok(json!({"message": id, "delivery": reply}))
                 },
+                Action::Reply { name, target, text, sensitive } => {
+                    let text = Zeroizing::new(text);
+                    let reply = local::request(&app.0.profile, &name, &Command::Reply { target:target.clone(), text:text.to_string(), sensitive }).await?;
+                    reply.check()?;
+                    let reference = serde_json::from_value(reply.result["reference"].clone()).map_err(|_| Error::Protocol)?;
+                    let peer = Peer::load(&app.0.profile.join("identity/certificate.der"))?;
+                    let operation = crate::rooms::conversation::Operation::Reply { target, text:crate::ReceivedText::from_bytes(text.as_bytes(), sensitive)? };
+                    let id = record_message(&app, &name, peer.fingerprint(), operation, true, Some(reference))?;
+                    Ok(json!({"delivery":reply,"message":id}))
+                },
+                Action::React { name, target, value, added, sensitive } => {
+                    let reply = local::request(&app.0.profile, &name, &Command::React { target:target.clone(), value, added, sensitive }).await?;
+                    reply.check()?;
+                    let reference = serde_json::from_value(reply.result["reference"].clone()).map_err(|_| Error::Protocol)?;
+                    let peer = Peer::load(&app.0.profile.join("identity/certificate.der"))?;
+                    let operation = crate::rooms::conversation::Operation::Reaction { target, value, added, sensitive };
+                    let id = record_message(&app, &name, peer.fingerprint(), operation, true, Some(reference))?;
+                    Ok(json!({"delivery":reply,"message":id}))
+                },
                 Action::Controllers { name, peers } => {
                     let peers = peers.into_iter().collect();
                     let reply = local::request(&app.0.profile, &name, &Command::Controllers { voters: peers }).await?;
@@ -622,7 +676,7 @@ pub(super) async fn run(app: App, mut requests: mpsc::Receiver<Request>) -> Resu
                 Action::Reveal { id } => {
                     let data = app.0.data.lock().map_err(|_| Error::Node("UI event store is unavailable"))?;
                     let message = data.messages.iter().find(|message| message.id == id).ok_or(Error::Configuration("message no longer retained in memory"))?;
-                    Ok(json!({"id": id, "text": message.text.as_str()}))
+                    Ok(json!({"id": id, "text": message.operation.body(), "relation":message.operation.relation()}))
                 },
                 Action::Shutdown => { app.0.stop.send_replace(true); Ok(json!({"stopping": true})) },
             }
@@ -705,8 +759,14 @@ pub(super) async fn snapshot(app: &App) -> Result<Value> {
         .map_err(|_| Error::Node("UI event store is unavailable"))?;
     let operations: Vec<_> = data.operations.iter().map(|(id, operation)| json!({"id": id, "room": operation.room, "kind": if operation.issuing { "invite" } else { "join" }, "state": operation.state, "proposal": operation.proposal,
         "invitation_ready": operation.issuing && operation.state == "waiting" && valid.contains(id), "error": operation.error})).collect();
+    let mut reactions = crate::rooms::conversation::Reactions::default();
+    for message in &data.messages {
+        if let Some(reference) = &message.reference {
+            reactions.apply(reference, &message.operation)?;
+        }
+    }
     Ok(
-        json!({"version": crate::VERSION, "identity": identity, "settings": crate::profile::Settings::load(&app.0.profile)?, "rooms": rooms, "messages": data.messages.iter().map(Message::view).collect::<Vec<_>>(),
+        json!({"version": crate::VERSION, "identity": identity, "settings": crate::profile::Settings::load(&app.0.profile)?, "rooms": rooms, "messages": data.messages.iter().map(Message::view).collect::<Vec<_>>(), "reactions":reactions.summaries(),
         "operations": operations, "phases": data.phases, "history": "explicit-opt-in-local-encrypted", "files": {"max_bytes": config::DEFAULT_FILE_LIMIT}, "media": {"width": config::MEDIA_VIDEO_WIDTH, "height": config::MEDIA_VIDEO_HEIGHT, "fps": config::MEDIA_VIDEO_FPS,
         "packet_bytes": config::MEDIA_PACKET_BYTES, "frame_bytes": config::MEDIA_ENCODED_FRAME_BYTES, "datagram_buffer_bytes": config::MEDIA_DATAGRAM_BUFFER_BYTES, "packet_age_ms": config::MEDIA_PACKET_MAX_AGE.as_millis(), "audio_bitrate": config::MEDIA_AUDIO_BITRATE,
         "max_tracks": config::MEDIA_MAX_STREAMS, "max_subscriptions": config::MEDIA_MAX_STREAMS, "max_publications": config::MEDIA_MAX_PUBLICATIONS, "source_kinds": config::MEDIA_SOURCE_KINDS, "max_users": config::MEDIA_MAX_USERS}}),

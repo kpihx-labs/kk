@@ -47,6 +47,8 @@ pub const ROOM_FILE_SHARE_PATH_BYTES: usize = 4096;
 pub const ROOM_MAX_WIRE_BYTES: usize = 1_048_576;
 pub const ROOM_BOOTSTRAP_AUTHORITY_BYTES: usize = 512 * 1024;
 pub const ROOM_MAX_MEMBERS: usize = 8;
+/// Total structured-send work, including capability negotiation and delivery.
+pub const ROOM_CONVERSATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 pub const ROOM_TRANSPORT_PEERS: usize = 2 * ROOM_MAX_MEMBERS + 1;
 pub const QUIC_SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(1);
 pub const ROOM_KEY_PACKAGE_BUDGET: usize = 4;

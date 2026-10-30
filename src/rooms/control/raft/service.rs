@@ -302,6 +302,18 @@ impl ControlNode {
     }
     /// Direct pinned-peer data. ACK is private processing plus an application
     /// event queue, not human reading. A lost response leaves delivery uncertain.
+    pub async fn conversation_audience(
+        &self,
+        deadline: Duration,
+    ) -> Result<crate::rooms::conversation::Audience> {
+        let membership = self.control_membership();
+        let nodes = membership
+            .membership()
+            .nodes()
+            .map(|(id, node)| (*id, node.clone()))
+            .collect();
+        self.network.conversation_audience(&nodes, deadline).await
+    }
     pub async fn send_room_text(
         &self,
         target: PeerId,

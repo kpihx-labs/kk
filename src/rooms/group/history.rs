@@ -135,7 +135,7 @@ impl Group {
         }
         Ok(status)
     }
-    fn history_preflight(&self, tx: &Transaction, now: u64) -> Result<bool> {
+    pub(super) fn history_preflight(&self, tx: &Transaction, now: u64) -> Result<bool> {
         match self.history_state(tx, self.history.as_deref(), now)? {
             store::Status::Off => Ok(false),
             store::Status::Configured { enabled, .. } => Ok(enabled),
@@ -468,12 +468,13 @@ impl Group {
             }
         }
     }
-    fn capture_history(
+    pub(super) fn capture_history(
         &self,
         tx: &Transaction,
         reference: &StableReference,
         body: &str,
         sensitive: bool,
+        relation: Option<super::super::conversation::Relation>,
         now: u64,
     ) -> Result<()> {
         let context = self
@@ -481,7 +482,7 @@ impl Group {
             .as_deref()
             .ok_or(Error::Storage("history key context required"))?;
         let recorded = context.with_identity(|identity| {
-            self.actor.provider.history_record(
+            self.actor.provider.history_record_related(
                 tx,
                 &context.binding,
                 Some(identity),
@@ -492,6 +493,7 @@ impl Group {
                     body,
                     sensitive,
                 },
+                relation,
                 now,
             )
         })?;
@@ -526,7 +528,7 @@ impl Group {
                 wire_sha256: Sha256::digest(&wire).into(),
             };
             if enabled {
-                group.capture_history(tx, &reference, text, sensitive, now)?;
+                group.capture_history(tx, &reference, text, sensitive, None, now)?;
             }
             Ok((wire, reference))
         })
@@ -561,6 +563,7 @@ impl Group {
                     &reference,
                     text.content.text(),
                     text.content.sensitive,
+                    None,
                     now,
                 )?;
             }

@@ -105,3 +105,10 @@ test("rendered-fixture regressions reserve chat space and keep notices off the c
   assert.match(landscape, /\.composer-input textarea\{height:36px;min-height:36px;/);
   assert.match(landscape, /\.messages\{min-height:90px;flex-basis:90px\}/);
 });
+
+test("live message scrolling never depends on a smooth animation completing before an action", () => {
+  const rules = [...css.matchAll(/\.messages\{([^}]*)\}/g)];
+  assert.ok(rules.length);
+  const behavior = rules.flatMap(rule => [...rule[1].matchAll(/scroll-behavior:([^;}]*)/g)]).at(-1);
+  assert.equal(behavior?.[1], "auto");
+});

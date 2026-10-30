@@ -353,6 +353,63 @@ fn rooms_have_an_actual_cli_enrollment_broadcast_and_cold_resume() {
                 .contains("first-public-room-message")
         );
     }
+    let first: serde_json::Value = serde_json::from_str(&reply).unwrap();
+    let message_id = first["result"]["message_id"].as_str().unwrap();
+    let answered: serde_json::Value = serde_json::from_str(&call(
+        &bob,
+        &[
+            "room",
+            "reply",
+            "team",
+            "--to",
+            message_id,
+            "actual authenticated reply",
+        ],
+    ))
+    .unwrap();
+    assert_eq!(answered["result"]["all_acknowledged"], true);
+    assert!(
+        source
+            .until("ROOM REPLY")
+            .contains("actual authenticated reply")
+    );
+    assert!(
+        guests[1]
+            .until("ROOM REPLY")
+            .contains("actual authenticated reply")
+    );
+    for remove in [false, true] {
+        let mut arguments = vec!["room", "react", "team", "--to", message_id, "thanks"];
+        if remove {
+            arguments.push("--remove");
+        }
+        let reacted: serde_json::Value = serde_json::from_str(&call(&carol, &arguments)).unwrap();
+        assert_eq!(reacted["result"]["all_acknowledged"], true);
+        let line = source.until("ROOM REACTION");
+        assert!(line.contains("thanks"));
+        assert!(line.contains(if remove {
+            "\"added\":false"
+        } else {
+            "\"added\":true"
+        }));
+        assert!(guests[0].until("ROOM REACTION").contains("thanks"));
+    }
+    let mut foreign: kk::rooms::conversation::Target = message_id.parse().unwrap();
+    foreign.room[0] ^= 1;
+    let rejected = Command::new(env!("CARGO_BIN_EXE_kk"))
+        .arg("--profile")
+        .arg(&bob)
+        .args([
+            "room",
+            "reply",
+            "team",
+            "--to",
+            &foreign.to_string(),
+            "not this room",
+        ])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
     let status: serde_json::Value =
         serde_json::from_str(&call(&bob, &["room", "status", "team"])).unwrap();
     assert_eq!(status["result"]["members"].as_array().unwrap().len(), 3);

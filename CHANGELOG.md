@@ -4,6 +4,8 @@ This records changes, not live delivery status. See [TODO.md](TODO.md) for the c
 
 ## 0.9.0-dev.2 - Unreleased Verification Checkpoint
 
+- Add bounded typed room replies and authored reaction add/remove under a distinct MLS context, exact-audience capability negotiation, transactional encrypted history relations and CLI/UI controls; preserve legacy text, sensitive exclusion and per-recipient outcome semantics. Keep buffered reaction counts distinct from durable history restoration.
+- Make live message scrolling immediate so newly appended reply/reaction controls do not depend on an animation completing before interaction; retain independent overflow scrolling and cold-restart browser evidence.
 - Route image-based GitLab checks explicitly to hosted Linux container runners, preventing shell execution without the declared image; execute the PowerShell unsupported-installation contract on native Windows, separately from Linux's explicit interpreter-unavailable skip.
 - Preserve gh's bundle decoder suffix through a private descriptor-anchored name targeting sealed bytes, with immutable-input and cleanup regressions.
 - Write inherited Linux pipes through nonblocking pipe-to-pipe splice without reopening their names or changing shared flags; retain cancellation and runtime-shutdown checks.
@@ -16,15 +18,13 @@ This records changes, not live delivery status. See [TODO.md](TODO.md) for the c
 - Authorize every native archive redirect before connecting, using the same exact
   HTTPS authorities as bootstrap. Preserve the original total deadline, archive
   byte bounds and provenance-before-parsing policy; reject foreign hosts and loops.
-- Keep the failed development tag immutable and use the next prerelease for
-  corrected verification wiring.
+- Keep the failed development tag immutable and use the next prerelease for corrected verification wiring.
 - Run the compound two-device HTTP workflow once in a mandatory phase after the
   concurrent Rust batch, without changing its assertions or production deadlines.
   Ordinary Cargo test discovery still includes the case.
 - Share that phase through `make rust-test` in local/GitHub and GitLab checks,
   with regressions guarding exact case selection and release-gate dependency.
-- Do not treat this source checkpoint as authenticated artifact delivery or a
-  completed release; origin verification and exact-byte replay remain required.
+- Do not treat this source checkpoint as authenticated artifact delivery or a completed release; origin verification and exact-byte replay remain required.
 
 ## 0.9.0-dev.1 - Unreleased Development Checkpoint
 
