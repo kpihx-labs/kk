@@ -391,46 +391,52 @@ impl Room {
         })
         .await
     }
-    async fn application_operation<T>(
-        &mut self,
-        sender: Option<&Peer>,
+    // Erase the shared operation future at its owner boundary. Otherwise its
+    // two quorum synchronizations leak a deeply nested async layout into every
+    // caller; nonincremental enrollment compilation exceeds Rust's query depth.
+    // One owned future is still cancelled/dropped by the caller, never spawned.
+    fn application_operation<'a, T: 'a>(
+        &'a mut self,
+        sender: Option<&'a Peer>,
         deadline: Duration,
-        operation: impl FnOnce(&mut crate::rooms::group::Group) -> Result<T>,
-    ) -> Result<T> {
-        crate::transport::validate_duration(deadline, config::MAX_FILE_TIMEOUT)?;
-        let expires = tokio::time::Instant::now() + deadline;
-        tokio::time::timeout(deadline, async {
-            let before = self.synchronize(deadline).await?;
-            self.history_reader(&before)?;
-            if let Some(sender) = sender {
-                self.sender(sender)?;
-            }
-            let publisher = sender.unwrap_or(&self.identity.peer()).fingerprint_bytes();
-            if !before
-                .member_rights(&publisher)
-                .is_some_and(|rights| rights.can_publish())
-            {
-                return Err(Error::Denied);
-            }
-            let revision = self.profile.revision()?;
-            let result = operation(&mut self.group)?;
-            #[cfg(test)]
-            after_private_operation();
-            let after = self.synchronize(deadline).await?;
-            self.history_reader(&after)?;
-            if let Some(sender) = sender {
-                self.sender(sender)?;
-            }
-            if before.epoch() != after.epoch() || revision != self.profile.revision()? {
-                return Err(Error::Denied);
-            }
-            if tokio::time::Instant::now() >= expires {
-                return Err(Error::Timeout);
-            }
-            Ok(result)
+        operation: impl FnOnce(&mut crate::rooms::group::Group) -> Result<T> + 'a,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T>> + 'a>> {
+        Box::pin(async move {
+            crate::transport::validate_duration(deadline, config::MAX_FILE_TIMEOUT)?;
+            let expires = tokio::time::Instant::now() + deadline;
+            tokio::time::timeout(deadline, async {
+                let before = self.synchronize(deadline).await?;
+                self.history_reader(&before)?;
+                if let Some(sender) = sender {
+                    self.sender(sender)?;
+                }
+                let publisher = sender.unwrap_or(&self.identity.peer()).fingerprint_bytes();
+                if !before
+                    .member_rights(&publisher)
+                    .is_some_and(|rights| rights.can_publish())
+                {
+                    return Err(Error::Denied);
+                }
+                let revision = self.profile.revision()?;
+                let result = operation(&mut self.group)?;
+                #[cfg(test)]
+                after_private_operation();
+                let after = self.synchronize(deadline).await?;
+                self.history_reader(&after)?;
+                if let Some(sender) = sender {
+                    self.sender(sender)?;
+                }
+                if before.epoch() != after.epoch() || revision != self.profile.revision()? {
+                    return Err(Error::Denied);
+                }
+                if tokio::time::Instant::now() >= expires {
+                    return Err(Error::Timeout);
+                }
+                Ok(result)
+            })
+            .await
+            .map_err(|_| Error::Timeout)?
         })
-        .await
-        .map_err(|_| Error::Timeout)?
     }
 }
 

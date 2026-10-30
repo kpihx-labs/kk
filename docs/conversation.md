@@ -79,3 +79,27 @@ Independent review returned no usable result;
 it is not accepted as a passed review. GitHub delivery, exact released-byte QA,
 complete mixed-version cancellation/restart UX and durable reaction restoration
 remain separate gates. See [workstreams](workstreams.md).
+
+GitHub Verify `41042779498` at `f6a559b` failed both Linux compilations on an
+enrollment async-layout query-depth overflow, reproduced locally with incremental
+compilation disabled. The shared application-operation boundary now returns one
+caller-owned type-erased future, without detached work or a recursion-limit
+increase. Nonincremental all-target Clippy and both enrollment tests pass locally;
+the normal check now disables incremental compilation for Clippy. Hosted
+acceptance of this correction remains pending, not implied by the earlier pass.
+
+The correction's commit was blocked by the full pre-commit check: runtime case
+`three_private_rooms_use_quorum_order_durable_nonce_and_local_veto_without_global_trust`
+failed at `runtime/tests.rs:188` because the raw remote Welcome result was not
+`Applied(Some(_))`. The actual alternative variant was not logged, so a leader
+change or missing artifact is not established. No hook bypass or deadline change
+was used. The future-layout correction remains staged and uncommitted; its
+targeted compile/enrollment passes are not an integrated acceptance result.
+
+Subsequent diagnostics retain each exact response category without dumping the
+Welcome artifact. One complete concurrent library diagnostic execution passed
+289 cases with the existing 10 explicit ignored cases and the HTTP workflow
+reserved for its mandatory phase. That passing execution does not identify or
+close the earlier intermittent Welcome failure. The compiler correction and
+response diagnostics can be evaluated independently; no routing/assertion change
+is claimed as its fix.

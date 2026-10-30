@@ -41,7 +41,7 @@ help: ## Show available tasks
 check: ## Validate offline with local loopback network tests
 	$(MAKE) python-check
 	cargo fmt --package kk -- --check
-	cargo clippy --offline --locked --all-targets -- -D warnings
+	CARGO_INCREMENTAL=0 cargo clippy --offline --locked --all-targets -- -D warnings
 	$(MAKE) rust-test
 	cargo test --offline --locked --doc
 	RUSTDOCFLAGS="-D warnings" cargo doc --offline --locked --no-deps

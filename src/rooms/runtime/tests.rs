@@ -184,8 +184,18 @@ async fn three_private_rooms_use_quorum_order_durable_nonce_and_local_veto_witho
             )
             .await
             .unwrap();
-        let network::Reply::Applied(Some(delivered)) = remote else {
-            panic!("recipient-bound remote Welcome did not commit");
+        let delivered = match remote {
+            network::Reply::Applied(Some(delivered)) => delivered,
+            network::Reply::Applied(None) => panic!("recipient-bound remote Welcome: absent"),
+            network::Reply::Forward { .. } => {
+                panic!("recipient-bound remote Welcome: forwarded")
+            }
+            network::Reply::Denied => panic!("recipient-bound remote Welcome: denied"),
+            network::Reply::Conflict => panic!("recipient-bound remote Welcome: conflict"),
+            network::Reply::StateUnavailable => {
+                panic!("recipient-bound remote Welcome: state unavailable")
+            }
+            network::Reply::Unavailable => panic!("recipient-bound remote Welcome: unavailable"),
         };
         assert_eq!(
             delivered.artifact.recipient,
