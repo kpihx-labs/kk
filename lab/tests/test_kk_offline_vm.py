@@ -54,6 +54,7 @@ class OfflineVmTests(unittest.TestCase):
         self.operations = []
         self.fail_operation = False
         self.timeout_operation = False
+        self.installed_version = "0.8.2"
         self.guest.run.side_effect = self.run_guest
 
     def run_guest(self, *argv, **options):
@@ -67,9 +68,9 @@ class OfflineVmTests(unittest.TestCase):
         elif argv[0] == "/usr/bin/mktemp":
             out = "/tmp/kk-offline.TEST"
         elif argv[0] == "/usr/bin/sha256sum":
-            out = "a" * 64 + "  kk"
+            out = ("d" if self.installed_version == "0.8.1" else "a") * 64 + "  kk"
         elif argv[-1] == "--version":
-            out = "kk 0.8.2"
+            out = "kk " + self.installed_version
         elif argv[0] == "/usr/sbin/runuser":
             self.assertFalse(self.up, "installer must run with NIC down")
             self.assertFalse(self.host_up, "hypervisor must disconnect the virtual cable")
@@ -77,7 +78,20 @@ class OfflineVmTests(unittest.TestCase):
             if self.timeout_operation:
                 raise TimeoutError("mock status deadline; process may remain alive")
             code = int(self.fail_operation)
+            if not code:
+                self.installed_version = argv[argv.index("--version") + 1]
         return {"out": out, "err": "", "code": code}
+
+    def enable_previous(self):
+        previous = self.root / "previous"
+        previous.mkdir()
+        record = json.loads((self.root / "kit.json").read_text())
+        record.update(version="0.8.1", commit="c" * 40)
+        for key in ("archive", "bundle", "trusted_root"):
+            (previous / key).write_bytes((self.root / key).read_bytes())
+        (previous / "kit.json").write_text(json.dumps(record))
+        self.arguments.previous_kit = previous
+        self.arguments.expected_previous_binary_sha256 = "d" * 64
 
     def exercise(self):
         def virsh(action, *_arguments):
@@ -146,6 +160,53 @@ class OfflineVmTests(unittest.TestCase):
             VM.exercise(self.arguments)
         guest.assert_not_called()
         virsh.assert_not_called()
+
+    def test_inter_version_update_and_both_rollbacks_verify_each_exact_binary(self):
+        self.enable_previous()
+        output = self.exercise()
+        report = json.loads(output[output.index("{"):])
+        self.assertEqual([command[command.index("--version") + 1] for command in self.operations],
+                         ["0.8.1", "0.8.2", "0.8.1", "0.8.2"])
+        self.assertEqual([entry["installed_sha256"] for entry in report["operations"]],
+                         ["d" * 64, "a" * 64, "d" * 64, "a" * 64])
+        for command, namespace in zip(self.operations, ["previous", "inputs", "previous", "inputs"]):
+            self.assertTrue(command[command.index("--bundle") + 1].endswith("/" + namespace + "/bundle"))
+        self.assertEqual(report["previous_source_commit"], "c" * 40)
+        self.assertTrue(self.up and self.host_up)
+
+    def test_incorrect_intermediate_update_stops_before_rollback_and_keeps_isolation(self):
+        self.enable_previous()
+        def wrong_update(*argv, **options):
+            result = self.run_guest(*argv, **options)
+            if argv[0] == "/usr/bin/sha256sum" and len(self.operations) == 2:
+                result["out"] = "d" * 64 + "  kk"
+            return result
+        self.guest.run.side_effect = wrong_update
+        with self.assertRaisesRegex(RuntimeError, "authenticated expected bytes"):
+            self.exercise()
+        self.assertEqual(len(self.operations), 2)
+        self.assertFalse(self.up or self.host_up)
+
+    def test_previous_kit_requires_explicit_independent_byte_oracle(self):
+        self.enable_previous()
+        self.arguments.expected_previous_binary_sha256 = None
+        with self.assertRaisesRegex(ValueError, "supplied together"):
+            self.exercise()
+        self.guest.interfaces.assert_not_called()
+
+    def test_same_version_cannot_be_labeled_inter_version_qualification(self):
+        self.enable_previous()
+        self.arguments.previous_kit = self.root
+        with self.assertRaisesRegex(ValueError, "distinct versions"):
+            self.exercise()
+        self.guest.interfaces.assert_not_called()
+
+    def test_changed_previous_kit_is_rejected_before_guest_access(self):
+        self.enable_previous()
+        (self.arguments.previous_kit / "archive").write_bytes(b"changed previous")
+        with self.assertRaisesRegex(ValueError, "kit input changed"):
+            self.exercise()
+        self.guest.interfaces.assert_not_called()
 
 
 if __name__ == "__main__":

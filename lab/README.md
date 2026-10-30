@@ -75,6 +75,14 @@ process lifetime it keeps the virtual cable disconnected: confirm guest shutdown
 before reconnecting. Always run graceful VM/network cleanup, including on error.
 Executed scope and digests: [installation evidence](../docs/install-qualification.md).
 
+For inter-version qualification, also supply `--previous-kit ABSOLUTE_DIRECTORY`
+and `--expected-previous-binary-sha256 SHA256`. Both prepared kits must use distinct
+versions and independent binary digests. The sequence is fresh previous, update
+current, rollback previous, return current; every step verifies its installed
+digest and reported version before continuing. Each version uses its own bundle
+and roots. Omitting both options preserves the original three-operation gate.
+Mocked coverage of this mode does not establish successful real VM execution.
+
 Generated state/reports belong to ignored `tmp/`; generated definitions to `xml/`.
 Native private profiles/logs use a physical 0700 OS temporary workspace rather than
 shared checkout ancestors; the retained report names it. [Candidate evidence](../docs/native-candidate-qualification.md).

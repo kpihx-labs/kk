@@ -14,7 +14,7 @@ This records changes, not live delivery status. See [TODO.md](TODO.md) for the c
 - Explicitly release history-key initialization ownership when its operation ends, even if a duplicated directory descriptor survives; preserve active exclusivity.
 - Add backend-owned default-off message alerts with CLI/UI controls, explicit browser permission, generic OS text, sensitive/backfill exclusion and bounded stale-callback/conflict handling; real OS display qualification remains open.
 - Supervise file upload and bounded receipt concurrently; reject early EOF under flow control while requiring both complete authorized upload and exact receipt for success.
-- Accept explicitly provisioned local trust roots with attestation bundles for installation and rollback; seal/bound both inputs before gh verification and require an already trusted helper for the shell's explicit-root path.
+- Accept explicitly provisioned local trust roots with attestation bundles for installation and rollback; seal/bound both inputs before gh verification and require an already trusted helper for the shell's explicit-root path. Extend the isolated guest gate with optional two-kit update/rollback, independently bound version bytes at every step and retained network isolation on failure; mocked coverage is not real inter-version evidence.
 - Default branch delivery to GitHub under operator direction, retaining an explicit validated two-remote synchronization path for GitLab without changing its remote or CI.
 - Authorize every native archive redirect before connecting, using the same exact
   HTTPS authorities as bootstrap. Preserve the original total deadline, archive
