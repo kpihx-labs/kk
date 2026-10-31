@@ -29,9 +29,9 @@ historical evidence, not another active plan. Owners and durable peer IDs live i
 | L4.6 provenance and offline distribution | **DONE** | Vendored OpenMLS/Windows provenance guards pass. Authenticated `verify-only` and interrupted-publication resume each pass on the fresh distribution artifact `35ddd608...e15cfe`; no prefix activation or silent mutation | Produce and bind the final release artifacts after candidate freeze |
 | L4.7 Linux native | **DONE** | Linux storage, identity, IPC, lifecycle and integrated product gates pass | Re-run against the exact frozen release bytes |
 | L4.8 Windows native | **DONE** | Windows 11 Pro VM at 4 GiB/2 vCPU passes native platform-foundation and Windows gates: protected storage, no-replace publication, exclusive identity, authenticated same-owner named pipe with timeout recovery, and bounded stdio worker. Exact transferred snapshot `a506937965585651b21b44db8c3e44a2bd221e5c1d2d49b8c04f15a2d68467b3`; final gate exits 0 | Bind the unchanged Windows result to the frozen candidate and keep the VM shut down outside native qualification |
-| L4.9 macOS native | **DONE** | Hosted Intel and ARM macOS jobs pass build, warning-free lint, smoke, platform contracts and every bounded storage/IPC/history/publication gate in final Native run `41209068969`; Windows is green in the same run | No local non-Apple VM claim; preserve the final hosted evidence |
-| L4.10 candidate freeze and final gates | **DONE** | Local `make check` and `make workflow-check` pass. Final Verify run `41209068873` passes SDK/Hax, audit, x86_64/ARM full checks and clean archives after one unchanged-commit x86_64 network-test rerun. Linux executable SHA-256 is `fdcd2c4d466d89ca19543997a42f9c1e781449a506e6cf38d0419ccb1e212193` | Bind the release tag and signed draft artifacts to final commit `2d78d4e` |
-| L4.11 signed delivery | **ACTIVE** | Installer verification, rollback machinery, provenance, final native matrix and final Verify workflow are qualified | Create the GitHub-only release tag, authenticate and replay the signed exact-byte draft artifacts, publish the same draft, verify installed bytes; keep GitLab deferred but ready |
+| L4.9 macOS native | **DONE** | Hosted Intel and ARM macOS jobs pass build, warning-free lint, smoke, platform contracts and every bounded storage/IPC/history/publication gate in tagged Native run `41214581884`; Windows is green in the same run | No local non-Apple VM claim; preserve the final hosted evidence |
+| L4.10 candidate freeze and final gates | **DONE** | Local `make check` and `make workflow-check` pass. Tagged Verify run `41214581888` passes SDK/Hax, audit, x86_64/ARM full checks, clean archives and signed provenance. Final commit is `352e1007bb0db5c5c229f476a2f788760105944d` | None for this candidate |
+| L4.11 signed delivery | **DONE** | GitHub prerelease `v0.9.0-dev.2` publishes 16 unchanged assets. Exact x86_64 TAR `9f1fdf3b...dae43`, ZIP `67634413...e0f9` and helper `adf82179...348` pass digest, manifest and tag/commit/workflow Sigstore verification. Fresh install, `0.8.2` update and rollback pass in isolated managed prefixes with installed bytes matching the attested helper | GitLab remains deferred but deployment-ready; the stable 0.8.2 operator link remains intentionally unchanged |
 
 Use targeted checks inside layers; no per-edit commits/pushes/full-CI loops.
 Relaunch a persistent module expert for its next layer instead of rediscovering
@@ -41,11 +41,11 @@ the module. Keep the five-minute reminder armed and read peers if notices fail.
 
 | Item | Actual state |
 | --- | --- |
-| Release | `0.8.2`, published on [GitHub](https://github.com/kpihx-labs/kk/releases/tag/v0.8.2) and [GitLab](https://gitlab.com/kpihx-labs/kk/-/releases/v0.8.2) |
+| Release | Stable `0.8.2` remains on GitHub/GitLab; prerelease [`v0.9.0-dev.2`](https://github.com/kpihx-labs/kk/releases/tag/v0.9.0-dev.2) is published on active GitHub delivery only |
 | Previous draft | Signed `v0.8.1` at `fa6a29f`; retained, **not publicly released** |
 | Released software | The published Linux baseline passed product, docs, audit, SDK and both hosted CI platforms |
-| Final executable | Exact signed x86_64 bytes pass 25 public, 66 baseline and native contention scenarios |
-| Installation | Authenticated `0.8.2` executable installed; obsolete managed `0.8.0` trashed on request, profiles preserved |
+| Final executable | Attested x86_64 helper SHA-256 `adf82179df86550c9e57103254f142e461674806ace70deadf086ba704eb0348`; tagged Windows/macOS/Linux gates pass |
+| Installation | Exact prerelease fresh install, update and rollback pass in isolated managed prefixes; stable authenticated `0.8.2` operator link and profiles remain unchanged |
 | Branch name | `main` locally and by default on GitHub/GitLab; commits/tags retained |
 
 ## Product Expansion In Progress
