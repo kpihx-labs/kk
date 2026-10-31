@@ -3,7 +3,7 @@
 use super::*;
 use crate::rooms::{
     Anchor, Member,
-    mls::{PublicIdentity, validate_package},
+    mls::{PublicIdentity, validate_package, validate_package_for_replay},
 };
 use openmls_libcrux_crypto::CryptoProvider;
 use std::collections::{BTreeMap, BTreeSet};
@@ -204,12 +204,12 @@ impl View {
     }
     /// Validate without mutation before proposing. No success receipt is implied.
     pub fn validate(&self, proposal: &Proposal) -> Result<()> {
-        self.transition(proposal).map(|_| ())
+        self.transition(proposal, false).map(|_| ())
     }
     /// Apply ONLY after verified ordered acceptance. Current log transport/quorum
     /// is a separate owner; signatures and expected epochs do not substitute it.
     pub fn apply_accepted(&mut self, proposal: &Proposal) -> Result<()> {
-        let transition = self.transition(proposal)?;
+        let transition = self.transition(proposal, true)?;
         let next = self.epoch.checked_add(1).ok_or(Error::Protocol)?;
         let head = proposal.id()?;
         // Build the next public values off to the side. Resource/serialization
@@ -275,7 +275,7 @@ impl View {
         self.head = head;
         Ok(())
     }
-    fn transition(&self, proposal: &Proposal) -> Result<Transition> {
+    fn transition(&self, proposal: &Proposal, committed: bool) -> Result<Transition> {
         let (_, author) = self.members.get(&proposal.author()).ok_or(Error::Denied)?;
         proposal.verify(self.anchor.id(), self.epoch, self.head, &author.peer())?;
         match proposal.action()? {
@@ -285,11 +285,12 @@ impl View {
                 {
                     return Err(Error::Denied);
                 }
-                let candidate = validate_package(
-                    &self.anchor,
-                    &self.crypto,
-                    proposal.package_bytes().ok_or(Error::Protocol)?,
-                )?;
+                let package = proposal.package_bytes().ok_or(Error::Protocol)?;
+                let candidate = if committed {
+                    validate_package_for_replay(&self.anchor, &self.crypto, package)
+                } else {
+                    validate_package(&self.anchor, &self.crypto, package)
+                }?;
                 let member = candidate.member.clone();
                 let fingerprint = member.peer().fingerprint_bytes();
                 if self.members.contains_key(&fingerprint)

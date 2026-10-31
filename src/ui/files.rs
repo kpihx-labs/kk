@@ -16,6 +16,59 @@ pub(super) struct Upload {
     to: PeerId,
     #[serde(default)]
     sensitive: bool,
+    #[serde(default)]
+    background: bool,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Download {
+    #[serde(default)]
+    preview: bool,
+}
+
+fn raster_preview_type(bytes: &[u8], max_pixels: u64) -> Result<&'static str> {
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|_| Error::Configuration("cannot inspect image preview"))?;
+    let mime = match reader.format() {
+        Some(image::ImageFormat::Png) => "image/png",
+        Some(image::ImageFormat::Jpeg) => "image/jpeg",
+        _ => {
+            return Err(Error::Configuration(
+                "preview supports PNG/JPEG only; save the original copy instead",
+            ));
+        }
+    };
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(config::UI_FILE_PREVIEW_BYTES);
+    if mime == "image/png" {
+        let decoder = image::codecs::png::PngDecoder::with_limits(
+            std::io::Cursor::new(bytes),
+            limits.clone(),
+        )
+        .map_err(|_| {
+            Error::Configuration("PNG preview metadata is invalid; save the copy instead")
+        })?;
+        if decoder
+            .is_apng()
+            .map_err(|_| Error::Configuration("PNG animation metadata is unavailable"))?
+        {
+            return Err(Error::Configuration(
+                "animated PNG is outside the single-image preview policy; save the copy instead",
+            ));
+        }
+    }
+    reader.limits(limits);
+    let (width, height) = reader.into_dimensions().map_err(|_| {
+        Error::Configuration("image preview dimensions are unavailable; save the copy instead")
+    })?;
+    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > max_pixels {
+        return Err(Error::Configuration(
+            "image exceeds preview pixel bound; save the copy instead",
+        ));
+    }
+    Ok(mime)
 }
 
 #[derive(Deserialize)]
@@ -90,16 +143,20 @@ pub(super) struct Transfer {
 }
 impl Transfer {
     pub(super) async fn run(self, app: App) -> Result<Value> {
-        let reply = local::request(
-            &app.0.profile,
-            &self.room,
-            &Command::File {
+        let command = if self.options.background {
+            Command::FileStart {
                 source: self.source.path().to_owned(),
                 target: self.options.to,
                 sensitive: self.options.sensitive,
-            },
-        )
-        .await?;
+            }
+        } else {
+            Command::File {
+                source: self.source.path().to_owned(),
+                target: self.options.to,
+                sensitive: self.options.sensitive,
+            }
+        };
+        let reply = local::request(&app.0.profile, &self.room, &command).await?;
         Ok(json!(reply))
     }
 }
@@ -200,24 +257,57 @@ pub(super) async fn forward(
     Query(options): Query<Upload>,
 ) -> std::result::Result<Json<Value>, Failure> {
     filename(&name)?;
-    let inbox = local::directory(&app.0.profile, &room)?.join("inbox");
-    crate::profile::private_directory(&inbox, false)?;
-    let source = inbox.join(name);
-    let file = crate::files::source_file(&source)?;
-    private(&file.metadata().await.map_err(Error::Io)?)?;
-    drop(file);
-    let reply = local::request(
-        &app.0.profile,
-        &room,
-        &Command::File {
-            source,
+    local::directory(&app.0.profile, &room)?;
+    let _slot = app
+        .0
+        .upload_slots
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| Error::Node("UI file lane is full"))?;
+    let command = if options.background {
+        Command::ForwardReceivedStart {
+            id: name,
             target: options.to,
             sensitive: options.sensitive,
-        },
-    )
-    .await?;
+        }
+    } else {
+        Command::ForwardReceived {
+            id: name,
+            target: options.to,
+            sensitive: options.sensitive,
+        }
+    };
+    let reply = local::request(&app.0.profile, &room, &command).await?;
     Ok(Json(json!(reply)))
 }
+
+pub(super) async fn transfers(
+    State(app): State<App>,
+    Path(room): Path<String>,
+) -> std::result::Result<Json<Value>, Failure> {
+    Ok(Json(json!(
+        local::request(&app.0.profile, &room, &Command::FileTransfers).await?
+    )))
+}
+
+pub(super) async fn transfer_status(
+    State(app): State<App>,
+    Path((room, id)): Path<(String, String)>,
+) -> std::result::Result<Json<Value>, Failure> {
+    Ok(Json(json!(
+        local::request(&app.0.profile, &room, &Command::FileTransferStatus { id }).await?
+    )))
+}
+
+pub(super) async fn transfer_cancel(
+    State(app): State<App>,
+    Path((room, id)): Path<(String, String)>,
+) -> std::result::Result<Json<Value>, Failure> {
+    Ok(Json(json!(
+        local::request(&app.0.profile, &room, &Command::FileTransferCancel { id }).await?
+    )))
+}
+
 pub(super) async fn list(
     State(app): State<App>,
     Path(room): Path<String>,
@@ -249,22 +339,75 @@ pub(super) async fn list(
 pub(super) async fn download(
     State(app): State<App>,
     Path((room, name)): Path<(String, String)>,
+    Query(options): Query<Download>,
 ) -> std::result::Result<Response, Failure> {
     filename(&name)?;
+    let slot = app
+        .0
+        .upload_slots
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| Error::Node("UI file lane is full"))?;
     let inbox = local::directory(&app.0.profile, &room)?.join("inbox");
-    crate::profile::private_directory(&inbox, false)?;
-    let file = crate::files::source_file(&inbox.join(&name))?;
-    let metadata = file.metadata().await.map_err(Error::Io)?;
-    private(&metadata)?;
-    let length = metadata.len();
-    let stream = futures_util::stream::try_unfold(file, |mut file| async move {
+    let received = crate::files::open_received(
+        &inbox,
+        &name,
+        if options.preview {
+            config::UI_FILE_PREVIEW_BYTES
+        } else {
+            config::DEFAULT_FILE_LIMIT
+        },
+        config::UI_REQUEST_TIMEOUT,
+    )
+    .await?;
+    let length = received.info.bytes;
+    // Retain the verified inode; never reopen an inbox path after verification.
+    let mut file = received.into_file();
+    if options.preview {
+        let mut bytes = Vec::new();
+        let mut bounded = (&mut file).take(config::UI_FILE_PREVIEW_BYTES + 1);
+        tokio::time::timeout(config::UI_REQUEST_TIMEOUT, bounded.read_to_end(&mut bytes))
+            .await
+            .map_err(|_| Error::Timeout)?
+            .map_err(Error::Io)?;
+        drop(bounded);
+        if bytes.len() as u64 != length || bytes.len() as u64 > config::UI_FILE_PREVIEW_BYTES {
+            return Err(Error::Integrity.into());
+        }
+        let mime = raster_preview_type(&bytes, config::UI_FILE_PREVIEW_PIXELS)?;
+        let stream = futures_util::stream::try_unfold(
+            (axum::body::Bytes::from(bytes), file, slot),
+            |(mut bytes, file, slot)| async move {
+                if bytes.is_empty() {
+                    return Ok::<_, std::io::Error>(None);
+                }
+                let chunk = bytes.split_to(bytes.len().min(config::FILE_CHUNK_BYTES));
+                Ok(Some((chunk, (bytes, file, slot))))
+            },
+        );
+        let mut response = Body::from_stream(stream).into_response();
+        response
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, mime.parse().unwrap());
+        response
+            .headers_mut()
+            .insert(header::CONTENT_LENGTH, length.into());
+        response
+            .headers_mut()
+            .insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
+        response
+            .headers_mut()
+            .insert(header::CONTENT_DISPOSITION, "attachment".parse().unwrap());
+        return Ok(response);
+    }
+    let stream = futures_util::stream::try_unfold((file, slot), |(mut file, slot)| async move {
         let mut bytes = vec![0; config::FILE_CHUNK_BYTES];
         let count = file.read(&mut bytes).await?;
         if count == 0 {
             return Ok::<_, std::io::Error>(None);
         }
         bytes.truncate(count);
-        Ok(Some((bytes, file)))
+        Ok(Some((bytes, (file, slot))))
     });
     let mut response = Body::from_stream(stream).into_response();
     response.headers_mut().insert(
@@ -281,4 +424,32 @@ pub(super) async fn download(
             .map_err(|_| Error::Protocol)?,
     );
     Ok(response)
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+
+    #[test]
+    fn preview_sniffs_only_bounded_png_and_jpeg_without_decoding_pixels() {
+        for (format, mime) in [
+            (image::ImageFormat::Png, "image/png"),
+            (image::ImageFormat::Jpeg, "image/jpeg"),
+        ] {
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::new_rgb8(2, 2)
+                .write_to(&mut bytes, format)
+                .unwrap();
+            assert_eq!(raster_preview_type(bytes.get_ref(), 4).unwrap(), mime);
+            assert!(raster_preview_type(bytes.get_ref(), 3).is_err());
+        }
+        for bytes in [
+            b"<html>active</html>".as_slice(),
+            b"<svg xmlns='http://www.w3.org/2000/svg'/>".as_slice(),
+            b"GIF89a".as_slice(),
+            b"\x89PNG\r\n\x1a\n".as_slice(),
+        ] {
+            assert!(raster_preview_type(bytes, config::UI_FILE_PREVIEW_PIXELS).is_err());
+        }
+    }
 }

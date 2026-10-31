@@ -72,6 +72,54 @@ fn reaction_projection_deduplicates_and_removes_only_the_authenticated_author() 
 }
 
 #[test]
+fn reaction_projection_keeps_targets_values_and_event_order_independent() {
+    let mut state = Reactions::default();
+    let mut reference = super::super::group::StableReference {
+        room: [7; 32],
+        member: [1; 32],
+        epoch: 4,
+        event: super::super::store::history::Event::IncomingProcessed,
+        wire_sha256: [4; 32],
+    };
+    let mut second = target();
+    second.wire_sha256[0] ^= 1;
+    let operation = |target, value, added| Operation::Reaction {
+        target,
+        value,
+        added,
+        sensitive: false,
+    };
+    // Removing an absent value is a no-op, not a tombstone that hides a later add.
+    state
+        .apply(&reference, &operation(target(), Reaction::Like, false))
+        .unwrap();
+    state
+        .apply(&reference, &operation(target(), Reaction::Like, true))
+        .unwrap();
+    state
+        .apply(&reference, &operation(target(), Reaction::Love, true))
+        .unwrap();
+    state
+        .apply(&reference, &operation(second.clone(), Reaction::Like, true))
+        .unwrap();
+    state
+        .apply(&reference, &operation(target(), Reaction::Like, false))
+        .unwrap();
+    reference.member = [2; 32];
+    state
+        .apply(&reference, &operation(target(), Reaction::Love, false))
+        .unwrap();
+    let summaries = state.summaries();
+    assert_eq!(summaries.len(), 2);
+    assert!(summaries.iter().any(|summary| summary.target == target()
+        && summary.value == Reaction::Love
+        && summary.members == vec![[1; 32]]));
+    assert!(summaries.iter().any(|summary| summary.target == second
+        && summary.value == Reaction::Like
+        && summary.members == vec![[1; 32]]));
+}
+
+#[test]
 fn reaction_projection_rejects_scope_and_capacity_without_mutating_existing_entries() {
     let mut state = Reactions::default();
     let mut reference = super::super::group::StableReference {
@@ -99,6 +147,19 @@ fn reaction_projection_rejects_scope_and_capacity_without_mutating_existing_entr
         state.apply(&reference, &operation),
         Err(Error::Limit { .. })
     ));
+    // Existing duplicates remain idempotent at the cap; a removal releases one
+    // slot, and failure above cannot leave a partially inserted new member.
+    reference.member = [0; 32];
+    state.apply(&reference, &operation).unwrap();
+    let removal = Operation::Reaction {
+        target: target(),
+        value: Reaction::Like,
+        added: false,
+        sensitive: false,
+    };
+    state.apply(&reference, &removal).unwrap();
+    reference.member = [255; 32];
+    state.apply(&reference, &operation).unwrap();
     assert_eq!(
         state
             .summaries()
@@ -145,6 +206,7 @@ fn text_and_replies_roundtrip_all_bounded_utf8_without_json_magic_or_debug_conte
                 } else {
                     Operation::Text(text(&body, sensitive))
                 };
+                operation.validate_publication().unwrap();
                 let bytes = operation.encode([7; 32], 3).unwrap();
                 assert!(bytes.len() <= MAX_ENCODED_BYTES);
                 let decoded = Operation::decode(&bytes, [7; 32], 3).unwrap();
@@ -180,14 +242,17 @@ fn reactions_have_finite_values_add_remove_and_no_caller_supplied_author() {
         Reaction::Thanks,
     ] {
         for added in [false, true] {
-            let bytes = Operation::Reaction {
+            let operation = Operation::Reaction {
                 target: target(),
                 value,
                 added,
                 sensitive: true,
-            }
-            .encode([7; 32], 3)
-            .unwrap();
+            };
+            assert!(matches!(
+                operation.validate_publication(),
+                Err(Error::Configuration(_))
+            ));
+            let bytes = operation.encode([7; 32], 3).unwrap();
             match Operation::decode(&bytes, [7; 32], 3).unwrap() {
                 Operation::Reaction {
                     target: got,

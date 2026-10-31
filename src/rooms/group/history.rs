@@ -370,6 +370,49 @@ impl Group {
             Ok(result)
         })
     }
+    /// Resolve an exact retained local message identity, never a remote lookup.
+    /// Like history_search, SDK callers must apply current per-author read policy.
+    pub fn history_resolve(
+        &mut self,
+        target: &crate::rooms::conversation::Target,
+        now: u64,
+    ) -> Result<Option<HistoryRow>> {
+        target.validate(self.room_id(), self.epoch())?;
+        let context = self
+            .history
+            .clone()
+            .ok_or(Error::Storage("history key context required"))?;
+        self.transactional_with_tx(|group, tx| {
+            context.verify(group)?;
+            let references = group.history_references(&context)?;
+            let mut result = HistoryPage {
+                rows: vec![],
+                next_after: 0,
+                has_more: false,
+            };
+            // Validate all retained companion references, including nonmatches:
+            // an exact lookup cannot hide substituted/corrupt history rows.
+            for record in group.history_all_rows(tx, &context, now)? {
+                let reference = Self::reference_for(&references, &record)?;
+                if crate::rooms::conversation::Target::from(reference) == *target {
+                    if !result.rows.is_empty() {
+                        return Err(Error::Storage("ambiguous retained history reference"));
+                    }
+                    result.rows.push(HistoryRow {
+                        record,
+                        reference: reference.clone(),
+                    });
+                }
+            }
+            if response_size(&result)? > store::MAX_RESPONSE_BYTES {
+                return Err(Error::Limit {
+                    resource: "history response",
+                    max: store::MAX_RESPONSE_BYTES,
+                });
+            }
+            Ok(result.rows.pop())
+        })
+    }
     fn history_references(&self, context: &Context) -> Result<References> {
         let Some(ciphertext) = self.actor.provider.read_blob(REFERENCES)? else {
             return Ok(References {

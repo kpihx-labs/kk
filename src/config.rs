@@ -40,6 +40,8 @@ pub const NODE_MAX_CONNECTIONS: usize = NODE_MAX_PEERS * 3;
 pub const NODE_MAX_STREAMS: usize = 16;
 pub const NODE_EVENT_QUEUE: usize = 64;
 pub const NODE_MAX_FILES: usize = 2;
+/// Active plus recent per-room file jobs: e.g. two active slots retain 16 records.
+pub const ROOM_FILE_JOB_RECORDS: usize = 8 * NODE_MAX_FILES;
 pub const NODE_FILE_BUDGET: u64 = 256 * 1024 * 1024;
 pub const NODE_FILE_COUNT_BUDGET: u64 = 128;
 pub const ROOM_FILE_SHARES: usize = 64;
@@ -113,6 +115,10 @@ pub const UI_REQUEST_QUEUE: usize = 32;
 pub const UI_HISTORY_LIMIT: usize = 256;
 pub const UI_OPERATION_LIMIT: usize = 16;
 pub const UI_MAX_TRANSFERS: usize = 4;
+/// Raster preview input only: 8 MiB (8,388,608 bytes); larger files remain downloadable.
+pub const UI_FILE_PREVIEW_BYTES: u64 = 8 * 1024 * 1024;
+/// Reject larger raster dimensions before browser decode; e.g. 4096 x 4096 pixels.
+pub const UI_FILE_PREVIEW_PIXELS: u64 = 16 * 1024 * 1024;
 pub const UI_JSON_BYTES: usize = MAX_MESSAGE_BYTES * 6 + 8192;
 pub const UI_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 

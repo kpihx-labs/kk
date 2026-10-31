@@ -1,6 +1,7 @@
 #![cfg(target_os = "linux")]
 //! Real QUIC/MLS fixture. Initial trust approves only the creator controller;
 //! data admission adds learners, and ONLY an explicit signed operation adds votes.
+mod support;
 use kk::{
     Error, Identity,
     contacts::Registry,
@@ -23,7 +24,7 @@ use std::{
 
 #[tokio::test]
 async fn explicit_controller_approval_survives_creator_loss_and_keeps_application_roles() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::private_root();
     let identities: Vec<_> = (0..3)
         .map(|index| {
             Arc::new(Identity::create(&directory.path().join(format!("identity-{index}"))).unwrap())

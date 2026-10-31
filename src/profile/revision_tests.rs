@@ -44,7 +44,7 @@ fn revision_strings_are_canonical_lossless_and_legacy_missing_is_zero() {
 
 #[test]
 fn stale_explicit_opt_in_and_stale_display_changes_conflict_even_after_aba() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let directory = root.path().join("profile");
     let stale = Settings::update(&directory, Some("Original".into()), None).unwrap();
     let on = Settings::update_with(&directory, |settings| {
@@ -84,7 +84,7 @@ fn stale_explicit_opt_in_and_stale_display_changes_conflict_even_after_aba() {
 
 #[test]
 fn concurrent_cas_has_one_winner_and_unconditional_updates_increment_actual_changes_only() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let directory = root.path().join("profile");
     let initial = Settings::update(&directory, Some("Original".into()), None).unwrap();
     let barrier = Arc::new(Barrier::new(2));
@@ -129,7 +129,7 @@ fn concurrent_cas_has_one_winner_and_unconditional_updates_increment_actual_chan
 
 #[test]
 fn malformed_revisions_overflow_and_callback_override_never_change_saved_bytes() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let directory = root.path().join("profile");
     let current = Settings::update(&directory, Some("Original".into()), None).unwrap();
     let path = directory.join("settings.json");

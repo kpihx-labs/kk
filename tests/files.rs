@@ -1,4 +1,5 @@
 #![cfg(any(target_os = "linux", target_os = "macos"))]
+mod support;
 
 use std::{
     fs,
@@ -22,7 +23,7 @@ struct Case {
 }
 impl Case {
     fn new(bytes: &[u8]) -> Self {
-        let root = tempfile::tempdir().unwrap();
+        let root = support::private_root();
         let a = Identity::create(&root.path().join("a")).unwrap();
         let b = Identity::create(&root.path().join("b")).unwrap();
         let source = root.path().join("source");

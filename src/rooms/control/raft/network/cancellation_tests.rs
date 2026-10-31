@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn detached_replication_clients_cannot_keep_an_owned_listener_bound() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_support::tempdir().unwrap();
     let identity = Arc::new(Identity::create(&directory.path().join("identity")).unwrap());
     let id = PeerId::from_peer(&identity.peer());
     let (mut factory, server) = Factory::bind(
@@ -37,7 +37,7 @@ async fn detached_replication_clients_cannot_keep_an_owned_listener_bound() {
 
 #[tokio::test]
 async fn cancelled_rpc_resets_only_its_stream_and_preserves_the_authenticated_peer_link() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_support::tempdir().unwrap();
     let alice = Arc::new(Identity::create(&directory.path().join("alice")).unwrap());
     let bob = Arc::new(Identity::create(&directory.path().join("bob")).unwrap());
     let a = PeerId::from_peer(&alice.peer());

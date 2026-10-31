@@ -23,6 +23,10 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+
+#[cfg(test)]
+#[path = "../src/test_support.rs"]
+mod test_support;
 use tokio::{sync::mpsc, task::JoinHandle};
 
 const DEADLINE: Duration = Duration::from_secs(8);
@@ -489,7 +493,7 @@ mod tests {
     }
     #[test]
     fn complete_results_are_published_atomically_without_overwriting_prior_results() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = test_support::tempdir().unwrap();
         let private = directory.path().join("private");
         profile::private_directory(&private, true).unwrap();
         let out = private.join("result.json");
@@ -504,7 +508,7 @@ mod tests {
 
     #[test]
     fn private_genesis_restores_the_exact_public_creator_and_never_overwrites_state() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = test_support::tempdir().unwrap();
         let identity_path = directory.path().join("identity");
         let identity = Identity::create(&identity_path).unwrap();
         let state = directory.path().join("crypto");

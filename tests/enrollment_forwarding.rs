@@ -1,6 +1,7 @@
 #![cfg(target_os = "linux")]
 //! Explicitly preapproved initial controller pair. The third device is NOT a
 //! preapproved peer/voter; its admission and TLS pin arrive through the protocol.
+mod support;
 use kk::{
     Error, Identity,
     contacts::Registry,
@@ -21,7 +22,7 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 #[tokio::test]
 async fn follower_inviter_forwards_signed_learner_intent_and_cold_scope_recovers_from_metadata() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::private_root();
     let a = Arc::new(Identity::create(&directory.path().join("a")).unwrap());
     let b = Arc::new(Identity::create(&directory.path().join("b")).unwrap());
     let c = Arc::new(Identity::create(&directory.path().join("c")).unwrap());

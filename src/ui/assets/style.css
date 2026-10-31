@@ -17,6 +17,8 @@
 html,body{height:100%;overflow:hidden}
 .workspace{height:100dvh;min-height:0;overflow:hidden}
 .main,.room-view{min-width:0;min-height:0;height:100%;overflow:hidden}
+#connection-problem{flex:0 0 auto;max-height:20dvh;overflow:auto;padding:10px 18px;border-bottom:1px solid var(--line);font-size:12px}
+.file-preview{display:block;max-width:100%;max-height:50dvh;object-fit:contain;margin:12px 0;border:1px solid var(--line)}
 .sidebar{min-height:0;height:100dvh;overflow-y:auto}
 .room-list{min-height:0;overflow-y:auto}
 .room-content{overflow-y:auto}
@@ -57,14 +59,29 @@ dialog{padding:0;max-height:calc(100dvh - 34px);overflow:hidden}
 .dialog-footer{flex:none;padding:14px 24px;margin:0;border-top:1px solid var(--line)}
 .sidebar-backdrop{position:fixed;inset:0;background:#0008;z-index:19;width:100%;height:100%}
 @media(min-width:701px){
+  .workspace{position:relative}
+  .workspace>.sidebar{grid-column:1;grid-row:1;min-width:0}
+  .workspace>.main{grid-column:2;grid-row:1}
   .workspace[data-sidebar=compact],.workspace[data-sidebar=auto]{grid-template-columns:68px minmax(0,1fr)}
   .workspace[data-sidebar=compact] .sidebar,.workspace[data-sidebar=auto] .sidebar{width:68px;padding:18px 10px;overflow-x:hidden;overflow-y:auto}
+  .workspace[data-sidebar=compact] .brand,.workspace[data-sidebar=auto] .brand{font-size:21px;letter-spacing:-1px;gap:0;justify-content:center}
+  .workspace[data-sidebar=compact] .brand>span:first-child,.workspace[data-sidebar=auto] .brand>span:first-child{font-size:18px}
+  .workspace[data-sidebar=compact] .brand-dot,.workspace[data-sidebar=auto] .brand-dot{display:none}
+  .workspace[data-sidebar=compact] .section-label,.workspace[data-sidebar=auto] .section-label{justify-content:center}
+  .workspace[data-sidebar=compact] .room-list,.workspace[data-sidebar=auto] .room-list{margin-left:0;margin-right:0}
+  .workspace[data-sidebar=compact] .room-link,.workspace[data-sidebar=auto] .room-link{justify-content:center;padding-left:0;padding-right:0;gap:0}
   .workspace[data-sidebar=compact] .sidebar-caption,.workspace[data-sidebar=compact] .sidebar-bottom,.workspace[data-sidebar=compact] .section-label span,.workspace[data-sidebar=compact] .room-link>span:last-child,.workspace[data-sidebar=auto] .sidebar-caption,.workspace[data-sidebar=auto] .sidebar-bottom,.workspace[data-sidebar=auto] .section-label span,.workspace[data-sidebar=auto] .room-link>span:last-child{display:none}
   .workspace[data-sidebar=compact] #join,.workspace[data-sidebar=auto] #join{overflow:hidden;white-space:nowrap;text-indent:-9999px;position:relative;padding:8px 0}
   .workspace[data-sidebar=compact] #join::after,.workspace[data-sidebar=auto] #join::after{content:"+";position:absolute;inset:0;display:grid;place-items:center;text-indent:0}
   .workspace[data-sidebar=auto] .sidebar:hover #join,.workspace[data-sidebar=auto] .sidebar:focus-within #join{text-indent:0;padding:10px}
   .workspace[data-sidebar=auto] .sidebar:hover #join::after,.workspace[data-sidebar=auto] .sidebar:focus-within #join::after{display:none}
-  .workspace[data-sidebar=auto] .sidebar:hover,.workspace[data-sidebar=auto] .sidebar:focus-within{position:absolute;z-index:20;width:244px;padding:18px 18px;box-shadow:var(--shadow);overflow-y:auto}
+  .workspace[data-sidebar=auto] .sidebar:hover,.workspace[data-sidebar=auto] .sidebar:focus-within{position:absolute;left:0;top:0;z-index:20;width:244px;padding:18px 18px;box-shadow:var(--shadow);overflow-y:auto}
+  .workspace[data-sidebar=auto] .sidebar:is(:hover,:focus-within) .brand{font-size:43px;letter-spacing:-3px;gap:3px;justify-content:flex-start}
+  .workspace[data-sidebar=auto] .sidebar:is(:hover,:focus-within) .brand>span:first-child{font-size:36px}
+  .workspace[data-sidebar=auto] .sidebar:is(:hover,:focus-within) .brand-dot{display:inline-block}
+  .workspace[data-sidebar=auto] .sidebar:is(:hover,:focus-within) .section-label{justify-content:space-between}
+  .workspace[data-sidebar=auto] .sidebar:is(:hover,:focus-within) .room-list{margin-left:-8px;margin-right:-8px}
+  .workspace[data-sidebar=auto] .sidebar:is(:hover,:focus-within) .room-link{justify-content:flex-start;padding-left:12px;padding-right:12px;gap:12px}
   .workspace[data-sidebar=auto] .sidebar:hover .sidebar-caption,.workspace[data-sidebar=auto] .sidebar:focus-within .sidebar-caption,.workspace[data-sidebar=auto] .sidebar:hover .sidebar-bottom,.workspace[data-sidebar=auto] .sidebar:focus-within .sidebar-bottom,.workspace[data-sidebar=auto] .sidebar:hover .section-label span,.workspace[data-sidebar=auto] .sidebar:focus-within .section-label span,.workspace[data-sidebar=auto] .sidebar:hover .room-link>span:last-child,.workspace[data-sidebar=auto] .sidebar:focus-within .room-link>span:last-child,.workspace[data-sidebar=auto] .sidebar:hover #join,.workspace[data-sidebar=auto] .sidebar:focus-within #join{display:block}
 }
 @media(max-width:700px){

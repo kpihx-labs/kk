@@ -1,0 +1,6 @@
+{
+  "git": {
+    "sha1": "924292de39d768f88f64773eb60c2d83e437ec19"
+  },
+  "path_in_vcs": "crates/win-authorization-sys"
+}

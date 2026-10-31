@@ -341,7 +341,7 @@ async fn profile_get_uses_real_private_rooms_readers_mtls_and_live_privacy() {
     tokio::time::timeout(
         Duration::from_secs(40),
         tokio::task::LocalSet::new().run_until(async {
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::test_support::tempdir().unwrap();
             let identities: Vec<_> = (0..2)
                 .map(|i| {
                     Arc::new(Identity::create(&root.path().join(format!("identity-{i}"))).unwrap())

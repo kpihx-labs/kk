@@ -1,0 +1,61 @@
+# Copyright (c) 2026 Mike Grier
+
+[package]
+name = "win-authorization-sys"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+description = "Memory-safe Rust over the Win32 authorization API: an owned security descriptor, SDDL text to and from one, and a descriptor read from an open handle. Thin over Win32, adding no policy."
+keywords = ["windows", "security", "sddl", "acl", "ffi"]
+categories = ["api-bindings", "os::windows-apis"]
+
+# Named under the workspace's `win-` prefix decision (DESIGN-NOTES.md at the repository root), and
+# placed as a safe layer more or less directly over a Win32 API area, the one Microsoft Learn files
+# the functions under: Security and Identity > Authorization.
+
+[dependencies]
+# The Win32 error code, so an error from a call carries its code exactly, including a code of
+# 2^31 or more, which std's `io::Error` holds as a negative number.
+win-error-codes = { version = "0.0.2", path = "../win-error-codes" }
+
+# SDDL text is a `Wtf16String`; a descriptor is held in an aligned buffer, `io_buffers::AlignedBuf`,
+# because a self-relative descriptor must be DWORD-aligned.
+wtf-string = { version = "0.1.0", path = "../wtf-string" }
+io-buffers = { version = "0.1.0", path = "../io-buffers" }
+
+# `default-features = false` matches every other crate in the workspace.
+#
+# `Win32_Security` is the descriptor, ACL and SID calls and structures; `Win32_Security_Authorization`
+# is the SDDL conversions and `GetSecurityInfo`. `Win32_Foundation` is `LocalFree`, which frees what
+# the conversions allocate, and the error codes.
+[dependencies.windows-sys]
+version = "0.61.2"
+default-features = false
+features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization"]
+
+# Test-only. The tests create files with a descriptor through `CreateFileW` and read an event's security;
+# place a descriptor against a guard page (`VirtualAlloc`, `VirtualProtect`), so a read past its end
+# faults rather than going unseen; and keep a child process that is expected to crash from raising
+# the error-reporting dialog (`SetErrorMode`). None is something this crate offers, and a
+# dev-dependency keeps the features from any consumer.
+[dev-dependencies.windows-sys]
+version = "0.61.2"
+default-features = false
+features = [
+	"Win32_Foundation",
+	"Win32_Storage_FileSystem",
+	"Win32_System_Diagnostics_Debug",
+	"Win32_System_Memory",
+	"Win32_System_Threading",
+]
+
+[package.metadata.docs.rs]
+# The crate is Windows-only, so docs.rs must build on a Windows target or it
+# would render an almost-empty crate.
+default-target = "x86_64-pc-windows-msvc"
+targets = ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"]

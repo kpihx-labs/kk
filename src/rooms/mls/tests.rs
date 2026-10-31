@@ -2,7 +2,7 @@ use super::super::RootBundle;
 use super::*;
 
 fn fixture() -> (tempfile::TempDir, Vec<Identity>, Anchor, Vec<CryptoMember>) {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_support::tempdir().unwrap();
     let identities: Vec<_> = (0..3)
         .map(|i| Identity::create(&directory.path().join(format!("mls-{i}"))).unwrap())
         .collect();
@@ -116,4 +116,115 @@ fn package_budgets_lifetimes_frames_and_cross_room_replay_are_bounded() {
     let other_actor = CryptoMember::new(&identities[0], &other, vec![]).unwrap();
     let wire = actors[2].key_package().unwrap();
     assert!(other_actor.validate_package(&wire).is_err());
+}
+
+#[tokio::test]
+async fn committed_control_replay_keeps_acceptance_after_package_expiry() {
+    use crate::rooms::control::raft::{LogStore, PeerId, StateMachine, TypeConfig};
+    use crate::rooms::control::{Proposal, View};
+    use openraft::{CommittedLeaderId, Entry, EntryPayload, LogId, storage::RaftStateMachine};
+    let (_directory, identities, anchor, actors) = fixture();
+    let origin = actors[0].public_identity().unwrap();
+    let mut leader = View::genesis(&anchor, origin.clone()).unwrap();
+    let mut delayed = View::genesis(&anchor, origin.clone()).unwrap();
+    let fresh = StateMachine::create(
+        LogStore::create(&_directory.path().join("fresh")).unwrap(),
+        &anchor,
+        origin.clone(),
+    )
+    .await
+    .unwrap();
+    let mut accepted = StateMachine::create(
+        LogStore::create(&_directory.path().join("accepted")).unwrap(),
+        &anchor,
+        origin,
+    )
+    .await
+    .unwrap();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let expires = now + 5;
+    let provider = Provider::memory().unwrap();
+    let bundle = KeyPackage::builder()
+        .key_package_lifetime(Lifetime::init(now - 1, expires))
+        .build(
+            SUITE,
+            &provider,
+            &actors[1].signer,
+            actors[1].credential.clone(),
+        )
+        .unwrap();
+    let wire = bundle.key_package().tls_serialize_detached().unwrap();
+    let proposal = Proposal::add(
+        &identities[0],
+        anchor.id(),
+        0,
+        leader.head(),
+        b"synthetic committed ciphertext",
+        &wire,
+    )
+    .unwrap();
+    leader.validate(&proposal).unwrap();
+    leader.apply_accepted(&proposal).unwrap();
+    assert!(fresh.preflight(proposal.clone()).await.unwrap().is_ok());
+    assert!(accepted.preflight(proposal.clone()).await.unwrap().is_ok());
+    accepted
+        .apply([Entry::<TypeConfig> {
+            log_id: LogId::new(
+                CommittedLeaderId::new(1, PeerId::from_peer(&identities[0].peer())),
+                0,
+            ),
+            payload: EntryPayload::Normal(proposal.clone().with_ordered_decision(true)),
+        }])
+        .await
+        .unwrap();
+    let remaining = (expires + 1).saturating_sub(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    );
+    std::thread::sleep(std::time::Duration::from_secs(remaining));
+    assert!(
+        delayed.validate(&proposal).is_err(),
+        "fresh admission must reject the expired package"
+    );
+    let refused = fresh
+        .preflight(proposal.clone())
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(!refused.accepted);
+    assert_eq!(refused.error.as_deref(), Some("AUTHENTICATION"));
+    assert!(
+        accepted.preflight(proposal.clone()).await.unwrap().is_ok(),
+        "exact committed retry retains its prior authentication"
+    );
+    let mut forged = proposal.encode().unwrap();
+    *forged.last_mut().unwrap() ^= 1;
+    let forged = Proposal::decode(&forged).unwrap();
+    assert_eq!(
+        accepted
+            .preflight(forged)
+            .await
+            .unwrap()
+            .unwrap_err()
+            .error
+            .as_deref(),
+        Some("AUTHENTICATION")
+    );
+    let mut forged_package = wire.clone();
+    *forged_package.last_mut().unwrap() ^= 1;
+    assert!(
+        validate_package_for_replay(&anchor, actors[0].provider.crypto(), &forged_package).is_err()
+    );
+    delayed
+        .apply_accepted(&proposal)
+        .expect("a committed replay must retain its original acceptance");
+    assert_eq!(
+        leader.snapshot().encode().unwrap(),
+        delayed.snapshot().encode().unwrap()
+    );
 }

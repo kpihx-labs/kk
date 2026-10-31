@@ -20,9 +20,17 @@ mod session;
 mod signed;
 #[cfg(unix)]
 pub mod stdio_worker;
+#[cfg(windows)]
+#[path = "stdio_worker/windows.rs"]
+pub mod stdio_worker;
+#[cfg(all(test, unix))]
+pub(crate) mod test_support;
 mod transport;
 #[cfg(unix)]
 pub mod ui;
+#[cfg(windows)]
+#[path = "node/ipc/windows.rs"]
+pub mod windows_ipc;
 
 pub use error::{Error, Result};
 pub use identity::{Identity, Peer};

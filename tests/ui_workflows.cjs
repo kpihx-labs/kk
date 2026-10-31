@@ -51,21 +51,41 @@ test("late old form success or failure cannot close, overwrite or re-enable a re
 });
 
 test("file refusal explains room access and live recipient consent", async () => {
+  let sends=0;const inputs=[],nodes=new Map(),observers=[];
   const context = {
+    localAvailable:true,modalRevision:0,current:{files:{max_bytes:64},messages:[]},
+    foregroundInstance:()=>Array(16).fill(1),recoverySession:()=>"foreground-a",
+    roomActionAllowed:()=>true,
     room: () => ({name:"study", status:{owner:"self", members:["self", "peer"]}}),
-    memberChoice: () => "Morgan", $: () => ({checked:false}), toast() {},
-    el: tag => ({options:[], append(...children) { if (tag === "select") this.options.push(...children); }}),
-    modal: (_title, _controls, _label, handler) => { context.submit = handler; },
+    memberChoice: () => "Morgan", $: id => {if(!nodes.has(id))nodes.set(id,{checked:false,disabled:false,open:false,addEventListener(){},removeEventListener(){}});return nodes.get(id);}, toast() {},
+    MutationObserver:class{constructor(callback){this.callback=callback;observers.push(this);}observe(){}disconnect(){}},
+    el: (tag,_cls,text) => { const node={tag,textContent:text,children:[],options:[], append(...children) { this.children.push(...children);if (tag === "select") {this.options.push(...children);this.value ||= children[0]?.value;} }};if(tag==="input")inputs.push(node);return node; },
+    modal: (_title, controls, _label, handler) => { context.modalRevision++;context.$("dialog").open=true;context.controls=controls;context.submit = handler; },
   };
   vm.createContext(context);
   vm.runInContext(source.slice(source.indexOf("function fileDialog("), source.indexOf("async function loadFiles()")), context);
-  context.fileDialog("Send fixture", async () => ({ok:false, code:"DENIED", result:{error:"contact policy"}}));
+  context.fileDialog("Send fixture", async () => {sends++;return {ok:false, code:"DENIED", result:{error:"contact policy"}};});
   await assert.rejects(context.submit(new Map([["to", "peer"]])), /recipient to enable incoming files/);
+  context.roomActionAllowed=()=>false;await assert.rejects(context.submit(new Map([["to","peer"]])),/publishing rights/);assert.equal(sends,1);
+  context.roomActionAllowed=()=>true;context.fileDialog("Forward fixture",async()=>({ok:false,code:"CONFIGURATION",error:"Room inbox has not been configured"}),true);assert.equal(inputs.at(-1).checked,true,"unknown original sensitivity must not silently default forwarding to public");
+  await assert.rejects(context.submit(new Map([["to","peer"],["sensitive","on"]])),/inbox has not been configured/);
+  const file={name:"local-fixture",size:4},attachment={file};let admissions=0,complete,started;const handedToLocalService=new Promise(done=>{started=done;});
+  context.fileDialog("Upload fixture",()=>{admissions++;started();return new Promise(done=>{complete=done;});},false,attachment);
+  const picker=inputs.findLast(node=>node.type==="file"),notice=context.controls.find(node=>node.role==="status");
+  const queued=context.submit(new Map([["to","peer"],["sensitive","on"]]));context.roomActionAllowed=()=>false;observers.at(-1).callback();
+  assert.equal(context.$("dialog-submit").disabled,true);await assert.rejects(queued,/stopped before dispatch/);
+  assert.equal(admissions,0);assert.equal(attachment.file,file);assert.deepEqual(context.current.messages,[]);assert.match(notice.textContent,/kept/);
+  context.roomActionAllowed=()=>true;observers.at(-1).callback();assert.equal(admissions,0,"restored rights do not retry an admission");
+  let observedJobs=0;context.transferDialog=()=>{observedJobs++;};const pending=context.submit(new Map([["to","peer"],["sensitive","on"]]));await handedToLocalService;
+  context.roomActionAllowed=()=>false;observers.at(-1).callback();assert.equal(picker.disabled,true);assert.equal(context.$("dialog-submit").disabled,true);assert.equal(attachment.file,file);assert.match(notice.textContent,/may still complete/);
+  complete({ok:true,result:{id:"observed-local-job",progress:{phase:"preparing"}}});await pending;assert.equal(admissions,1);assert.equal(observedJobs,1);assert.deepEqual(context.current.messages,[]);
+  const draft=composerHarness();draft.context.room().status.capabilities.publish=false;draft.context.render();await draft.send();
+  assert.equal(draft.nodes.text.value,"first draft");assert.equal(draft.nodes.sensitive.checked,true);assert.equal(draft.nodes.send.disabled,true);assert.equal(draft.calls.length,0);assert.match(draft.nodes["send-status"].textContent,/kept locally/);
 });
 
 test("join import rejects replacement and ignores stale file reads", async () => {
   const controls = [], notices = [];
-  const context = { current: {identity: "test"}, joinDraft:{name:"", bind:"", role:"participant"}, toast: text => notices.push(text),
+  const context = { current: {identity: "test"}, modalRevision:0, el:()=>({}), joinDraft:{name:"", bind:"", role:"participant"}, toast: text => notices.push(text),
     field: (_label, name) => { const input = {value:"", addEventListener(_event, fn) { this.input = fn; }}; const wrapper = {name, input, querySelector: () => input}; controls.push(wrapper); return wrapper; },
     roleField: () => ({}), modal: (_title, _controls, _submit, handler) => { context.submit = handler; },
     act: async () => { throw new Error("join failed"); }, select: () => { throw new Error("must not select on failure"); },
@@ -282,4 +302,204 @@ test("every quantized appearance keeps primary and secondary text readable on bo
   }
   context.applyAppearance({hue:null, clarity:100, saturation:20});
   assert.ok(luminance(properties.get("--bg")) > .9, "maximum clarity must be light");
+});
+
+test("pending modal submit reserves before awaiting and ignores keyboard resubmission", async () => {
+  const {context, submit, elements} = modalHarness(); let calls = 0, resolve;
+  context.modal("Save", [], "Save", () => { calls++; return new Promise(done => { resolve = done; }); });
+  const first = submit(); await submit(); assert.equal(calls, 1); assert.equal(elements["dialog-submit"].textContent,"Working...");assert.equal(elements["dialog-submit"].ariaBusy,"true");resolve(false); await first;
+  assert.equal(elements["dialog-submit"].textContent,"Save");assert.equal(elements["dialog-submit"].ariaBusy,"false");
+});
+
+function testClock() {
+  let now=0,next=0;const timers=new Map();
+  return {Date:{now:()=>now},timers,setTimeout:(callback,delay)=>{const id=++next;timers.set(id,{callback,at:now+delay});return id;},clearTimeout:id=>timers.delete(id),advance(milliseconds,run=true){now+=milliseconds;if(run)for(const [id,timer] of [...timers])if(timer.at<=now){timers.delete(id);timer.callback();}}};
+}
+function composerHarness() {
+  const nodes = {}, calls = [], requests = [], storage = new Map(); let stops = 0;
+  const clock=testClock();
+  const context = {selected:"first", composerDrafts:new Map(), pendingSends:new Map(), replyDrafts:new Map(), composerScope:null,draftIdentity:null,draftGeneration:0,draftError:false,localAvailable:true,historyView:null,TextEncoder,AbortController,Date:clock.Date,setTimeout:clock.setTimeout,clearTimeout:clock.clearTimeout,
+    current:{identity:"a".repeat(64),client:{request_timeout_ms:50},drafts:{max_rooms:64,max_text_bytes:65536},phases:{first:{revision:"2"},second:{revision:"2"}},rooms:[{name:"first",id:"1".repeat(64),status:{active:true,capabilities:{publish:true},foreground_instance:Array(16).fill(1)}},{name:"second",id:"2".repeat(64),status:{active:true,capabilities:{publish:true},foreground_instance:Array(16).fill(2)}}]}, token:"synthetic",
+    $:id=>nodes[id] ||= {value:"",checked:false,textContent:"",hidden:false,close(){this.open=false;},replaceChildren(){},classList:{contains:()=>false}},room:()=>context.current.rooms.find(entry=>entry.name===context.selected),
+    render(){context.reconcileDrafts();if(context.room())context.renderComposer(context.room());},refresh:async()=>{},toast(){},closeSidebar(){},sessionStorage:{setItem:(key,value)=>storage.set(key,value)},mediaControl:{stopAll(){stops++;}},
+    deliveryComplete:reply=>reply?.ok === true && reply.result?.all_acknowledged === true,
+    act:(action,options)=>{calls.push(action);return new Promise((resolve,reject)=>requests.push({resolve,reject,signal:options.signal}));}};
+  vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf("function clientRequestWaitMs("),source.indexOf("async function api("))+source.slice(source.indexOf("function draftPolicy("),source.indexOf("function field("))+source.slice(source.indexOf("function foregroundInstance("),source.indexOf("function recoveryDialog("))+source.slice(source.indexOf("function roomActionAllowed("),source.indexOf("function admissionRoles("))+source.slice(source.indexOf("function renderComposer("),source.indexOf("function reconcileMediaSession("))+source.slice(source.indexOf("async function sendComposer("),source.indexOf('$("composer").onsubmit = sendComposer;')),context);
+  context.render();nodes.text.value="first draft";nodes.sensitive.checked=true;
+  return {context,nodes,calls,requests,storage,clock,stops:()=>stops,key:name=>context.draftRoomKey(name),switch:name=>context.select(name),send:()=>context.sendComposer({preventDefault(){}}),finish:(value,index=requests.length-1)=>requests[index].resolve(value),fail:(index=requests.length-1)=>requests[index].reject(new Error("connection lost"))};
+}
+
+test("pending send survives refreshes without duplicate requests and cannot erase a newer edit", async () => {
+  const h = composerHarness(), pending = h.send(); await h.send(); assert.equal(h.calls.length,1);
+  h.nodes.text.value = "newer edit"; h.finish({delivery:{ok:true,result:{all_acknowledged:true}}}); await pending;
+  assert.equal(h.nodes.text.value,"newer edit"); assert.equal(h.context.pendingSends.size,0);
+  assert.match(h.nodes["send-status"].textContent,/not human reading/);
+});
+
+test("late send completion never clears another room's draft or loses an edited originating draft", async () => {
+  for (const edited of [false,true]) {
+    const h = composerHarness(), pending = h.send();
+    if (edited) h.nodes.text.value="first edited";
+    h.switch("second");h.nodes.text.value="second private draft";
+    h.finish({delivery:{ok:true,result:{all_acknowledged:false}}});await pending;
+    assert.equal(h.nodes.text.value,"second private draft");
+    assert.equal(h.context.composerDrafts.get(h.key("first")).text,edited?"first edited":"");
+    assert.match(h.context.composerDrafts.get(h.key("first")).status,/duplicates are possible/);
+  }
+});
+
+test("refused and uncertain sends retain the original draft without a successful delivery claim", async () => {
+  for (const network of [false,true]) {
+    const h = composerHarness(), pending=h.send();
+    if(network) h.fail();else h.finish({delivery:{ok:false,code:"DENIED"}});
+    await pending;assert.equal(h.nodes.text.value,"first draft");assert.equal(h.nodes.sensitive.checked,true);assert.equal(h.context.pendingSends.size,0);
+    assert.match(h.nodes["send-status"].textContent,network?/outcome uncertain/:/unconfirmed delivery/);
+  }
+});
+
+test("stale local state blocks mutations before network work and cached publish permissions", async () => {
+  let requests=0;const context={current:null,localAvailable:false,token:"synthetic",fetch:async()=>{requests++;return {ok:true,status:200,json:async()=>({ok:true})};}};
+  vm.createContext(context);vm.runInContext(source.slice(source.indexOf("function clientRequestWaitMs("),source.indexOf("async function act(")) + source.slice(source.indexOf("function roomActionAllowed("),source.indexOf("function admissionRoles(")),context);
+  assert.equal(context.roomActionAllowed({status:{active:true,capabilities:{publish:true}}},"publish"),false);
+  await assert.rejects(context.api("/api/action",{action:"send"}),/previous outcome may be uncertain/);assert.equal(requests,0);
+  await context.api("/api/state");assert.equal(requests,1);
+});
+
+test("media retires on same-name lifecycle replacement even when intermediate stop snapshots are missed", () => {
+  let stops=0;const target={name:"first",id:"public-room-id",status:{active:true}};
+  const context={current:{identity:"public-device-id",phases:{first:{state:"online",revision:"2"}}},selected:"first",localAvailable:true,mediaSessionFence:null,
+    room:()=>target,mediaControl:{stopAll(){stops++;}}};
+  vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf("function foregroundInstance("),source.indexOf("function recoveryDialog("))+source.slice(source.indexOf("function reconcileMediaSession()"),source.indexOf("async function refresh()")),context);
+  context.reconcileMediaSession();context.reconcileMediaSession();assert.equal(stops,0);
+  context.current.phases.first.revision="6";context.reconcileMediaSession();assert.equal(stops,1);
+  context.reconcileMediaSession();assert.equal(stops,1);
+  context.localAvailable=false;context.reconcileMediaSession();assert.equal(stops,2);
+  context.localAvailable=true;context.reconcileMediaSession();assert.equal(stops,3);
+  target.status.active=false;context.reconcileMediaSession();assert.equal(stops,4);
+  target.status.active=true;target.id="replacement-room-id";context.reconcileMediaSession();assert.equal(stops,5);
+  context.current.identity="replacement-device";context.reconcileMediaSession();assert.equal(stops,6);
+  context.selected="second";context.reconcileMediaSession();assert.equal(stops,7);
+});
+
+test("a real external foreground incarnation change retires media without a UI phase transition",()=>{
+  let stops=0;const target={name:"same",id:"public-room",status:{active:true,foreground_instance:Array(16).fill(1)}};
+  const ctx=vm.createContext({current:{identity:"profile",phases:{same:{revision:"2"}}},selected:"same",localAvailable:true,mediaSessionFence:null,room:()=>target,mediaControl:{stopAll(){stops++;}}});
+  vm.runInContext(source.slice(source.indexOf("function foregroundInstance("),source.indexOf("function recoveryDialog("))+source.slice(source.indexOf("function reconcileMediaSession()"),source.indexOf("async function refresh()")),ctx);
+  ctx.reconcileMediaSession();target.status.foreground_instance=Array(16).fill(2);ctx.reconcileMediaSession();assert.equal(stops,1);ctx.reconcileMediaSession();assert.equal(stops,1);
+});
+
+test("selected-room stop, rejoin and restart retire pending capture before awaiting network", async () => {
+  let stops=0,requests=0;const context={selected:"same",mediaControl:{stopAll(){stops++;}},api:async()=>{requests++;throw new Error("pending or refused");},refresh:async()=>{}};
+  vm.createContext(context);vm.runInContext(source.slice(source.indexOf("async function act("),source.indexOf("function room()")),context);
+  for(const action of ["stop","serve","join"]) { const pending=context.act({action,name:"same"});assert.equal(stops,requests);await assert.rejects(pending,/pending or refused/); }
+  await assert.rejects(context.act({action:"stop",name:"other"}),/pending or refused/);assert.equal(stops,3);
+});
+
+test("offline, inactive and read-only rooms keep local drafts editable without enabling publication", () => {
+  const {context,nodes}=composerHarness();
+  for(const status of [null,{active:false,capabilities:{publish:true}},{active:true,capabilities:{publish:false}}]) {
+    context.renderComposer({name:"first",status});assert.equal(nodes.text.disabled,false);assert.equal(nodes.text.value,"first draft");assert.equal(nodes.send.disabled,true);assert.equal(nodes.attach.disabled,true);
+  }
+  context.localAvailable=false;context.renderComposer(context.room());assert.equal(nodes.text.disabled,false);assert.equal(nodes.send.disabled,true);
+  assert.match(nodes.text.placeholder,/Reconnect/);
+});
+
+test("text and sensitivity switch together in volatile profile/room-bound drafts, including offline",()=>{
+  const h=composerHarness();h.switch("second");assert.equal(h.nodes.text.value,"");assert.equal(h.nodes.sensitive.checked,false);
+  h.nodes.text.value="second draft";h.context.localAvailable=false;h.context.render();h.switch("first");
+  assert.equal(h.nodes.text.value,"first draft");assert.equal(h.nodes.sensitive.checked,true);assert.equal(h.nodes.text.disabled,false);assert.equal(h.nodes.send.disabled,true);
+  h.switch("second");assert.equal(h.nodes.text.value,"second draft");assert.equal(h.nodes.sensitive.checked,false);
+  assert.deepEqual([...h.storage.keys()],["kk-room"]);assert.doesNotMatch(JSON.stringify([...h.storage]),/draft|sensitive/);
+});
+
+test("alias recreation and removal retire old drafts, flags, reply contexts and room views",()=>{
+  const h=composerHarness();h.context.saveComposerDraft();const old=h.key("first");h.context.replyDrafts.set("old",{scope:old,text:"private reply"});h.context.$("dialog").open=true;
+  h.context.room().id="3".repeat(64);h.context.render();assert.equal(h.nodes.text.value,"");assert.equal(h.nodes.sensitive.checked,false);assert.equal(h.context.composerDrafts.has(old),false);assert.equal(h.context.replyDrafts.size,0);assert.equal(h.context.$("dialog").open,false);assert.ok(h.stops()>0);
+  h.nodes.text.value="new room draft";h.nodes.sensitive.checked=true;h.context.saveComposerDraft();h.context.current.rooms=h.context.current.rooms.filter(entry=>entry.name!=="first");h.context.render();
+  assert.equal(h.nodes.text.value,"");assert.equal(h.nodes.sensitive.checked,false);assert.equal(h.context.composerDrafts.size,0);
+});
+
+test("late successful sends cannot clear a new same-alias room or a replacement profile draft",async()=>{
+  for(const replacement of ["room","profile","private-session"]) {
+    const h=composerHarness(),pending=h.send();
+    if(replacement==="room")h.context.room().id="3".repeat(64);
+    else if(replacement==="profile")h.context.current.identity="b".repeat(64);
+    else h.context.retireDrafts();
+    h.context.render();assert.equal(h.nodes.text.value,"");assert.equal(h.nodes.sensitive.checked,false);
+    h.nodes.text.value="new context draft";h.finish({delivery:{ok:true,result:{all_acknowledged:true}}});await pending;
+    assert.equal(h.nodes.text.value,"new context draft");assert.equal(h.nodes.sensitive.checked,false);assert.doesNotMatch(h.nodes["send-status"].textContent,/Acknowledged/);
+  }
+});
+
+test("draft count and UTF-8 byte bounds block unsafe switching/sending without truncating text",async()=>{
+  const h=composerHarness();h.context.current.drafts.max_text_bytes=8;h.nodes.text.value="雪雪雪";
+  h.switch("second");assert.equal(h.context.selected,"first");assert.equal(h.nodes.text.value,"雪雪雪");assert.equal(h.nodes.sensitive.checked,true);await h.send();assert.equal(h.calls.length,0);
+  h.nodes.text.value="雪雪";h.context.current.drafts.max_rooms=1;h.switch("second");assert.equal(h.nodes.text.value,"");assert.equal(h.nodes.sensitive.checked,false);assert.equal(h.nodes.text.disabled,true);
+  h.nodes.text.value="second";h.switch("first");assert.equal(h.context.selected,"second");assert.equal(h.nodes.text.value,"second");assert.equal(h.context.composerDrafts.size,1);
+  h.nodes.text.value="";h.switch("first");assert.equal(h.nodes.text.value,"雪雪");assert.equal(h.nodes.sensitive.checked,true);
+});
+
+test("an offline failed send keeps its text and sensitivity scoped across subsequent navigation",async()=>{
+  const h=composerHarness(),pending=h.send();h.context.localAvailable=false;h.context.render();h.fail();await pending;
+  assert.equal(h.nodes.text.value,"first draft");assert.equal(h.nodes.sensitive.checked,true);assert.equal(h.nodes.text.disabled,false);
+  h.switch("second");assert.equal(h.nodes.text.value,"");assert.equal(h.nodes.sensitive.checked,false);h.switch("first");
+  assert.equal(h.nodes.text.value,"first draft");assert.equal(h.nodes.sensitive.checked,true);assert.match(h.nodes["send-status"].textContent,/uncertain/);
+});
+
+test("an old same-alias completion cannot erase the new room's pending-send reservation",async()=>{
+  const h=composerHarness(),old=h.send();h.context.room().id="3".repeat(64);h.context.room().status.foreground_instance=Array(16).fill(3);h.context.render();
+  h.nodes.text.value="new room draft";const next=h.send(),key=h.key("first");assert.equal(h.calls.length,2);
+  h.finish({delivery:{ok:true,result:{all_acknowledged:true}}},0);await old;assert.equal(h.context.pendingSends.has(key),true);assert.equal(h.nodes.text.value,"new room draft");assert.equal(h.nodes.sensitive.checked,false);
+  h.finish({delivery:{ok:true,result:{all_acknowledged:true}}},1);await next;assert.equal(h.nodes.text.value,"");assert.equal(h.context.pendingSends.size,0);
+});
+
+test("a stuck client send expires once, keeps text/sensitivity and exposes duplicate risk without auto-retry",async()=>{
+  const h=composerHarness(),pending=h.send();assert.equal(h.calls.length,1);h.clock.advance(50);await pending;
+  assert.equal(h.requests[0].signal.aborted,true);assert.equal(h.context.pendingSends.size,0);assert.equal(h.clock.timers.size,0);
+  assert.equal(h.nodes.text.value,"first draft");assert.equal(h.nodes.sensitive.checked,true);assert.equal(h.nodes.send.disabled,false);
+  assert.match(h.nodes["send-status"].textContent,/outcome uncertain/);assert.match(h.nodes["send-status"].textContent,/duplicate/);assert.equal(h.calls.length,1);
+  const retry=h.send(),reservation=h.context.pendingSends.get(h.key("first"));assert.equal(h.calls.length,2);
+  h.finish({delivery:{ok:true,result:{all_acknowledged:true}}},0);await Promise.resolve();
+  assert.equal(h.nodes.text.value,"first draft");assert.equal(h.context.pendingSends.get(h.key("first")),reservation);
+  h.finish({delivery:{ok:true,result:{all_acknowledged:true}}},1);await retry;assert.equal(h.context.pendingSends.size,0);
+});
+
+test("returning to a throttled page expires overdue waits without relying on the timer callback",async()=>{
+  const h=composerHarness(),pending=h.send();h.clock.advance(51,false);h.context.expirePendingSends();await pending;
+  assert.equal(h.context.pendingSends.size,0);assert.equal(h.nodes.text.value,"first draft");assert.equal(h.nodes.sensitive.checked,true);assert.equal(h.calls.length,1);
+});
+
+test("a known SDK reply releases the composer without waiting for a stuck follow-up view refresh",async()=>{
+  const h=composerHarness();let refreshes=0;
+  h.context.api=async()=>({result:{delivery:{ok:true,result:{all_acknowledged:true}}}});
+  h.context.refresh=()=>{refreshes++;return new Promise(()=>{});};
+  vm.runInContext(source.slice(source.indexOf("async function act("),source.indexOf("function room()")),h.context);
+  await h.send();assert.equal(h.context.pendingSends.size,0);assert.equal(h.nodes.text.value,"");assert.equal(refreshes,1);assert.equal(h.clock.timers.size,0);
+  assert.match(h.nodes["send-status"].textContent,/not human reading/);
+});
+
+test("a local composer rendering failure cannot strand its pending reservation before SDK dispatch",async()=>{
+  const h=composerHarness(),render=h.context.renderComposer;let first=true;
+  h.context.renderComposer=target=>{if(first){first=false;throw Error("synthetic renderer failure");}render(target);};
+  await h.send();assert.equal(h.calls.length,0);assert.equal(h.context.pendingSends.size,0);assert.equal(h.nodes.text.value,"first draft");assert.equal(h.clock.timers.size,0);
+});
+
+test("missing client wait policy refuses a send before effects rather than selecting an unbounded fallback",async()=>{
+  const h=composerHarness();delete h.context.current.client;await h.send();
+  assert.equal(h.calls.length,0);assert.equal(h.context.pendingSends.size,0);assert.equal(h.nodes.text.value,"first draft");assert.equal(h.nodes.sensitive.checked,true);assert.match(h.nodes["send-status"].textContent,/nothing was sent/);
+});
+
+test("client HTTP bounds include response bodies and suppress late auth retirement after timeout",async()=>{
+  for(const stage of ["headers","body"]) {
+    const clock=testClock();let complete,signal,retired=0,requests=0,started;const ready=new Promise(done=>{started=done;});
+    const ctx=vm.createContext({current:{client:{request_timeout_ms:50}},token:"synthetic",localAvailable:true,AbortController,Date:clock.Date,setTimeout:clock.setTimeout,clearTimeout:clock.clearTimeout,
+      retireDrafts(){retired++;},fetch:(_path,options)=>{requests++;signal=options.signal;return stage==="headers"?new Promise(done=>{complete=done;started();}):Promise.resolve({status:200,ok:true,json:()=>new Promise(done=>{complete=done;started();})});}});
+    vm.runInContext(source.slice(source.indexOf("function clientRequestWaitMs("),source.indexOf("async function act(")),ctx);
+    const pending=ctx.api("/api/action",{action:"send"}),rejection=assert.rejects(pending,error=>error.code==="CLIENT_WAIT_ENDED");
+    await ready;clock.advance(50);await rejection;assert.equal(signal.aborted,true);assert.equal(requests,1);
+    complete(stage==="headers"?{status:403,ok:false,json:async()=>({ok:false})}:{ok:true});await Promise.resolve();await Promise.resolve();
+    assert.equal(ctx.token,"synthetic");assert.equal(retired,0);assert.equal(clock.timers.size,0);
+  }
 });

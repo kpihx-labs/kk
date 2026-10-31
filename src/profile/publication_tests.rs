@@ -33,7 +33,7 @@ fn setup(directory: &Path) {
 
 #[test]
 fn completed_cross_process_opt_out_and_opt_in_aba_revoke_the_snapshot() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let directory = root.path().join("profile");
     setup(&directory);
     let publication = Settings::publication(&directory).unwrap().unwrap();
@@ -83,7 +83,7 @@ fn completed_cross_process_opt_out_and_opt_in_aba_revoke_the_snapshot() {
 
 #[test]
 fn publication_is_noncreating_and_writer_contention_never_waits() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let directory = root.path().join("absent");
     assert!(Settings::publication(&directory).unwrap().is_none());
     assert!(!directory.exists());
@@ -116,7 +116,7 @@ fn publication_is_noncreating_and_writer_contention_never_waits() {
 
 #[test]
 fn directory_lock_replacement_and_symlink_ancestors_are_not_adopted() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let directory = root.path().join("profile");
     setup(&directory);
     let publication = Settings::publication(&directory).unwrap().unwrap();
@@ -149,7 +149,7 @@ fn directory_lock_replacement_and_symlink_ancestors_are_not_adopted() {
 #[test]
 fn writer_cannot_report_a_completed_update_on_a_replaced_parent_or_lock() {
     for replace in ["parent", "lock"] {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let directory = root.path().join("profile");
         setup(&directory);
         let saved = fs::read(directory.join("settings.json")).unwrap();

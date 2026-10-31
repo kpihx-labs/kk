@@ -1,4 +1,5 @@
 #![cfg(target_os = "linux")]
+mod support;
 
 use kk::{Identity, Listener, config};
 use std::{
@@ -8,7 +9,7 @@ use std::{
 
 #[tokio::test]
 async fn sensitive_wire_marker_reaches_receiver_without_debug_content() {
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let a = Identity::create(&root.path().join("a")).unwrap();
     let b = Identity::create(&root.path().join("b")).unwrap();
     let listener = Listener::bind("127.0.0.1:0".parse().unwrap(), &b, &a.peer()).unwrap();

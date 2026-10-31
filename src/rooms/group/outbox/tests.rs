@@ -6,7 +6,7 @@ use crate::{
 
 #[test]
 fn committed_welcome_survives_crash_gap_and_verified_delivery_ack() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_support::tempdir().unwrap();
     let alice = Identity::create(&directory.path().join("alice")).unwrap();
     let bob = Identity::create(&directory.path().join("bob")).unwrap();
     let anchor = RootBundle::create(&alice, "Welcome outbox fixture")
@@ -40,7 +40,7 @@ fn committed_welcome_survives_crash_gap_and_verified_delivery_ack() {
 
 #[test]
 fn failed_confirmation_does_not_create_a_deliverable_and_can_recover() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_support::tempdir().unwrap();
     let alice = Identity::create(&directory.path().join("alice")).unwrap();
     let bob = Identity::create(&directory.path().join("bob")).unwrap();
     let anchor = RootBundle::create(&alice, "Failed outbox fixture")

@@ -24,7 +24,7 @@ fn load(root: &Path, identities: &[Identity], anchor: &Anchor, index: usize) -> 
 
 #[test]
 fn candidate_marker_survives_restart_and_retained_activation_evidence_forbids_reset() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_support::tempdir().unwrap();
     let identity = Identity::create(&directory.path().join("identity")).unwrap();
     let anchor = RootBundle::create(&identity, "Activation marker fixture")
         .unwrap()
@@ -56,7 +56,7 @@ fn candidate_marker_survives_restart_and_retained_activation_evidence_forbids_re
 }
 impl Pair {
     fn new() -> Self {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_support::tempdir().unwrap();
         let root = directory.path();
         let identities: Vec<_> = (0..2)
             .map(|i| Identity::create(&root.join(format!("identity-{i}"))).unwrap())
@@ -140,7 +140,7 @@ fn private_restart_preserves_sender_and_receiver_ratchets_and_pending_changes() 
 
 #[test]
 fn package_budget_is_durable_and_missing_state_never_regenerates() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_support::tempdir().unwrap();
     let identity = Identity::create(&directory.path().join("identity")).unwrap();
     let anchor = RootBundle::create(&identity, "Budget fixture")
         .unwrap()

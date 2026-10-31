@@ -9,6 +9,7 @@ param(
     [string] $TrustedRoot,
     [string] $Helper,
     [switch] $Rollback,
+    [switch] $VerifyOnly,
     [switch] $Help
 )
 $ErrorActionPreference = 'Stop'
@@ -32,6 +33,7 @@ try {
         throw 'Commit must be a full lowercase 40-character SHA.'
     }
     if ($Rollback -and ($Commit -or $Archive)) { throw '-Rollback does not accept Commit or Archive.' }
+    if ($VerifyOnly -and $Rollback) { throw '-VerifyOnly does not accept -Rollback.' }
     foreach ($Path in @($Prefix, $Archive, $Bundle, $TrustedRoot, $Helper)) {
         if ($Path -and -not [System.IO.Path]::IsPathFullyQualified($Path)) {
             throw 'Paths must be absolute.'
@@ -51,6 +53,7 @@ try {
         if (-not $Prefix) { $Prefix = Join-Path $HOME '.local' }
         $Arguments = @('install', '--version', $Version, '--commit', $Commit, '--prefix', $Prefix)
         if ($Rollback) { $Arguments = @('rollback', '--version', $Version, '--prefix', $Prefix) }
+        if ($VerifyOnly) { $Arguments += '--verify-only' }
         if ($Archive) { $Arguments += @('--archive', $Archive) }
         if ($Bundle) { $Arguments += @('--bundle', $Bundle) }
         if ($TrustedRoot) { $Arguments += @('--trusted-root', $TrustedRoot) }

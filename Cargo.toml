@@ -32,7 +32,8 @@ hkdf = "0.12"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
 mdns-sd = "0.21.6"
 opaque-ke = { version = "4.0.1", default-features = false, features = ["ristretto255", "argon2", "std"] }
-openmls = { version = "0.9.2", default-features = false }
+object = { version = "0.39.1", default-features = false, features = ["read_core", "macho", "std"] }
+openmls = { version = "=0.9.2", path = "third_party/overrides/openmls-0.9.2", default-features = false }
 openmls_basic_credential = "0.6.0"
 openmls_libcrux_crypto = "0.4.0"
 openmls_sqlite_storage = "0.3.0"
@@ -64,6 +65,10 @@ rustix = { version = "1.1.5", features = ["event", "fs", "net", "pipe", "process
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 nix = { version = "=0.31.3", path = "third_party/overrides/nix-0.31.3", default-features = false, features = ["process"] }
+
+[target.'cfg(windows)'.dependencies]
+win-authorization-sys = { version = "=0.1.0", path = "third_party/overrides/win-authorization-sys-0.1.0" }
+windows-namespace-request-sys = { version = "=0.5.1", path = "third_party/overrides/windows-namespace-request-sys-0.5.1", features = ["tokio-pipe"] }
 
 [target.'cfg(unix)'.dev-dependencies]
 nix = { version = "=0.31.3", path = "third_party/overrides/nix-0.31.3", default-features = false, features = ["process"] }

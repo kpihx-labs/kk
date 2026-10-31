@@ -294,6 +294,15 @@ fn router(app: App) -> Router {
             get(files::list).post(files::upload),
         )
         .route("/api/rooms/{room}/files/{file}", get(files::download))
+        .route("/api/rooms/{room}/transfers", get(files::transfers))
+        .route(
+            "/api/rooms/{room}/transfers/{id}",
+            get(files::transfer_status),
+        )
+        .route(
+            "/api/rooms/{room}/transfers/{id}/cancel",
+            post(files::transfer_cancel),
+        )
         .route(
             "/api/rooms/{room}/files/{file}/forward",
             post(files::forward),

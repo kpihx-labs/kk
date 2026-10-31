@@ -14,6 +14,8 @@ pub struct Exit {
     pub diagnostic: Zeroizing<Vec<u8>>,
 }
 pub struct Pipeline {
+    codec: Option<Codec>,
+    video: Option<super::vp8::Guard>,
     pid: u32,
     pub input: Option<ChildStdin>,
     pub output: Option<ChildStdout>,
@@ -21,6 +23,30 @@ pub struct Pipeline {
     finished: Option<JoinHandle<Result<Exit>>>,
 }
 impl Pipeline {
+    pub(super) fn decoder(mut self, codec: Codec) -> Self {
+        self.codec = Some(codec);
+        self.video = (codec == Codec::Vp8).then(super::vp8::Guard::default);
+        self
+    }
+    /// Peer RTP enters a native decoder only through this typed, bounded input.
+    /// `input` remains the low-level trusted interoperability pipe.
+    pub async fn write_packet(&mut self, packet: &Packet) -> Result<()> {
+        if self.codec != Some(packet.codec()) {
+            return Err(Error::Protocol);
+        }
+        if let Some(guard) = &mut self.video {
+            let packets = guard.push(Packet::parse(packet.codec(), packet.bytes().to_vec())?)?;
+            let input = self.input.as_mut().ok_or(Error::Protocol)?;
+            for packet in packets {
+                packet.write(input).await?;
+            }
+            Ok(())
+        } else {
+            packet
+                .write(self.input.as_mut().ok_or(Error::Protocol)?)
+                .await
+        }
+    }
     pub fn id(&self) -> u32 {
         self.pid
     }
@@ -176,6 +202,8 @@ impl Pipeline {
             })
         });
         Ok(Self {
+            codec: None,
+            video: None,
             pid,
             input,
             output,
@@ -205,6 +233,36 @@ impl Pipeline {
         .await
         .map_err(|_| Error::Timeout)?
     }
+    /// Deliver EOS to an input-only playback adapter and collect its real exit.
+    /// Capture/duplex pipelines need shutdown or an explicitly drained output;
+    /// silently dropping an unread output here could deadlock the child.
+    pub async fn finish_input(self) -> Result<Exit> {
+        self.finish_input_or_cancel(std::future::pending()).await
+    }
+    /// Cancellation/revocation wins over a simultaneously ready decoder exit.
+    /// Always stop and reap before surfacing a cancellation error.
+    pub async fn finish_input_or_cancel(
+        mut self,
+        cancel: impl std::future::Future<Output = Result<()>>,
+    ) -> Result<Exit> {
+        if self.input.is_none() || self.output.is_some() {
+            return Err(Error::Configuration(
+                "graceful native EOS requires an input-only playback pipeline",
+            ));
+        }
+        self.input.take();
+        let cancellation = tokio::select! {
+            biased;
+            cancellation = cancel => cancellation,
+            exit = tokio::time::timeout(config::DEFAULT_TIMEOUT, self.finished()) => match exit {
+                Ok(exit) => return exit,
+                Err(_) => Err(Error::Timeout),
+            },
+        };
+        let exit = self.shutdown().await;
+        cancellation?;
+        exit
+    }
 }
 impl Drop for Pipeline {
     fn drop(&mut self) {
@@ -219,6 +277,117 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tokio::io::AsyncBufReadExt;
+
+    #[tokio::test]
+    async fn native_vp8_adapter_rejects_oversized_keyframe_before_child_input() {
+        // A byte-echo child makes any accidental decoder input observable;
+        // no codec, capture device, display or physical output is opened.
+        let mut sink = Pipeline::spawn("cat", vec![], true, true)
+            .unwrap()
+            .decoder(Codec::Vp8);
+        let packet = Packet::parse(
+            Codec::Vp8,
+            vec![
+                0x80,
+                0x80 | 97,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                1,
+                0x10,
+                0,
+                0,
+                0,
+                0x9d,
+                1,
+                0x2a,
+                0xff,
+                0x3f,
+                0xff,
+                0x3f,
+            ],
+        )
+        .unwrap();
+        assert!(matches!(
+            sink.write_packet(&packet).await,
+            Err(Error::Protocol)
+        ));
+        sink.input.take();
+        let mut received = Vec::new();
+        tokio::time::timeout(
+            config::DEFAULT_TIMEOUT,
+            sink.output.as_mut().unwrap().read_to_end(&mut received),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(
+            received.is_empty(),
+            "oversized compressed header reached the native decoder pipe"
+        );
+        assert!(sink.finished().await.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn native_drain_ready_revocation_dominates_eof_and_pending_drain_is_reaped() {
+        // Neither subprocess opens a source or an output device.
+        for program in ["cat", "sleep"] {
+            let args = if program == "sleep" {
+                vec!["30".into()]
+            } else {
+                vec![]
+            };
+            let pipeline = Pipeline::spawn(program, args, true, false).unwrap();
+            let pid = pipeline.id();
+            let cancelled = pipeline
+                .finish_input_or_cancel(async {
+                    if program == "sleep" {
+                        tokio::task::yield_now().await;
+                    }
+                    Err(Error::Denied)
+                })
+                .await;
+            assert!(matches!(cancelled, Err(Error::Denied)));
+            assert!(
+                !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+                "revoked drain must reap its native output child"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn native_revocation_during_eos_drain_stops_and_reaps_before_returning() {
+        let pipeline = Pipeline::spawn("sleep", vec!["30".into()], true, false).unwrap();
+        let pid = pipeline.id();
+        let (cancel, cancelled) = tokio::sync::oneshot::channel();
+        let draining = pipeline.finish_input_or_cancel(async {
+            cancelled.await.map_err(|_| Error::Cancelled)?;
+            Err(Error::Denied)
+        });
+        tokio::pin!(draining);
+        tokio::select! {
+            biased;
+            result = &mut draining => panic!("test child must still be draining: {}", result.is_ok()),
+            _ = tokio::task::yield_now() => {},
+        }
+        cancel.send(()).unwrap();
+        assert!(matches!(
+            tokio::time::timeout(config::DEFAULT_TIMEOUT, &mut draining)
+                .await
+                .unwrap(),
+            Err(Error::Denied)
+        ));
+        assert!(
+            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "cancelled decoder must be reaped"
+        );
+    }
 
     #[tokio::test(flavor = "current_thread")]
     #[ignore = "explicit native owner-SIGKILL gate; only synthetic audio, no physical capture"]

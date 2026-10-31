@@ -333,6 +333,44 @@ impl Room {
         .await
         .map_err(|_| Error::Timeout)?
     }
+    /// Resolve only retained, currently authorized local history for a reply.
+    /// Missing/pruned/excluded or withheld-author targets disclose no body.
+    pub async fn history_resolve(
+        &mut self,
+        target: &crate::rooms::conversation::Target,
+        deadline: Duration,
+    ) -> Result<Option<HistoryRow>> {
+        crate::transport::validate_duration(deadline, config::MAX_FILE_TIMEOUT)?;
+        if target.room != self.room_id() {
+            return Err(Error::Denied);
+        }
+        let expires = tokio::time::Instant::now() + deadline;
+        tokio::time::timeout(deadline, async {
+            let before = self.synchronize(deadline).await?;
+            self.history_reader(&before)?;
+            let revision = self.profile.revision()?;
+            let result = self.group.history_resolve(target, now()?)?;
+            let after = self.synchronize(deadline).await?;
+            self.history_reader(&after)?;
+            if revision != self.profile.revision()? || before.epoch() != after.epoch() {
+                return Err(Error::Denied);
+            }
+            if tokio::time::Instant::now() >= expires {
+                return Err(Error::Timeout);
+            }
+            if let Some(row) = &result {
+                match self.history_row(&after, row) {
+                    Ok(()) => (),
+                    Err(Error::Denied | Error::Revoked) => return Ok(None),
+                    Err(error) => return Err(error),
+                }
+            }
+            Ok(result)
+        })
+        .await
+        .map_err(|_| Error::Timeout)?
+    }
+
     pub async fn encrypt_text_referenced(
         &mut self,
         text: &str,
@@ -367,6 +405,7 @@ impl Room {
         audience: &crate::rooms::conversation::Audience,
         deadline: Duration,
     ) -> Result<(Vec<u8>, StableReference)> {
+        operation.validate_publication()?;
         self.application_operation(None, deadline, |group| {
             audience.validate(
                 group.room_id(),

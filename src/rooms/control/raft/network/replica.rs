@@ -38,6 +38,9 @@ impl Registry {
 }
 
 fn access(shared: &Shared, target: PeerId) -> Result<(crate::rooms::runtime::Handle, Peer)> {
+    if shared.stopping.load(Ordering::SeqCst) {
+        return Err(Error::Cancelled);
+    }
     let handle = shared
         .room_port
         .read()
@@ -67,6 +70,9 @@ fn selected(shared: &Shared, target: PeerId, hash: [u8; 32]) -> Result<Arc<Offer
 }
 
 fn current(shared: &Shared, target: PeerId, offer: &Arc<Offer>) -> Result<()> {
+    if shared.stopping.load(Ordering::SeqCst) {
+        return Err(Error::Cancelled);
+    }
     let live = selected(shared, target, offer.info.sha256)?;
     if !authorized(shared, target)? || !Arc::ptr_eq(offer, &live) {
         return Err(Error::Denied);
@@ -168,8 +174,9 @@ impl Factory {
         tokio::time::timeout(deadline, async {
             let (handle, peer) = access(&self.shared, target)?;
             handle
-                .authorize_file(peer, true, config::DEFAULT_TIMEOUT)
+                .authorize_file(peer.clone(), true, config::DEFAULT_TIMEOUT)
                 .await?;
+            let epoch = handle.status(config::DEFAULT_TIMEOUT).await?.epoch;
             let client = Client {
                 shared: Arc::downgrade(&self.shared),
                 target,
@@ -184,6 +191,21 @@ impl Factory {
                         info.sha256 != hash || info.bytes > config::MAX_FILE_BYTES
                     }) {
                         return Err(Error::Protocol);
+                    }
+                    // A delayed hint is not authorization. In particular, neither
+                    // a local stop nor membership replacement during the RPC may
+                    // turn an old audience decision into current availability.
+                    let (current_handle, current_peer) = access(&self.shared, target)?;
+                    current_handle
+                        .authorize_file(current_peer, true, config::DEFAULT_TIMEOUT)
+                        .await?;
+                    if self.shared.stopping.load(Ordering::SeqCst) {
+                        return Err(Error::Cancelled);
+                    }
+                    if !authorized(&self.shared, target)?
+                        || current_handle.status(config::DEFAULT_TIMEOUT).await?.epoch != epoch
+                    {
+                        return Err(Error::Denied);
                     }
                     Ok(info)
                 }
@@ -306,25 +328,36 @@ pub(super) async fn serve(
     mut send: quinn::SendStream,
     recv: quinn::RecvStream,
 ) -> Result<()> {
-    let prepared = async {
-        let permit = shared
-            .file_data
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| Error::Node("room file lane is full"))?;
+    // Check access before reporting saturation: an unavailable/withdrawn offer
+    // stays denied even while other consented file work occupies the lane.
+    let access = async {
         let offer = selected(shared, target, hash)?;
         let (handle, peer) = access(shared, target)?;
         authorize(shared, target, &offer, &handle, &peer).await?;
+        Ok::<_, Error>((offer, handle, peer))
+    }
+    .await;
+    let Ok((offer, handle, peer)) = access else {
+        send_frame(&mut send, &Response::RoomFile(DataReply::Denied)).await?;
+        send.finish().map_err(|_| Error::Network)?;
+        return Err(Error::Denied);
+    };
+    let Ok(_permit) = shared.file_data.clone().try_acquire_owned() else {
+        send_frame(&mut send, &Response::RoomFile(DataReply::Busy)).await?;
+        send.finish().map_err(|_| Error::Network)?;
+        return Err(Error::Node("room file lane is full"));
+    };
+    let prepared = async {
         let mut file = files::source_file(&offer.source)?;
         let info = files::info(&mut file).await?;
         if info.sha256 != hash || info.bytes != offer.info.bytes {
             return Err(Error::Authentication);
         }
         authorize(shared, target, &offer, &handle, &peer).await?;
-        Ok::<_, Error>((permit, offer, handle, peer, file, info))
+        Ok::<_, Error>((file, info))
     }
     .await;
-    let Ok((_permit, offer, handle, peer, mut file, info)) = prepared else {
+    let Ok((mut file, info)) = prepared else {
         send_frame(&mut send, &Response::RoomFile(DataReply::Denied)).await?;
         send.finish().map_err(|_| Error::Network)?;
         return Err(Error::Denied);
@@ -387,5 +420,88 @@ mod tests {
         assert_eq!(registry.offers.len(), config::ROOM_FILE_SHARES);
         registry.insert(offer(2, 255)).unwrap();
         assert_eq!(registry.offers.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn audience_replacement_and_withdrawal_permanently_retire_selected_offers() {
+        let root = crate::test_support::tempdir().unwrap();
+        let owner = Arc::new(Identity::create(&root.path().join("owner")).unwrap());
+        let guest = Identity::create(&root.path().join("guest")).unwrap();
+        let target = PeerId::from_peer(&guest.peer());
+        let (factory, _server) = Factory::bind(
+            [7; 32],
+            owner.clone(),
+            BTreeMap::from([
+                (PeerId::from_peer(&owner.peer()), owner.peer()),
+                (target, guest.peer()),
+            ]),
+            "127.0.0.1:0".parse().unwrap(),
+        )
+        .unwrap();
+        let offered = || {
+            Arc::new(Offer {
+                source: root.path().join("retained-copy"),
+                info: FileInfo {
+                    bytes: 1,
+                    sha256: [1; 32],
+                },
+                audience: BTreeSet::from([target]),
+                epoch: 1,
+            })
+        };
+        let first = offered();
+        factory
+            .shared
+            .file_shares
+            .write()
+            .unwrap()
+            .insert(first.clone())
+            .unwrap();
+        assert!(current(&factory.shared, target, &first).is_ok());
+        let replacement = Arc::new(Offer {
+            source: first.source.clone(),
+            info: first.info.clone(),
+            audience: BTreeSet::from([PeerId([9; 32])]),
+            epoch: first.epoch,
+        });
+        factory
+            .shared
+            .file_shares
+            .write()
+            .unwrap()
+            .insert(replacement)
+            .unwrap();
+        assert!(selected(&factory.shared, target, [1; 32]).is_err());
+        assert!(current(&factory.shared, target, &first).is_err());
+        let next = offered();
+        factory
+            .shared
+            .file_shares
+            .write()
+            .unwrap()
+            .insert(next.clone())
+            .unwrap();
+        assert!(current(&factory.shared, target, &first).is_err());
+        assert!(current(&factory.shared, target, &next).is_ok());
+        assert!(factory.unshare_file([1; 32]).unwrap());
+        assert!(!factory.unshare_file([1; 32]).unwrap());
+        assert!(current(&factory.shared, target, &next).is_err());
+        factory
+            .shared
+            .file_shares
+            .write()
+            .unwrap()
+            .insert(offered())
+            .unwrap();
+        assert!(current(&factory.shared, target, &next).is_err());
+        factory.close();
+        assert!(matches!(
+            current(
+                &factory.shared,
+                target,
+                &selected(&factory.shared, target, [1; 32]).unwrap()
+            ),
+            Err(Error::Cancelled)
+        ));
     }
 }

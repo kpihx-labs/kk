@@ -213,7 +213,7 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn private_bundle_and_qr_roundtrip_without_long_term_key_export() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let folder = root.path().join("private");
         profile::private_directory(&folder, true).unwrap();
         let identity = Identity::create(&root.path().join("identity")).unwrap();
@@ -245,7 +245,7 @@ mod tests {
     }
     #[tokio::test]
     async fn room_bundle_and_qr_keep_the_exact_room_scope_without_key_export() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let folder = root.path().join("private");
         profile::private_directory(&folder, true).unwrap();
         let identity = Identity::create(&root.path().join("identity")).unwrap();

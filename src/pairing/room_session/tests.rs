@@ -5,7 +5,7 @@ use crate::{
 };
 
 async fn sessions() -> (tempfile::TempDir, RoomSession, RoomSession) {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_support::tempdir().unwrap();
     let a = Identity::create(&directory.path().join("a")).unwrap();
     let b = Identity::create(&directory.path().join("b")).unwrap();
     let server = PairServer::bind_room(

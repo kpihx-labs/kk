@@ -433,7 +433,7 @@ mod tests {
     use super::*;
     #[test]
     fn permissions_changed_keys_and_revocation_are_enforced_and_history_is_retained() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let registry = Registry::open(root.path().join("profile")).unwrap();
         let local = Identity::create(&root.path().join("local")).unwrap();
         let remote = Identity::create(&root.path().join("remote")).unwrap();

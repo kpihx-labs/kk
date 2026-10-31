@@ -6,6 +6,8 @@ pub mod catalog;
 pub mod labels;
 mod settings;
 mod storage;
+#[cfg(windows)]
+pub mod windows;
 pub use settings::{Appearance, Settings, SettingsPublication, SidebarMode, validate_name};
 
 #[cfg(unix)]
@@ -111,7 +113,7 @@ mod tests {
     use super::*;
     #[test]
     fn new_profile_reservation_has_one_winner_and_never_adopts_existing_state() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let directory = root.path().join("profiles/new");
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
         let workers: Vec<_> = (0..2)
@@ -139,7 +141,7 @@ mod tests {
     }
     #[test]
     fn missing_identity_is_not_regenerated_over_existing_trust() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let directory = root.path().join("profile");
         identity(&directory, true).unwrap();
         std::fs::write(

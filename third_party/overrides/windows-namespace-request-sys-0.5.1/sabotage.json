@@ -1,0 +1,745 @@
+{
+  "package": "windows-namespace-request-sys",
+  "description": "Sabotages for windows-namespace-request-sys's allocation-failure paths (NR-3): an allocation that fails is an error the caller receives, never a panic or an abort. Run with tools/run-sabotage.ps1; see tools/README-sabotage.md for the format.",
+  "notCoveredHere": "The allocation-failure paths (NR-3) have entries. The catalogue's other entries, and the capture of paths, are not covered. The security descriptor's entries, which were here, are in the win-authorization-sys manifest, where the code was moved (DI-14.8.1). The volume and disk entries this manifest once covered, with the device-control helper, are in the win-volume-sys manifest.",
+  "testArgs": ["-p", "windows-namespace-request-sys", "--lib", "--locked"],
+  "sabotages": [
+    {
+      "name": "NR-3: a capacity the machine cannot supply is reported under another code",
+      "file": "src/outcome.rs",
+      "expect": "caught",
+      "why": "A query whose buffer cannot be allocated reports ERROR_NOT_ENOUGH_MEMORY, the code a caller reads as 'ask for less'. Any other code would read as the call's own failure.",
+      "find": ["    Win32Error::from_code(ERROR_NOT_ENOUGH_MEMORY)\n"],
+      "replace": ["    Win32Error::from_code(0)\n"]
+    },
+    {
+      "name": "NR-3: an open request's copy forgets its security attributes",
+      "file": "src/open.rs",
+      "expect": "caught",
+      "why": "The copy must open with what the original would; the attributes went through Clone before, and nothing but this test would notice a copy that dropped them.",
+      "find": ["            security,\n            creation_disposition: self.creation_disposition,\n"],
+      "replace": ["            security: None,\n            creation_disposition: self.creation_disposition,\n"]
+    },
+    {
+      "name": "NR-3: an open-by-identifier request's copy forgets its security attributes",
+      "file": "src/open_by_id.rs",
+      "expect": "caught",
+      "why": "As for the path-named open: the copy must carry the attributes the original does.",
+      "find": ["            share_mode: self.share_mode,\n            security,\n"],
+      "replace": ["            share_mode: self.share_mode,\n            security: None,\n"]
+    },
+    {
+      "name": "NR-3: a batch alignment that is not a power of two is refused by the build",
+      "file": "src/query.rs",
+      "expect": "refused-by-build",
+      "buildError": "BATCH_ALIGNMENT.is_power_of_two()",
+      "why": "As for the descriptor's: `perform` reports every refusal of the allocation as ERROR_NOT_ENOUGH_MEMORY, so a bad constant would be misreported as out of memory.",
+      "find": ["const BATCH_ALIGNMENT: usize = align_of::<u64>();\n"],
+      "replace": ["const BATCH_ALIGNMENT: usize = 3;\n"]
+    },
+    {
+      "name": "NR-4.1: a failed call's code is not the one the thread held",
+      "file": "src/outcome.rs",
+      "expect": "caught",
+      "why": "The error an entry reports is the thread's last error, snapshotted in the statement after the call; any other value is a code the call did not produce.",
+      "find": ["        return Err(Win32Error::last());\n"],
+      "replace": ["        return Err(Win32Error::from_code(0x0BAD_F00D));\n"]
+    },
+    {
+      "name": "NR-4.1: control, the out-of-memory code written as its value",
+      "file": "src/outcome.rs",
+      "expect": "survives",
+      "why": "A control: ERROR_NOT_ENOUGH_MEMORY is 8, so the file changes and no behaviour. A sweep that reports it caught is reporting everything caught and proves nothing.",
+      "find": ["    Win32Error::from_code(ERROR_NOT_ENOUGH_MEMORY)\n"],
+      "replace": ["    Win32Error::from_code(8)\n"]
+    },
+    {
+      "name": "NR-3.2: the reopen is made on no handle at all",
+      "file": "src/reopen.rs",
+      "expect": "caught",
+      "why": "The original is the one input that says what is reopened; a null handle is refused by the call.",
+      "find": ["                    self.original.raw(),\n"],
+      "replace": ["                    core::ptr::null_mut(),\n"]
+    },
+    {
+      "name": "NR-3.2: the access asked for is not the access passed",
+      "file": "src/reopen.rs",
+      "expect": "caught",
+      "why": "The access is the point of reopening; passing none gives a handle that cannot write.",
+      "find": ["                    self.desired_access,\n"],
+      "replace": ["                    0,\n"]
+    },
+    {
+      "name": "NR-3.2: the share mode asked for is not the share mode passed",
+      "file": "src/reopen.rs",
+      "expect": "caught",
+      "why": "Sharing nothing conflicts with the original, which is open and shares more.",
+      "find": ["                    self.share_mode,\n"],
+      "replace": ["                    0,\n"]
+    },
+    {
+      "name": "NR-3.2: the flags asked for are not the flags passed",
+      "file": "src/reopen.rs",
+      "expect": "caught",
+      "why": "A reopen that drops FILE_FLAG_NO_BUFFERING returns a buffered handle, which accepts the unaligned transfer the test shows an unbuffered one refusing.",
+      "find": ["                    self.flags_and_attributes,\n"],
+      "replace": ["                    0,\n"]
+    },
+    {
+      "name": "NR-3.2: the access getter answers the share mode",
+      "file": "src/reopen.rs",
+      "expect": "caught",
+      "why": "Each getter reads back its own parameter; the values in the test are all different.",
+      "find": ["        self.desired_access\n    }\n"],
+      "replace": ["        self.share_mode\n    }\n"]
+    },
+    {
+      "name": "NR-3.2: the share-mode getter answers the access",
+      "file": "src/reopen.rs",
+      "expect": "caught",
+      "why": "The other direction of the swap above.",
+      "find": ["        self.share_mode\n    }\n"],
+      "replace": ["        self.desired_access\n    }\n"]
+    },
+    {
+      "name": "NR-3.2: a new request starts with an access",
+      "file": "src/reopen.rs",
+      "expect": "caught",
+      "why": "Nothing is defaulted: a request that says nothing carries nothing.",
+      "find": ["            desired_access: 0,\n"],
+      "replace": ["            desired_access: 1,\n"]
+    },
+    {
+      "name": "NR-3.2: a new request starts with a share mode",
+      "file": "src/reopen.rs",
+      "expect": "caught",
+      "why": "As for the access: a default share mode would be a choice made for the caller.",
+      "find": ["            share_mode: 0,\n"],
+      "replace": ["            share_mode: 1,\n"]
+    },
+    {
+      "name": "NR-3.2: a new request starts with flags",
+      "file": "src/reopen.rs",
+      "expect": "caught",
+      "why": "As for the access: a default flag would be a choice made for the caller.",
+      "find": ["            flags_and_attributes: 0,\n"],
+      "replace": ["            flags_and_attributes: 1,\n"]
+    },
+    {
+      "name": "NR-3.2: control, the zero share mode of a new request written as hexadecimal",
+      "file": "src/reopen.rs",
+      "expect": "survives",
+      "why": "A control: 0x0 is 0, so the file changes and no behaviour. A sweep that reports it caught is reporting everything caught and proves nothing.",
+      "find": ["            share_mode: 0,\n"],
+      "replace": ["            share_mode: 0x0,\n"]
+    },
+    {
+      "name": "NR-3.3: an empty child is grafted",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "Rule 1: an empty path names nothing, and the root with a backslash after it names the directory.",
+      "find": ["    let Some(first) = child.first() else {\n        return false;\n"],
+      "replace": ["    let Some(first) = child.first() else {\n        return true;\n"]
+    },
+    {
+      "name": "NR-3.3: a child that begins with a separator is grafted",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "Rule 2: root-relative, UNC, verbatim and device paths are not relative to the directory.",
+      "find": ["    if is_separator(*first) || child.contains(&COLON) {\n"],
+      "replace": ["    if child.contains(&COLON) {\n"]
+    },
+    {
+      "name": "NR-3.3: a child with a colon is grafted",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "Rule 3: a drive-relative path and a stream name are resolved by Win32 from state this graft does not read.",
+      "find": ["    if is_separator(*first) || child.contains(&COLON) {\n"],
+      "replace": ["    if is_separator(*first) {\n"]
+    },
+    {
+      "name": "NR-3.3: a separator is only a backslash",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "Win32 reads a forward slash as a separator in an ordinary path, for the first unit and for every component.",
+      "find": ["    unit == BACKSLASH || unit == SLASH\n"],
+      "replace": ["    unit == BACKSLASH\n"]
+    },
+    {
+      "name": "NR-3.3: components are split at backslashes only",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "A reserved name or a `..` after a forward slash is a component of its own.",
+      "find": ["    path.split(|unit| is_separator(*unit))\n"],
+      "replace": ["    path.split(|unit| *unit == BACKSLASH)\n"]
+    },
+    {
+      "name": "NR-3.3: a parent component is refused whatever the directory",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "Rule 4 is about a UNC directory only: under a drive-rooted one the `..` is collapsed by Win32 on the grafted path and means what it said.",
+      "find": ["    if is_unc(root) && has_parent_component(child) {\n"],
+      "replace": ["    if is_unc(root) || has_parent_component(child) {\n"]
+    },
+    {
+      "name": "NR-3.3: a UNC directory is one that begins with either separator",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "Two separators begin a UNC path; one is root-relative, and a drive-rooted directory is neither.",
+      "find": ["    matches!(root, [first, second, ..] if is_separator(*first) && is_separator(*second))\n"],
+      "replace": ["    matches!(root, [first, second, ..] if is_separator(*first) || is_separator(*second))\n"]
+    },
+    {
+      "name": "NR-3.3: a parent component is any component that begins with two dots",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "`..a` and `...` are names, not the parent.",
+      "find": ["    components(child).any(|component| component == [DOT, DOT])\n"],
+      "replace": ["    components(child).any(|component| component.starts_with(&[DOT, DOT]))\n"]
+    },
+    {
+      "name": "NR-3.3: a separator is added whether or not the root ends in one",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "A drive root and a root with a trailing backslash would be given a doubled one.",
+      "find": ["    let needs_separator = root.last() != Some(&BACKSLASH);\n"],
+      "replace": ["    let needs_separator = true;\n"]
+    },
+    {
+      "name": "NR-3.3: a separator is added only when the root ends in one",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "The other direction: the root and the child would be run together.",
+      "find": ["    let needs_separator = root.last() != Some(&BACKSLASH);\n"],
+      "replace": ["    let needs_separator = root.last() == Some(&BACKSLASH);\n"]
+    },
+    {
+      "name": "NR-3.3: a root with nothing in it is grafted onto",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "The join would be `\\child`, which is root-relative and names something else.",
+      "find": ["    if root.is_empty() || !has_graftable_shape(child) {\n"],
+      "replace": ["    if !has_graftable_shape(child) {\n"]
+    },
+    {
+      "name": "NR-3.3: the extension is not removed before the name is compared",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "`CON.txt` is the device.",
+      "find": ["    let stem = component.split(|unit| *unit == DOT).next().unwrap_or(&[]);\n"],
+      "replace": ["    let stem = component;\n"]
+    },
+    {
+      "name": "NR-3.3: the trailing spaces are cut one short",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "The end of the name is one past its last character that is not a space; a cut one short loses a letter, and no name matches.",
+      "find": ["        .map_or(0, |last| last + 1);\n"],
+      "replace": ["        .map_or(0, |last| last);\n"]
+    },
+    {
+      "name": "NR-3.3: the name is compared exactly, not without regard to case",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "`con` is the device.",
+      "find": ["            u8::try_from(*unit).is_ok_and(|unit| unit.eq_ignore_ascii_case(expected))\n"],
+      "replace": ["            u8::try_from(*unit).is_ok_and(|unit| unit == *expected)\n"]
+    },
+    {
+      "name": "NR-3.3: a unit is compared by its low byte",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "A unit that is not ASCII is not a letter, whatever its low byte is.",
+      "find": ["            u8::try_from(*unit).is_ok_and(|unit| unit.eq_ignore_ascii_case(expected))\n"],
+      "replace": ["            ((*unit & 0xFF) as u8).eq_ignore_ascii_case(expected)\n"]
+    },
+    {
+      "name": "NR-3.3: the digits stop short of nine",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "`COM9` and `LPT9` are devices.",
+      "find": ["    let is_digit = (DIGIT_ZERO..=DIGIT_NINE).contains(digit) || SUPERSCRIPT_DIGITS.contains(digit);\n"],
+      "replace": ["    let is_digit = (DIGIT_ZERO..DIGIT_NINE).contains(digit) || SUPERSCRIPT_DIGITS.contains(digit);\n"]
+    },
+    {
+      "name": "NR-3.3: the digits start above zero",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "`COM0` and `LPT0` are in Microsoft's list.",
+      "find": ["    let is_digit = (DIGIT_ZERO..=DIGIT_NINE).contains(digit) || SUPERSCRIPT_DIGITS.contains(digit);\n"],
+      "replace": ["    let is_digit = (DIGIT_ZERO + 1..=DIGIT_NINE).contains(digit) || SUPERSCRIPT_DIGITS.contains(digit);\n"]
+    },
+    {
+      "name": "NR-3.3: the superscript digits are not digits",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "Microsoft's list names `COM\u00b9`, `COM\u00b2` and `COM\u00b3` too.",
+      "find": ["    let is_digit = (DIGIT_ZERO..=DIGIT_NINE).contains(digit) || SUPERSCRIPT_DIGITS.contains(digit);\n"],
+      "replace": ["    let is_digit = (DIGIT_ZERO..=DIGIT_NINE).contains(digit) || SUPERSCRIPT_DIGITS.contains(&0);\n"]
+    },
+    {
+      "name": "NR-3.3: any name that ends in a digit is a device",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "Only `COM` and `LPT` take a digit; `CON1` and `AUX1` are names.",
+      "find": ["    is_digit\n        && RESERVED_NAMES_WITH_DIGIT\n"],
+      "replace": ["    is_digit\n        || RESERVED_NAMES_WITH_DIGIT\n"]
+    },
+    {
+      "name": "NR-3.3: NUL is not a reserved name",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "D-19 lists it, and the rule errs toward not grafting.",
+      "find": ["b\"AUX\", b\"NUL\", b\"CONIN$\""],
+      "replace": ["b\"AUX\", b\"NUX\", b\"CONIN$\""]
+    },
+    {
+      "name": "NR-3.3: CONOUT$ is spelled without its dollar sign",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "The name is `CONOUT$`, and `CONOUT` is a file name.",
+      "find": ["b\"CONIN$\", b\"CONOUT$\"]"],
+      "replace": ["b\"CONIN$\", b\"CONOUT\"]"]
+    },
+    {
+      "name": "NR-3.3: LPT is not a name that takes a digit",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "`LPT1` to `LPT9` are devices.",
+      "find": ["[b\"COM\", b\"LPT\"]"],
+      "replace": ["[b\"COM\", b\"LPX\"]"]
+    },
+    {
+      "name": "NR-3.3: the path handed to Win32 is the one given",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "The graft is the whole point: a path that says nothing of the directory is resolved when the call is made.",
+      "find": ["    pub fn win32(&self) -> &Wtf16Str {\n        self.grafted.as_ref().unwrap_or(&self.given)\n"],
+      "replace": ["    pub fn win32(&self) -> &Wtf16Str {\n        &self.given\n"]
+    },
+    {
+      "name": "NR-3.3: the terminated pointer is to the path as given",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "The pointer is what the call reads, and it must be to the grafted path.",
+      "find": ["        self.grafted\n            .as_ref()\n            .unwrap_or(&self.given)\n            .as_terminated_ptr()\n"],
+      "replace": ["        self.given.as_terminated_ptr()\n"]
+    },
+    {
+      "name": "NR-3.3: the path as given is the one handed to Win32",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "`given` is what the caller said, and a caller or test reads it to see what the graft did.",
+      "find": ["    pub fn given(&self) -> &Wtf16Str {\n        &self.given\n"],
+      "replace": ["    pub fn given(&self) -> &Wtf16Str {\n        self.win32()\n"]
+    },
+    {
+      "name": "NR-3.3: a path that was grafted says it was not",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "The flag is how a caller tells the two cases apart.",
+      "find": ["        self.grafted.is_some()\n"],
+      "replace": ["        self.grafted.is_none()\n"]
+    },
+    {
+      "name": "NR-3.3: the directory is read into a buffer of one character",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "The size passed is the size of the buffer; a smaller one is reported as written and the rest is not.",
+      "find": ["            unsafe { GetCurrentDirectoryW(capacity, buffer.as_mut_ptr()) }\n"],
+      "replace": ["            unsafe { GetCurrentDirectoryW(1, buffer.as_mut_ptr()) }\n"]
+    },
+    {
+      "name": "NR-3.3: a size that fits is taken for one that does not",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "The call answers the characters written when they fit, and the size needed when they do not.",
+      "find": ["        if written < buffer.len() {\n"],
+      "replace": ["        if written > buffer.len() {\n"]
+    },
+    {
+      "name": "NR-3.3: the buffer is not grown to the size the call asked for",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "A directory longer than the first buffer would never fit, and the retry would give up.",
+      "find": ["        buffer.resize(written, 0);\n"],
+      "replace": ["        buffer.resize(FIRST_ATTEMPT_CHARS, 0);\n"]
+    },
+    {
+      "name": "NR-3.3: the failure of the directory call has no source",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "The Win32 code is the cause and is reached through `source`.",
+      "find": ["            Self::CurrentDirectory(error) => Some(error),\n"],
+      "replace": ["            Self::CurrentDirectory(_) => None,\n"]
+    },
+    {
+      "name": "NR-3.3: BLIND SPOT: the directory is read for a path that cannot be grafted",
+      "file": "src/anchored.rs",
+      "expect": "survives",
+      "why": "Declared blind spot, not a control. A path that rules 1, 2, 3 and 5 refuse is returned as given either way, so a call that need not have been made is not observable from a test; the skip is read from the code.",
+      "find": ["        if !has_graftable_shape(given.as_units()) {\n"],
+      "replace": ["        if false {\n"]
+    },
+    {
+      "name": "NR-3.3: control, the end of a name written with the operands of the sum swapped",
+      "file": "src/anchored.rs",
+      "expect": "survives",
+      "why": "A control: addition commutes, so the file changes and no behaviour. A sweep that reports it caught is reporting everything caught and proves nothing.",
+      "find": ["        .map_or(0, |last| last + 1);\n"],
+      "replace": ["        .map_or(0, |last| 1 + last);\n"]
+    },
+    {
+      "name": "NR-3.3: a child is grafted onto a verbatim or device directory",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "Win32 does not normalise a path with either prefix, so a grafted `.\\kernel32.dll` is read literally and names a file that is not there. Found by review: a process whose current directory is verbatim opens `.\\kernel32.dll` and could not open the grafted form. The child-process test in the open tests is what shows it against Win32.",
+      "find": ["    if is_verbatim_or_device(root) {\n"],
+      "replace": ["    if false {\n"]
+    },
+    {
+      "name": "NR-3.3: a device prefix is not recognised as one",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "`\\\\.\\` is as unnormalised as `\\\\?\\`; recognising one of the two leaves the other grafted.",
+      "find": ["if *prefix == QUESTION || *prefix == DOT)"],
+      "replace": ["if *prefix == QUESTION)"]
+    },
+    {
+      "name": "NR-3.4: a path with an interior NUL is accepted",
+      "file": "src/anchored.rs",
+      "expect": "caught",
+      "why": "Win32 reads a path up to its first NUL, so the request would act on a shorter path than the one named.",
+      "find": ["        if given.has_interior_nul() {\n"],
+      "replace": ["        if false {\n"]
+    },
+    {
+      "name": "NR-3.4: OpenFile reports the path handed to Win32 as the path given",
+      "file": "src/open.rs",
+      "expect": "caught",
+      "why": "The two accessors are how a caller sees what the graft did; swapped, they report nothing.",
+      "find": ["    pub fn win32_path(&self) -> &Wtf16Str {\n        self.path.win32()\n"],
+      "replace": ["    pub fn win32_path(&self) -> &Wtf16Str {\n        self.path.given()\n"]
+    },
+    {
+      "name": "NR-3.4: OpenFile reports the path given as the path handed to Win32",
+      "file": "src/open.rs",
+      "expect": "caught",
+      "why": "The other direction of the swap above.",
+      "find": ["    pub fn path(&self) -> &Wtf16Str {\n        self.path.given()\n"],
+      "replace": ["    pub fn path(&self) -> &Wtf16Str {\n        self.path.win32()\n"]
+    },
+    {
+      "name": "NR-3.4: OpenFile hands CreateFileW the path as given and not the grafted one",
+      "file": "src/open.rs",
+      "expect": "caught",
+      "why": "The graft is the point of capturing the directory: a relative path handed over as given is resolved when the call is made, against whatever the directory is by then. Only a test that changes the directory after building the request can tell, which is why it runs in a child process.",
+      "find": ["                    self.path.win32_terminated(),\n"],
+      "replace": ["                    Wtf16String::from_units(self.path.given().as_units()).as_terminated_ptr(),\n"]
+    },
+    {
+      "name": "NR-3.4: WatchDirectory reports the path handed to Win32 as the path given",
+      "file": "src/watch.rs",
+      "expect": "caught",
+      "why": "As for OpenFile.",
+      "find": ["    pub fn win32_path(&self) -> &Wtf16Str {\n        self.path.win32()\n"],
+      "replace": ["    pub fn win32_path(&self) -> &Wtf16Str {\n        self.path.given()\n"]
+    },
+    {
+      "name": "NR-3.4: WatchDirectory reports the path given as the path handed to Win32",
+      "file": "src/watch.rs",
+      "expect": "caught",
+      "why": "The other direction of the swap above.",
+      "find": ["    pub fn path(&self) -> &Wtf16Str {\n        self.path.given()\n"],
+      "replace": ["    pub fn path(&self) -> &Wtf16Str {\n        self.path.win32()\n"]
+    },
+    {
+      "name": "NR-3.4: WatchDirectory hands the call the path as given and not the grafted one",
+      "file": "src/watch.rs",
+      "expect": "caught",
+      "why": "As for OpenFile: observable only after the directory has changed.",
+      "find": ["                    self.path.win32_terminated(),\n"],
+      "replace": ["                    Wtf16String::from_units(self.path.given().as_units()).as_terminated_ptr(),\n"]
+    },
+    {
+      "name": "NR-3.5: ResolveFullPath accepts a path with an interior NUL",
+      "file": "src/full_path.rs",
+      "expect": "caught",
+      "why": "GetFullPathNameW would resolve the part before the NUL and report success for a path that was not the one named.",
+      "find": ["        if path.has_interior_nul() {\n            return Err(PathCaptureError::InteriorNul);\n        }\n        Ok(Self { path })\n"],
+      "replace": ["        if false {\n            return Err(PathCaptureError::InteriorNul);\n        }\n        Ok(Self { path })\n"]
+    },
+    {
+      "name": "NR-3.5: control, the NUL test written as a search of the units",
+      "file": "src/full_path.rs",
+      "expect": "survives",
+      "why": "A control: a string has an interior NUL when its units contain a zero, so the file changes and no behaviour. A sweep that reports it caught is reporting everything caught and proves nothing.",
+      "find": ["        if path.has_interior_nul() {\n            return Err(PathCaptureError::InteriorNul);\n"],
+      "replace": ["        if path.as_units().contains(&0) {\n            return Err(PathCaptureError::InteriorNul);\n"]
+    },
+    {
+      "name": "NR-3.9: an unknown type from a call that worked is reported as a failure",
+      "file": "src/file_type.rs",
+      "expect": "caught",
+      "why": "The call's page says an unknown type with NO_ERROR is a result, not a failure; reading every unknown as a failure turns a handle of a type the system does not name into an error.",
+      "find": ["        Err(error) if error.code() == NO_ERROR => Ok(FileType::UNKNOWN),"],
+      "replace": ["        Err(error) if error.code() != NO_ERROR => Ok(FileType::UNKNOWN),"]
+    },
+    {
+      "name": "NR-3.9: a failure of the call is reported as an unknown type",
+      "file": "src/file_type.rs",
+      "expect": "caught",
+      "why": "A handle the call fails on, an event for one, must report the call's code and not a type, or a caller cannot tell a handle that has no type from one that has an unknown one.",
+      "find": ["        Err(error) => Err(error),\n    }\n}"],
+      "replace": ["        Err(_) => Ok(FileType::UNKNOWN),\n    }\n}"]
+    },
+    {
+      "name": "NR-3.9: the disk value is another type's",
+      "file": "src/file_type.rs",
+      "expect": "caught",
+      "why": "The values are the call's page's, and a constant that held another's would make a file read as a device.",
+      "find": ["    pub const DISK: Self = Self(FILE_TYPE_DISK);"],
+      "replace": ["    pub const DISK: Self = Self(FILE_TYPE_CHAR);"]
+    },
+    {
+      "name": "NR-3.9: the last error is not cleared before the call",
+      "file": "src/file_type.rs",
+      "expect": "survives",
+      "why": "Declared: clearing the last error matters only to a call that returns an unknown type and worked, and no handle kind tried on the measuring machine does (an event fails with ERROR_INVALID_HANDLE), so a stale code cannot be made to change an answer here. The clearing rests on the call's page, which is the reason it is made.",
+      "find": ["                unsafe { SetLastError(NO_ERROR) };\n"],
+      "replace": ["                let _ = SetLastError;\n"]
+    },
+    {
+      "name": "NR-3.10: the file identifier is not carried",
+      "file": "src/file_id.rs",
+      "expect": "caught",
+      "why": "The identifier is half of what tells two files apart; a value that dropped it would report every file on a volume as one.",
+      "find": ["    FileIdInfo::new(info.VolumeSerialNumber, info.FileId.Identifier)\n"],
+      "replace": ["    FileIdInfo::new(info.VolumeSerialNumber, [0; 16])\n"]
+    },
+    {
+      "name": "NR-3.10: the volume serial number is not carried",
+      "file": "src/file_id.rs",
+      "expect": "caught",
+      "why": "The serial is the other half: an identifier is unique only with it, so a value that dropped it would equate files on two volumes.",
+      "find": ["    FileIdInfo::new(info.VolumeSerialNumber, info.FileId.Identifier)\n"],
+      "replace": ["    FileIdInfo::new(0, info.FileId.Identifier)\n"]
+    },
+    {
+      "name": "NR-3.10: the call is made with another class",
+      "file": "src/file_id.rs",
+      "expect": "caught",
+      "why": "The class is the one constant the untyped entry defines; any other class writes another structure, which this entry would read as an identity.",
+      "find": ["                    FileInformationClass::ID.as_raw(),\n"],
+      "replace": ["                    FileInformationClass::BASIC.as_raw(),\n"]
+    },
+    {
+      "name": "NR-3.10: a refusal is reported with another code",
+      "file": "src/file_id.rs",
+      "expect": "caught",
+      "why": "A refusal is the call's code unaltered; the tests compare it with what the untyped entry reports for the same handle, so a code this entry invented is seen.",
+      "find": ["        })?;\n\n        // SAFETY: a successful call of this class fills the whole structure.\n"],
+      "replace": ["        })\n        .map_err(|_| crate::Win32Error::from_code(5))?;\n\n        // SAFETY: a successful call of this class fills the whole structure.\n"]
+    },
+    {
+      "name": "NR-3.10: control -- the structure is read by value rather than by reference",
+      "file": "src/file_id.rs",
+      "expect": "survives",
+      "why": "Control: reading the initialised structure by value and borrowing it is the same read, so no test can tell the two apart; a catch here would mean the tests detect something other than what the entry reports.",
+      "find": ["        Ok(from_raw(unsafe { information.assume_init_ref() }))\n"],
+      "replace": ["        Ok(from_raw(&unsafe { information.assume_init() }))\n"]
+    },
+    {
+      "name": "NR-6.1: an entry holds a duplicate of the handle it is given",
+      "file": "src/file_type.rs",
+      "expect": "caught",
+      "why": "An entry is one more holder of the handle it is given (D-32); making a handle of its own is the duplication the change removes, and it would leave a caller that recovers its OwnedHandle unable to tell what still holds the object.",
+      "find": ["            handle: handle.into(),\n"],
+      "replace": ["            handle: SharedHandle::from(std::os::windows::io::AsHandle::as_handle(&Into::<SharedHandle>::into(handle)).try_clone_to_owned().expect(\"a duplicate\")),\n"]
+    },
+    {
+      "name": "NR-6.1: a reopen holds a duplicate of the original",
+      "file": "src/reopen.rs",
+      "expect": "caught",
+      "why": "As for the queries: the original is held shared, not copied, and a copy would be invisible to every behavioural test but the one that asks which handle is held.",
+      "find": ["            original: original.into(),\n"],
+      "replace": ["            original: SharedHandle::from(std::os::windows::io::AsHandle::as_handle(&Into::<SharedHandle>::into(original)).try_clone_to_owned().expect(\"a duplicate\")),\n"]
+    },
+    {
+      "name": "NR-6.1: control -- the accessor's documentation is reworded",
+      "file": "src/file_type.rs",
+      "expect": "survives",
+      "why": "Control: documentation that no test reads.",
+      "find": ["    /// The handle being queried, shared with its other holders.\n"],
+      "replace": ["    /// The handle the query is made on.\n"]
+    },
+    {
+      "name": "NR-6.2: a copy of an open duplicates its template",
+      "file": "src/open.rs",
+      "expect": "caught",
+      "why": "The copy shares the template (D-32); a duplicate would be the duplication NR-6.2 removed, and a fallible step in a copy whose only failure is meant to be the attributes'.",
+      "find": ["        let template = self.template.clone();\n"],
+      "replace": ["        let template = self.template.as_ref().map(|template| SharedHandle::from(std::os::windows::io::AsHandle::as_handle(template).try_clone_to_owned().expect(\"a duplicate\")));\n"]
+    },
+    {
+      "name": "NR-6.2: a copy of an open-by-identifier duplicates its hint",
+      "file": "src/open_by_id.rs",
+      "expect": "caught",
+      "why": "As for the path-named open: the copy shares the volume hint.",
+      "find": ["        let volume_hint = self.volume_hint.clone();\n"],
+      "replace": ["        let volume_hint = SharedHandle::from(std::os::windows::io::AsHandle::as_handle(&self.volume_hint).try_clone_to_owned().expect(\"a duplicate\"));\n"]
+    },
+    {
+      "name": "NR-6.2: control -- the copy clones the template through its type",
+      "file": "src/open.rs",
+      "expect": "survives",
+      "why": "Control. The same share, spelled through Option's Clone, so the test that the copy shares its template must not fire on it.",
+      "find": ["        let template = self.template.clone();\n"],
+      "replace": ["        let template = Option::clone(&self.template);\n"]
+    },
+    {
+      "name": "NR-6.3: an open from an anchored path anchors it again",
+      "file": "src/open.rs",
+      "expect": "caught",
+      "why": "The anchored path was fixed when the caller built it; anchoring it again reads the current directory now, which is the second anchoring NR-6.3 exists to avoid and which names another place once the directory has changed.",
+      "find": ["            path,\n"],
+      "replace": ["            path: AnchoredPath::new(path.given().to_owned()).expect(\"anchor again\"),\n"]
+    },
+    {
+      "name": "NR-6.3: a watch from an anchored path anchors it again",
+      "file": "src/watch.rs",
+      "expect": "caught",
+      "why": "As for the open: the watch must name the directory the path was anchored to.",
+      "find": ["            path,\n"],
+      "replace": ["            path: AnchoredPath::new(path.given().to_owned()).expect(\"anchor again\"),\n"]
+    },
+    {
+      "name": "NR-6.3: control -- the anchored path is moved in by its field name",
+      "file": "src/open.rs",
+      "expect": "survives",
+      "why": "Control. The same value, written out, so the tests that the path is not anchored again must not fire on it.",
+      "find": ["            path,\n"],
+      "replace": ["            path: path,\n"]
+    },
+    {
+      "name": "NR-6.4: the creation and last-access times are read from each other's fields",
+      "file": "src/file_basic.rs",
+      "expect": "caught",
+      "why": "Both are i64 and adjacent, so a swap compiles; only a file whose times differ shows it, which is why the tests set three distinct times.",
+      "find": ["        info.CreationTime,\n        info.LastAccessTime,\n"],
+      "replace": ["        info.LastAccessTime,\n        info.CreationTime,\n"]
+    },
+    {
+      "name": "NR-6.4: the last-write and change times are read from each other's fields",
+      "file": "src/file_basic.rs",
+      "expect": "caught",
+      "why": "The page distinguishes them (the data stream against the metadata); the change time is the system's own and differs from every time the tests set.",
+      "find": ["        info.LastWriteTime,\n        info.ChangeTime,\n"],
+      "replace": ["        info.ChangeTime,\n        info.LastWriteTime,\n"]
+    },
+    {
+      "name": "NR-6.4: the attributes are not carried",
+      "file": "src/file_basic.rs",
+      "expect": "caught",
+      "why": "A directory would read as a file; the attributes are what most callers of this class want.",
+      "find": ["        info.FileAttributes,\n"],
+      "replace": ["        0,\n"]
+    },
+    {
+      "name": "NR-6.4: the call is made with another class",
+      "file": "src/file_basic.rs",
+      "expect": "caught",
+      "why": "FileIdInfo's structure is smaller than the buffer, so the call succeeds and fills it with something else; only the comparison with the untyped entry's bytes for this class sees it.",
+      "find": ["                    FileInformationClass::BASIC.as_raw(),\n"],
+      "replace": ["                    FileInformationClass::ID.as_raw(),\n"]
+    },
+    {
+      "name": "NR-6.4: control -- a field is read through a block",
+      "file": "src/file_basic.rs",
+      "expect": "survives",
+      "why": "Control. The same value, so the tests of the fields must not fire on it.",
+      "find": ["        info.CreationTime,\n"],
+      "replace": ["        { info.CreationTime },\n"]
+    },
+    {
+      "name": "NR-6.5: the call into the caller's buffer is limited by the request's capacity",
+      "file": "src/query.rs",
+      "expect": "caught",
+      "why": "The buffer's length is the size the call is given; a request built with a small capacity would refuse a buffer that fits. Written as the smaller of the two so that the sabotage cannot overrun the buffer and be caught by a crash rather than a test.",
+      "find": ["        let size = u32::try_from(buffer.len()).unwrap_or(u32::MAX);\n"],
+      "replace": ["        let size = u32::try_from(buffer.len().min(self.capacity)).unwrap_or(u32::MAX);\n"]
+    },
+    {
+      "name": "NR-6.5: the caller's buffer is cleared before the call",
+      "file": "src/query.rs",
+      "expect": "caught",
+      "why": "The buffer is not cleared: bytes the call does not write keep what the caller left there. Clearing would cost a pass over every batch's buffer and change what the caller sees.",
+      "find": ["        let size = u32::try_from(buffer.len()).unwrap_or(u32::MAX);\n"],
+      "replace": ["        buffer.as_mut_slice().fill(0);\n        let size = u32::try_from(buffer.len()).unwrap_or(u32::MAX);\n"]
+    },
+    {
+      "name": "NR-6.5: the caller's buffer is replaced by a new allocation",
+      "file": "src/query.rs",
+      "expect": "caught",
+      "why": "The point of the form is that one allocation serves every call; a fresh buffer swapped in would allocate per call and leave the caller holding a different address.",
+      "find": ["        let size = u32::try_from(buffer.len()).unwrap_or(u32::MAX);\n"],
+      "replace": ["        *buffer = AlignedBuf::zeroed(buffer.len(), buffer.align()).expect(\"a new buffer\");\n        let size = u32::try_from(buffer.len()).unwrap_or(u32::MAX);\n"]
+    },
+    {
+      "name": "NR-6.5: control -- the length is read through the slice",
+      "file": "src/query.rs",
+      "expect": "survives",
+      "why": "Control. The same length, so the tests of the size given must not fire on it.",
+      "find": ["        let size = u32::try_from(buffer.len()).unwrap_or(u32::MAX);\n"],
+      "replace": ["        let size = u32::try_from(buffer.as_slice().len()).unwrap_or(u32::MAX);\n"]
+    },
+    {
+      "name": "review: perform_into does not check the alignment a structure's page requires",
+      "file": "src/query.rs",
+      "expect": "caught",
+      "why": "The refusal itself. Without it a misaligned buffer reaches the call for the five classes whose structure must be 8-aligned, and the end-to-end test sees Windows' code where it expects the refusal.",
+      "find": ["        check_alignment(self.class, buffer.as_ptr().addr())?;\n"],
+      "replace": [""]
+    },
+    {
+      "name": "review: the FILE_STREAM_INFO row names the class after FileStreamInfo",
+      "file": "src/query.rs",
+      "expect": "caught",
+      "why": "The third structure the sweep of the call's page found. Dropping the row does not compile (the table's length is fixed), so the row is pointed at the neighbouring class instead; the table test names all five classes and the rest as requiring none.",
+      "find": ["    (FileStreamInfo, \"FILE_STREAM_INFO\", 8),\n"],
+      "replace": ["    (FileStreamInfo + 1, \"FILE_STREAM_INFO\", 8),\n"]
+    },
+    {
+      "name": "review: the full-directory restart class is given 4 where its page says 8",
+      "file": "src/query.rs",
+      "expect": "caught",
+      "why": "An alignment that is not the page's accepts an address 4 off the boundary.",
+      "find": ["    (FileFullDirectoryRestartInfo, \"FILE_FULL_DIR_INFO\", 8),"],
+      "replace": ["    (FileFullDirectoryRestartInfo, \"FILE_FULL_DIR_INFO\", 4),"]
+    },
+    {
+      "name": "review: the check refuses the boundary and accepts what is off it",
+      "file": "src/query.rs",
+      "expect": "caught",
+      "why": "The predicate inverted; the in-memory tests assert both directions.",
+      "find": ["if !address.is_multiple_of(required) =>"],
+      "replace": ["if address.is_multiple_of(required) =>"]
+    },
+    {
+      "name": "review: a refusal reports a code Windows did not produce",
+      "file": "src/query.rs",
+      "expect": "caught",
+      "why": "The call was not made, so there is no code to report.",
+      "find": ["            Self::Win32(error) => Some(error.code()),\n            Self::Misaligned { .. } => None,\n"],
+      "replace": ["            Self::Win32(error) => Some(error.code()),\n            Self::Misaligned { .. } => Some(0),\n"]
+    },
+    {
+      "name": "review: control -- the boundary test written as a remainder",
+      "file": "src/query.rs",
+      "expect": "survives",
+      "why": "A control: the same predicate written another way, so the file changes and no behaviour. A sweep that reports it caught is reporting everything caught and proves nothing.",
+      "find": ["if !address.is_multiple_of(required) =>"],
+      "replace": ["if address % required != 0 =>"]
+    }
+  ]
+}

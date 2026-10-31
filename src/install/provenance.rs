@@ -4,17 +4,17 @@ use super::{
     archive::{MAX_BYTES, Verified},
     refuse,
 };
+#[cfg(target_os = "linux")]
 use std::{
     fs::File,
-    io::{Read, Write},
+    io::Write,
     os::{
         fd::AsRawFd,
-        unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+        unix::fs::{MetadataExt, PermissionsExt},
     },
-    path::{Path, PathBuf},
-    process::Stdio,
-    time::Duration,
+    path::PathBuf,
 };
+use std::{io::Read, os::unix::fs::OpenOptionsExt, path::Path, process::Stdio, time::Duration};
 use tokio::{io::AsyncReadExt, process::Command};
 
 pub(super) fn snapshot(path: &Path, max: usize, cancel: &super::Cancel) -> Result<Vec<u8>> {
@@ -54,22 +54,76 @@ struct Tool {
     group: Option<rustix::process::Pid>,
 }
 
-impl Drop for Tool {
-    fn drop(&mut self) {
-        // Synchronous fallback if the runtime itself drops the cleanup owner.
-        // The unreaped direct child reserves the process-group identity.
-        if let Some(group) = self.group {
-            let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+impl Tool {
+    fn exited(&mut self) -> Result<bool> {
+        let group = self
+            .group
+            .ok_or(Error::Refused("external tool child ownership lost"))?;
+        // Requires exclusive reaping ownership. WNOWAIT cannot protect against
+        // another reaper; ECHILD invalidates every saved numeric identity.
+        loop {
+            match rustix::process::waitid(
+                rustix::process::WaitId::Pid(group),
+                rustix::process::WaitIdOptions::EXITED
+                    | rustix::process::WaitIdOptions::NOHANG
+                    | rustix::process::WaitIdOptions::NOWAIT,
+            ) {
+                Ok(status) => return Ok(status.is_some()),
+                Err(rustix::io::Errno::INTR) => continue,
+                Err(error) => {
+                    self.group = None;
+                    return if error == rustix::io::Errno::CHILD {
+                        refuse("external tool child ownership lost; numeric signalling disarmed")
+                    } else {
+                        Err(error.into())
+                    };
+                }
+            }
+        }
+    }
+
+    fn terminate_owned(&mut self) -> Result<()> {
+        self.exited()?;
+        let group = self
+            .group
+            .ok_or(Error::Refused("external tool child ownership lost"))?;
+        let result = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+        // Never signal again after cleanup advances toward reaping.
+        self.group = None;
+        match result {
+            Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
+            Err(error) => Err(error.into()),
         }
     }
 }
 
-async fn run(mut command: Command, limit: usize, seconds: u64) -> Result<Vec<u8>> {
+impl Drop for Tool {
+    fn drop(&mut self) {
+        // Synchronous fallback if the runtime itself drops the cleanup owner.
+        // Consult retained ownership even on fallback; never signal after ECHILD.
+        if self.group.is_some() {
+            let _ = self.terminate_owned();
+        }
+    }
+}
+
+async fn run(command: Command, limit: usize, seconds: u64) -> Result<Vec<u8>> {
+    run_retained(command, limit, seconds, ())
+        .await
+        .map(|(bytes, ())| bytes)
+}
+
+async fn run_retained<T: Send + 'static>(
+    mut command: Command,
+    limit: usize,
+    seconds: u64,
+    inputs: T,
+) -> Result<(Vec<u8>, T)> {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
-        .kill_on_drop(true)
+        .kill_on_drop(false)
         .process_group(0);
     let child = command
         .spawn()
@@ -102,18 +156,10 @@ async fn run(mut command: Command, limit: usize, seconds: u64) -> Result<Vec<u8>
             }
             // Observe without reaping: pin the group ID until descendants are killed.
             loop {
-                match rustix::process::waitid(
-                    rustix::process::WaitId::Pid(group),
-                    rustix::process::WaitIdOptions::EXITED
-                        | rustix::process::WaitIdOptions::NOHANG
-                        | rustix::process::WaitIdOptions::NOWAIT,
-                ) {
-                    Ok(Some(_)) => break,
-                    Ok(None) | Err(rustix::io::Errno::INTR) => {
-                        tokio::time::sleep(Duration::from_millis(10)).await
-                    }
-                    Err(error) => return Err(error.into()),
+                if tool.exited()? {
+                    break;
                 }
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
             Ok(bytes)
         };
@@ -124,21 +170,13 @@ async fn run(mut command: Command, limit: usize, seconds: u64) -> Result<Vec<u8>
             },
             _ = &mut stopped => refuse("external tool cancelled"),
         };
-        let killed = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
-        if let Err(error) = killed
-            && error != rustix::io::Errno::SRCH
-        {
-            return Err(error.into());
-        }
-        // Disarm only AFTER signalling the still-pinned group, BEFORE reaping its
-        // leader. Drop must never signal a numeric PGID after its identity is free.
-        tool.group = None;
+        tool.terminate_owned()?;
         let status = tool.child.wait().await?;
         drop(tool);
         if result.is_ok() && !status.success() {
             return refuse("external verification/download tool failed; no installation performed");
         }
-        result
+        result.map(|bytes| (bytes, inputs))
     });
     let _cleanup_request = stop;
     owner
@@ -146,6 +184,7 @@ async fn run(mut command: Command, limit: usize, seconds: u64) -> Result<Vec<u8>
         .map_err(|_| Error::Refused("external tool cleanup owner failed"))?
 }
 
+#[cfg(target_os = "linux")]
 fn sealed(bytes: &[u8], cancel: &super::Cancel) -> Result<(File, PathBuf)> {
     use rustix::fs::{MemfdFlags, SealFlags, fcntl_add_seals, memfd_create};
     let descriptor = memfd_create(
@@ -173,6 +212,7 @@ fn sealed(bytes: &[u8], cancel: &super::Cancel) -> Result<(File, PathBuf)> {
 
 // gh selects the bundle decoder by suffix. Only a private name is on disk;
 // its target remains the kernel-sealed descriptor, never a mutable byte copy.
+#[cfg(target_os = "linux")]
 struct BundleView {
     // Drop the temporary name while its procfs parent descriptor is still held.
     _temporary: tempfile::TempDir,
@@ -181,6 +221,7 @@ struct BundleView {
     path: PathBuf,
 }
 
+#[cfg(target_os = "linux")]
 impl BundleView {
     fn new(frozen: &Path, original: &Path) -> Result<Self> {
         use rustix::fs::{Mode, OFlags, open, openat, symlinkat};
@@ -279,8 +320,13 @@ pub(super) async fn authenticate(
             .split('-')
             .next()
             .ok_or(Error::Refused("invalid host target"))?;
+        let platform = if target.ends_with("-apple-darwin") {
+            "macos"
+        } else {
+            "linux"
+        };
         let url = format!(
-            "https://github.com/kpihx-labs/kk/releases/download/v{0}/kk-v{0}-linux-{cpu}.tar.gz",
+            "https://github.com/kpihx-labs/kk/releases/download/v{0}/kk-v{0}-{platform}-{cpu}.tar.gz",
             request.version
         );
         tokio::time::timeout(Duration::from_secs(125), download(url, &cancel))
@@ -416,6 +462,7 @@ pub(super) async fn authenticate_bytes(
     verify_snapshot(request, bytes, cancel).await
 }
 
+#[cfg(target_os = "linux")]
 async fn verify_snapshot(
     request: &InstallRequest,
     bytes: Vec<u8>,
@@ -473,11 +520,131 @@ async fn verify_snapshot(
         gh.arg(flag).arg(input_path);
     }
     cancel.check()?;
-    run(gh, 1024 * 1024, 120).await?;
-    drop((frozen, verification_inputs));
+    let (_, inputs) = run_retained(gh, 1024 * 1024, 120, (frozen, verification_inputs)).await?;
+    drop(inputs);
     Ok(bytes)
 }
 
+#[cfg(target_os = "macos")]
+async fn verify_snapshot(
+    request: &InstallRequest,
+    bytes: Vec<u8>,
+    cancel: super::Cancel,
+) -> Result<Vec<u8>> {
+    use super::mac_verifier::VerifierFile;
+    let freezing_cancel = cancel.clone();
+    let (bytes, frozen) = super::worker(move || {
+        let frozen = VerifierFile::new(&bytes, ".bin", &freezing_cancel)?;
+        Ok((bytes, frozen))
+    })
+    .await?;
+    let mut gh = Command::new("gh");
+    gh.env("GH_HOST", "github.com")
+        .env("GH_NO_UPDATE_NOTIFIER", "1")
+        .env_remove("GH_DEBUG")
+        .arg("attestation")
+        .arg("verify")
+        .arg(frozen.path())
+        .args([
+            "--repo",
+            "kpihx-labs/kk",
+            "--signer-workflow",
+            "kpihx-labs/kk/.github/workflows/check.yml",
+            "--source-ref",
+            &format!("refs/tags/v{}", request.version),
+            "--source-digest",
+            &request.commit,
+            "--deny-self-hosted-runners",
+        ]);
+    let mut inputs = Vec::new();
+    for (flag, path, limit) in [
+        ("--bundle", request.bundle.as_ref(), 16 * 1024 * 1024),
+        (
+            "--custom-trusted-root",
+            request.trusted_root.as_ref(),
+            1024 * 1024,
+        ),
+    ] {
+        let Some(path) = path else { continue };
+        let path = path.clone();
+        let input_cancel = cancel.clone();
+        let input = super::worker(move || {
+            let bytes = snapshot(&path, limit, &input_cancel)?;
+            let suffix = if path
+                .extension()
+                .is_some_and(|extension| extension == "json")
+            {
+                ".json"
+            } else {
+                ".jsonl"
+            };
+            VerifierFile::new(&bytes, suffix, &input_cancel)
+        })
+        .await?;
+        gh.arg(flag).arg(input.path());
+        inputs.push(input);
+    }
+    cancel.check()?;
+    let (_, (frozen, inputs)) = run_retained(gh, 1024 * 1024, 120, (frozen, inputs)).await?;
+    super::worker(move || {
+        cancel.check()?;
+        frozen.recheck()?;
+        for input in inputs {
+            input.recheck()?;
+        }
+        Ok(bytes)
+    })
+    .await
+}
+
+#[cfg(target_os = "macos")]
+pub(super) async fn check_abi(archive: &Verified, cancel: super::Cancel) -> Result<()> {
+    let binary = archive
+        .files
+        .get("kk")
+        .ok_or(Error::Refused("missing executable"))?
+        .clone();
+    let target = archive.manifest.target.clone();
+    let (requirements, binary) = super::worker(move || {
+        let requirements = super::macho::inspect(&binary, &target)?;
+        Ok((requirements, binary))
+    })
+    .await?;
+    if archive.manifest.binary_glibc_required.is_some()
+        || archive.manifest.binary_macos_required.as_deref()
+            != Some(requirements.minimum_os.as_str())
+    {
+        return refuse("manifest macOS requirement differs from executable deployment target");
+    }
+    cancel.check()?;
+    let signing_cancel = cancel.clone();
+    let signing_input = super::worker(move || {
+        super::mac_verifier::VerifierFile::new(&binary, ".bin", &signing_cancel)
+    })
+    .await?;
+    let mut codesign = Command::new("/usr/bin/codesign");
+    codesign
+        .args(["--verify", "--strict"])
+        .arg(signing_input.path());
+    let (_, signing_input) = run_retained(codesign, 65536, 30, signing_input).await?;
+    super::worker(move || signing_input.recheck()).await?;
+    let mut sw_vers = Command::new("/usr/bin/sw_vers");
+    sw_vers
+        .arg("-productVersion")
+        .env_remove("SYSTEM_VERSION_COMPAT");
+    let output = run(sw_vers, 128, 10).await?;
+    let version =
+        std::str::from_utf8(&output).map_err(|_| Error::Refused("invalid macOS version output"))?;
+    super::macho::compatible_os(&requirements.minimum_os, version)?;
+    // System dependencies can live solely in dyld's shared cache. File absence
+    // is not a missing-library diagnosis; never execute candidates to probe it.
+    if requirements.needed.is_empty() {
+        return refuse("missing macOS system dependencies");
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 pub(super) async fn check_abi(archive: &Verified, cancel: super::Cancel) -> Result<()> {
     let binary = archive
         .files
@@ -488,7 +655,9 @@ pub(super) async fn check_abi(archive: &Verified, cancel: super::Cancel) -> Resu
     let inspect_target = target.clone();
     let candidate =
         super::worker(move || super::elf::inspect(&binary, &inspect_target, true)).await?;
-    if candidate.glibc != archive.manifest.binary_glibc_required {
+    if archive.manifest.binary_macos_required.is_some()
+        || candidate.glibc != archive.manifest.binary_glibc_required
+    {
         return refuse("manifest libc requirement differs from executable version needs");
     }
     if candidate.needed.is_empty() {
@@ -500,6 +669,7 @@ pub(super) async fn check_abi(archive: &Verified, cancel: super::Cancel) -> Resu
     super::worker(move || check_libraries(candidate, &target, &cache, &cancel)).await
 }
 
+#[cfg(target_os = "linux")]
 fn check_libraries(
     candidate: super::elf::Requirements,
     target: &str,
@@ -623,9 +793,33 @@ fn check_libraries(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn reaped_child_disarms_normal_and_drop_signalling() {
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", "exit 0"])
+            .process_group(0)
+            .kill_on_drop(false);
+        let mut child = command.spawn().unwrap();
+        let group = rustix::process::Pid::from_raw(child.id().unwrap() as i32).unwrap();
+        // Model an exclusive-reaper violation: the identity is already released.
+        child.wait().await.unwrap();
+        let mut tool = Tool {
+            child,
+            group: Some(group),
+        };
+        assert!(
+            matches!(tool.exited(), Err(Error::Refused(message)) if message.contains("ownership lost"))
+        );
+        assert!(tool.group.is_none());
+        assert!(tool.terminate_owned().is_err());
+        assert!(tool.group.is_none());
+        drop(tool); // Neither Tool nor Tokio may signal the old numeric identity.
+    }
 
     #[test]
     fn download_authorities_are_exact_and_trailers_preserve_binary_bodies() {

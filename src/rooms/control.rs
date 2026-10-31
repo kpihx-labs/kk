@@ -9,6 +9,7 @@ use tls_codec::DeserializeBytes as _;
 use tls_codec::{TlsByteVecU16, TlsByteVecU32, TlsDeserializeBytes, TlsSerialize, TlsSize};
 
 const DOMAIN: &[u8] = b"K&K room control proposal v2\0";
+pub mod departure;
 pub mod raft;
 mod state;
 pub use state::{Snapshot, View, Welcome};
@@ -40,6 +41,18 @@ pub struct Proposal {
     subject: TlsByteVecU32,
     welcome: TlsByteVecU32,
     signature: TlsByteVecU16,
+    // Consensus metadata, not a client assertion or part of the signed codec/ID.
+    // Client ingress removes it before fresh validation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[tls_codec(skip)]
+    ordered: Option<OrderedDecision>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OrderedDecision {
+    version: u8,
+    accepted: bool,
 }
 
 impl std::fmt::Debug for Proposal {
@@ -144,7 +157,27 @@ impl Proposal {
             subject: subject.to_vec().into(),
             welcome: welcome.to_vec().into(),
             signature: signature.into(),
+            ordered: None,
         })
+    }
+    pub(crate) fn clear_ordered_decision(&mut self) {
+        self.ordered = None;
+    }
+    /// Leader-only after fresh preflight, or local recovery with an independently
+    /// checked journal hash. Never trust this metadata from a client request.
+    pub(crate) fn with_ordered_decision(mut self, accepted: bool) -> Self {
+        self.ordered = Some(OrderedDecision {
+            version: 1,
+            accepted,
+        });
+        self
+    }
+    pub(crate) fn ordered_decision(&self) -> Result<Option<bool>> {
+        match &self.ordered {
+            None => Ok(None),
+            Some(decision) if decision.version == 1 => Ok(Some(decision.accepted)),
+            Some(_) => Err(Error::Protocol),
+        }
     }
     pub fn room(&self) -> [u8; 32] {
         self.header.room

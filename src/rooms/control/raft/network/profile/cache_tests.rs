@@ -114,7 +114,7 @@ fn result_binding_cardinality_self_filtering_and_cancellation_are_exact() {
 
 #[tokio::test]
 async fn cache_work_uses_owner_cancellation_and_sealed_spawn_drops_reservations() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_support::tempdir().unwrap();
     let identity = Arc::new(Identity::create(&directory.path().join("identity")).unwrap());
     let own = PeerId::from_peer(&identity.peer());
     let peer = PeerId([2; 32]);

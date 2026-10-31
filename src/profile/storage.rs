@@ -37,6 +37,19 @@ fn same_file(a: &File, b: &File) -> Result<bool> {
 }
 
 #[cfg(unix)]
+fn trusted_ancestor(metadata: &std::fs::Metadata) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let uid = rustix::process::geteuid().as_raw();
+    if !metadata.is_dir()
+        || (metadata.uid() != 0 && metadata.uid() != uid)
+        || (metadata.mode() & 0o022 != 0 && !(metadata.uid() == 0 && metadata.mode() & 0o1000 != 0))
+    {
+        return Err(Error::Destination("unsafe profile metadata ancestor"));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
 fn directory(path: &Path) -> Result<File> {
     use rustix::fs::{self, Mode, OFlags};
     use std::{os::unix::fs::MetadataExt, path::Component};
@@ -45,8 +58,35 @@ fn directory(path: &Path) -> Result<File> {
     } else {
         std::env::current_dir()?.join(path)
     };
+    if absolute
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+        || !std::fs::symlink_metadata(&absolute)?.is_dir()
+    {
+        return Err(Error::Destination(
+            "profile metadata directory must be a non-symlink",
+        ));
+    }
+    // Darwin's OS temporary roots commonly traverse root-owned /var or /tmp
+    // aliases. Trust only root-owned ancestor aliases, never a user alias or a
+    // final-component link. Inspect both spellings; follow neither during the
+    // descriptor walk that establishes the actual publication authority.
+    for ancestor in absolute.ancestors().skip(1) {
+        let metadata = std::fs::symlink_metadata(ancestor)?;
+        if metadata.file_type().is_symlink() {
+            if metadata.uid() != 0 {
+                return Err(Error::Destination(
+                    "untrusted profile metadata ancestor alias",
+                ));
+            }
+        } else {
+            trusted_ancestor(&metadata)?;
+        }
+    }
+    let absolute = std::fs::canonicalize(absolute)?;
     let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
     let mut current = File::from(fs::open("/", flags, Mode::empty())?);
+    trusted_ancestor(&current.metadata()?)?;
     for component in absolute.components() {
         let name = match component {
             Component::RootDir | Component::CurDir => continue,
@@ -55,6 +95,7 @@ fn directory(path: &Path) -> Result<File> {
             Component::Prefix(_) => return Err(Error::Denied),
         };
         current = File::from(fs::openat(&current, name, flags, Mode::empty())?);
+        trusted_ancestor(&current.metadata()?)?;
     }
     let metadata = current.metadata()?;
     if metadata.uid() != rustix::process::geteuid().as_raw() || metadata.mode() & 0o777 != 0o700 {
@@ -208,38 +249,14 @@ pub(super) fn publication<T: DeserializeOwned>(_: &Path) -> Result<(Publication,
 
 #[cfg(unix)]
 pub(super) fn read<T: Default + DeserializeOwned>(directory: &Path, name: &str) -> Result<T> {
-    use rustix::{
-        fs::{self, Mode, OFlags},
-        io::Errno,
+    let parent = match self::directory(directory) {
+        Ok(parent) => parent,
+        Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(T::default());
+        }
+        Err(error) => return Err(error),
     };
-    if !directory.exists() {
-        return Ok(T::default());
-    }
-    profile::private_directory(directory, false)?;
-    let mut file = match fs::open(
-        directory.join(name),
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
-        Mode::empty(),
-    ) {
-        Ok(fd) => File::from(fd),
-        Err(Errno::NOENT) => return Ok(T::default()),
-        Err(error) => return Err(error.into()),
-    };
-    owned(&file)?;
-    if file.metadata()?.len() > LIMIT {
-        return Err(Error::Configuration("profile metadata is oversized"));
-    }
-    let mut bytes = Vec::new();
-    Read::by_ref(&mut file)
-        .take(LIMIT + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > LIMIT {
-        return Err(Error::Configuration(
-            "profile metadata grew beyond its limit",
-        ));
-    }
-    serde_json::from_slice(&bytes)
-        .map_err(|_| Error::Configuration("profile metadata is invalid; it was not reset"))
+    read_at(&parent, name)
 }
 
 #[cfg(unix)]
@@ -326,6 +343,64 @@ pub(super) fn update<T: Default + DeserializeOwned + Serialize>(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    fn fixture() -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .unwrap()
+    }
+
+    #[test]
+    fn metadata_read_write_and_publication_share_os_temp_path_authority() {
+        let root = fixture();
+        let profile = root.path().join("profile");
+        let expected = vec!["synthetic".to_owned()];
+        update::<Vec<String>>(&profile, "settings.json", |value| {
+            value.extend(expected.clone());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            read::<Vec<String>>(&profile, "settings.json").unwrap(),
+            expected
+        );
+        let (authority, value) = publication::<Vec<String>>(&profile).unwrap();
+        assert_eq!(value, expected);
+        authority.try_publish(|| ()).unwrap();
+    }
+
+    #[test]
+    fn metadata_reads_refuse_user_ancestor_aliases_like_writes_and_publication() {
+        let root = fixture();
+        let profile = root.path().join("profile");
+        update::<Vec<String>>(&profile, "settings.json", |value| {
+            value.push("retained".to_owned());
+            Ok(())
+        })
+        .unwrap();
+        let alias = root.path().join("alias");
+        symlink(root.path(), &alias).unwrap();
+        if rustix::process::geteuid().as_raw() != 0 {
+            let alias_profile = alias.join("profile");
+            assert!(read::<Vec<String>>(&alias_profile, "settings.json").is_err());
+            assert!(update::<Vec<String>>(&alias_profile, "settings.json", |_| Ok(())).is_err());
+            assert!(publication::<Vec<String>>(&alias_profile).is_err());
+        }
+        assert_eq!(
+            read::<Vec<String>>(&profile, "settings.json").unwrap(),
+            ["retained"]
+        );
+        assert!(!root.path().join("absent").exists());
+        assert!(
+            read::<Vec<String>>(&root.path().join("absent"), "settings.json")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!root.path().join("absent").exists());
+    }
+
     #[test]
     fn completed_writer_unlock_is_not_extended_by_an_inherited_open_file_description() {
         use rustix::fs::{self, FlockOperation, Mode, OFlags};

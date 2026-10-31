@@ -24,6 +24,30 @@ pub mod media;
 mod session;
 pub use session::{Command, InvitationOptions, Reply, ReplyEvent, invite, join, request, serve};
 
+/// Explicit offline public-state repair for pending enrollment only. Normal
+/// resume must still match its local committed Welcome with a fresh authority.
+pub async fn recover_pending_control(profile: &Path, name: &str, expected: [u8; 32]) -> Result<()> {
+    let identity = profile::identity(profile, false)?;
+    let directory = directory(profile, name)?;
+    let _lease = lease(&directory)?;
+    let definition = Definition::load(&directory, &identity)?;
+    if definition.inviter.is_none() {
+        return Err(Error::Configuration(
+            "pending enrollment required for control recovery",
+        ));
+    }
+    let anchor = definition.root.verify_id(definition.room.0)?;
+    let candidate = CryptoMember::open_private(&identity, &anchor, &directory.join("private"))?;
+    if Group::has_membership(&candidate)? {
+        return Err(Error::Configuration(
+            "existing private membership cannot use pending control recovery",
+        ));
+    }
+    drop(candidate);
+    let store = raft::LogStore::open(&directory.join("control"))?;
+    raft::StateMachine::replay_pending(store, &anchor, expected).await
+}
+
 pub struct Options {
     pub bind: Option<SocketAddr>,
     pub reveal: bool,

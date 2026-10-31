@@ -32,19 +32,21 @@ test("unknown, malformed and locked references/status never become empty-history
 });
 
 class Node {
-  constructor(tag, cls, text = "") { this.tag = tag; this.className = cls; this.textContent = text; this.children = []; this.disabled = false; this.isConnected = true; this.value = ""; }
+  constructor(tag, cls, text = "") { this.tag = tag; this.className = cls; this.textContent = text; this.children = []; this.disabled = false; this.isConnected = true; this.value = ""; this.dataset = {}; }
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = children; }
   querySelector() { return this.input; }
+  querySelectorAll(tag) { return this.children.filter(node => node.tag === tag); }
+  contains(node) { return this.children.includes(node); }
 }
 function ui() {
   const calls = [], elements = new Map(), dialogs = [], target = {name:"team", title:"Team", status:{}};
   const ctx = vm.createContext({
-    token:"synthetic session", selected:"team", historyView:null, current:{messages:[]}, room:() => target,
-    memberName:() => "Member", toast() {}, el:(...args) => new Node(...args),
+    token:"synthetic session", selected:"team", historyView:null, current:{messages:[]}, room:() => target, roomActionAllowed:()=>false, foregroundInstance:()=>null, conversationPending:false,
+    memberName:() => "Member", document:{activeElement:null}, toast() {}, el:(...args) => new Node(...args),
     field:(label, name) => { const node = new Node("label", "", label); node.input = new Node("input"); node.input.name = name; return node; },
     $: id => { if (!elements.has(id)) elements.set(id, new Node(id)); return elements.get(id); },
-    modal:(title, controls, submit, handler) => { dialogs.push({title, controls, submit, handler}); },
+    modal:(title, controls, submit, handler) => { ctx.$("dialog").open = true; dialogs.push({title, controls, submit, handler}); },
     api:async (path, body) => { assert.equal(path, "/api/action"); calls.push(body); return {result:body.command.operation === "search" ? {rows:[row(calls.length)], next_after:calls.length, has_more:true, withheld:2} : "Off"}; },
   });
   vm.runInContext(functions, ctx);
@@ -58,6 +60,7 @@ test("opening the panel requests cached status only; Unicode literal paging uses
   const controls = dialogs[0].controls;
   const input = controls.find(node => node.input)?.input; input.value = "雪 %_";
   await elements.get("dialog-form").onsubmit({preventDefault(){}});
+  assert.ok(controls.at(-1).children.some(node=>node.className==="history-record"),"a valid stored page must actually render without swallowed fixture errors");
   assert.equal(calls[1].command.text, "雪 %_"); assert.equal(calls[1].command.after_id, 0);
   input.value = "changed but not submitted";
   const next = controls.find(node => node.textContent === "Next stored page");
@@ -105,4 +108,33 @@ test("closing a pending confirmed mutation does not reopen the history panel aft
   ctx.historyView = null;
   resolve({result:"Off"}); await pending;
   assert.equal(dialogs.length, 2);
+});
+
+test("history pending search disables all mutation and paging controls and rejects duplicate submits", async () => {
+  const {ctx,elements,dialogs}=ui();vm.runInContext("historyDialog()",ctx);await Promise.resolve();
+  let resolve,requests=0;ctx.api=()=>{requests++;return new Promise(done=>{resolve=done;});};
+  const submit=elements.get("dialog-form").onsubmit;
+  const pending=submit({preventDefault(){}});await submit({preventDefault(){}});
+  const controls=dialogs[0].controls.find(node=>node.className==="history-controls");
+  assert.ok(controls.children.every(node=>node.disabled));assert.equal(elements.get("dialog-submit").disabled,true);
+  await controls.children[0].onclick();assert.equal(requests,1);
+  resolve({result:{rows:[],next_after:0,has_more:false,withheld:0}});await pending;
+  assert.ok(controls.children.every(node=>!node.disabled));assert.equal(elements.get("dialog-submit").disabled,false);
+});
+
+test("unchanged history polls preserve rendered text and controls instead of destroying selection",async()=>{
+  const {ctx,dialogs}=ui();vm.runInContext("historyDialog()",ctx);await Promise.resolve();
+  const list=dialogs[0].controls.at(-1),first=list.children[0];
+  vm.runInContext("renderHistoryEntries(historyView)",ctx);assert.equal(list.children[0],first);
+  ctx.current.messages.push({id:1,room:"team",text:"new bounded event",sensitive:false,sender:"peer"});
+  vm.runInContext("renderHistoryEntries(historyView)",ctx);assert.notEqual(list.children[0],first);
+});
+
+test("a failed page invalidates rendering cache so an identical successful retry restores records",async()=>{
+  const {ctx,elements}=ui();vm.runInContext("historyDialog()",ctx);await Promise.resolve();
+  const success=async()=>({result:{rows:[row(1)],next_after:1,has_more:false,withheld:0}});ctx.api=success;
+  const submit=()=>elements.get("dialog-form").onsubmit({preventDefault(){}});
+  await submit();assert.ok(ctx.historyView.list.children.some(node=>node.className==="history-record"));
+  ctx.api=async()=>{throw Error("unavailable");};await submit();assert.equal(ctx.historyView.list.children.length,0);
+  ctx.api=success;await submit();assert.ok(ctx.historyView.list.children.some(node=>node.className==="history-record"));
 });

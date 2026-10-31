@@ -126,6 +126,7 @@ struct Envelope {
 #[derive(Serialize, Deserialize)]
 enum Request {
     Submit(super::super::Proposal),
+    SelfDeparture(super::super::departure::Request),
     ReadBarrier,
     Configuration,
     RoomText(Vec<u8>),
@@ -147,6 +148,7 @@ enum Request {
 enum Response {
     ConversationCapabilities(crate::rooms::conversation::Capabilities),
     Submit(Submission),
+    SelfDeparture(Reply<super::ApplyResult>),
     ReadBarrier(Barrier),
     Configuration(Reply<openraft::StoredMembership<PeerId, Node>>),
     RoomText(DataReply),
@@ -259,10 +261,23 @@ pub(super) async fn submit_local(
 async fn submit_guarded(
     shared: &Shared,
     raft: &Raft<TypeConfig>,
-    proposal: super::super::Proposal,
+    machine: &super::StateMachine,
+    mut proposal: super::super::Proposal,
 ) -> Submission {
+    // Clients cannot certify their own freshness/decision, even on exact retry.
+    proposal.clear_ordered_decision();
     let _write = shared.writes.lock().await;
-    submit_local(raft, proposal).await
+    match applied_barrier(raft).await {
+        Reply::Applied(_) => {}
+        Reply::Forward { leader, node } => return Reply::Forward { leader, node },
+        _ => return Reply::Unavailable,
+    }
+    match machine.preflight(proposal.clone()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(rejected)) => return Reply::Applied(rejected),
+        Err(_) => return Reply::Unavailable,
+    }
+    submit_local(raft, proposal.with_ordered_decision(true)).await
 }
 async fn node_intent_local(
     shared: &Arc<Shared>,
@@ -525,9 +540,10 @@ impl Factory {
     pub(super) async fn submit_direct(
         &self,
         raft: &Raft<TypeConfig>,
+        machine: &super::StateMachine,
         proposal: super::super::Proposal,
     ) -> Submission {
-        submit_guarded(&self.shared, raft, proposal).await
+        submit_guarded(&self.shared, raft, machine, proposal).await
     }
     pub(super) async fn node_direct(
         &self,
@@ -747,6 +763,32 @@ impl Factory {
         self.revoke_files();
         result
     }
+    pub(super) async fn departure(
+        &self,
+        target: PeerId,
+        node: &Node,
+        request: super::super::departure::Request,
+        deadline: Duration,
+    ) -> Result<super::ApplyResult> {
+        transport::validate_duration(deadline, config::MAX_FILE_TIMEOUT)?;
+        let client = Client {
+            shared: Arc::downgrade(&self.shared),
+            target,
+            node: node.clone(),
+        };
+        match client
+            .exchange(Request::SelfDeparture(request), RPCOption::new(deadline))
+            .await?
+        {
+            Response::SelfDeparture(Reply::Applied(result)) => Ok(result),
+            Response::SelfDeparture(Reply::Denied) => Err(Error::Denied),
+            Response::SelfDeparture(Reply::Unavailable | Reply::StateUnavailable) => Err(
+                Error::Node("departure outcome unavailable; inspect before retrying"),
+            ),
+            _ => Err(Error::Protocol),
+        }
+    }
+
     pub async fn room_text(
         &self,
         target: PeerId,
@@ -1061,6 +1103,7 @@ impl Client {
                 Request::Vote(_) => 1,
                 Request::Append(_) => 0,
                 Request::Submit(_) => 0,
+                Request::SelfDeparture(_) => 0,
                 Request::ReadBarrier => 1,
                 Request::Configuration => 1,
                 Request::RoomText(_) => -1,
@@ -1268,7 +1311,7 @@ async fn serve_connection(
                     #[cfg(test)]
                     file::trace(&shared, send.id(), "envelope parsed");
                     let deadline = match envelope.request {
-                        Request::RoomFile | Request::FileFetch(_) => config::DEFAULT_FILE_TIMEOUT,
+                        Request::RoomFile | Request::FileFetch(_) | Request::SelfDeparture(_) => config::DEFAULT_FILE_TIMEOUT,
                         Request::ProfileGet | Request::ConversationCapabilities => config::ROOM_PROFILE_TIMEOUT,
                         _ => config::DEFAULT_TIMEOUT,
                     };
@@ -1367,10 +1410,25 @@ async fn serve_connection(
                                 };
                                 Response::RoomText(result)
                             },
+                            Request::SelfDeparture(request) => {
+                                if request.member() != id { return Err(Error::Authentication); }
+                                drop(_permit);
+                                let _data = shared.room_data.clone().try_acquire_owned().map_err(|_| Error::Denied)?;
+                                let port = shared.room_port.read().map_err(|_| Error::Protocol)?.clone();
+                                let result = match port {
+                                    Some(handle) => match handle.accept_departure_request(request, deadline).await {
+                                        Ok(result) => Reply::Applied(result),
+                                        Err(Error::Denied | Error::Revoked | Error::Authentication) => Reply::Denied,
+                                        Err(_) => Reply::Unavailable,
+                                    },
+                                    None => Reply::StateUnavailable,
+                                };
+                                Response::SelfDeparture(result)
+                            },
                             Request::ReadBarrier => Response::ReadBarrier(barrier_local(&raft).await),
                             Request::Submit(proposal) => {
                                 if proposal.author() != id.0 { return Err(Error::Authentication); }
-                                Response::Submit(submit_guarded(&shared, &raft, proposal).await)
+                                Response::Submit(submit_guarded(&shared, &raft, &machine, proposal).await)
                             },
                             Request::Append(request) => {
                                 if request.vote.leader_id.node_id != id { return Err(Error::Authentication); }

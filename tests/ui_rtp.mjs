@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Packetizer, parse, VideoFrames, dimensions } from "../src/ui/assets/rtp.js";
+import { Packetizer, parse, VideoFrames, dimensions, RtpClock } from "../src/ui/assets/rtp.js";
 
 function chunk(bytes, timestamp = 0) { return { byteLength: bytes.length, timestamp, copyTo(target) { target.set(bytes); } }; }
 function keyframe(length = 3000) {
@@ -33,4 +33,17 @@ test("incomplete video frames and malformed descriptors stay bounded", () => {
   assert.equal(frames.push({ ssrc: 1, timestamp: 1, sequence: 1, marker: true, payload: new Uint8Array([0x80]) }), null);
   assert.equal(dimensions(keyframe(), 320, 200), false);
   const invalid = keyframe(); invalid[3] = 0; assert.equal(dimensions(invalid, 640, 360), false);
+});
+
+test("RTP playback clock survives long meetings and repeated timestamp wraps without rewinding", () => {
+  for (const rate of [48000, 90000]) {
+    const clock = new RtpClock(rate), origin = 0xfffffff0;
+    assert.equal(clock.next(origin), 0);
+    for (let hour = 1; hour <= 80; hour++) {
+      const stamp = (origin + hour * rate * 3600) >>> 0;
+      assert.equal(clock.next(stamp), hour * 3600 * 1000000);
+      assert.equal(clock.next(stamp), null);
+      assert.equal(clock.next((stamp - rate) >>> 0), null);
+    }
+  }
 });

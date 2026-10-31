@@ -5,8 +5,10 @@ import argparse
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import re
+import stat
 import tarfile
 import xml.etree.ElementTree as ET
 
@@ -31,16 +33,24 @@ def checked_file(path, record=None, limit=MAX_PAYLOAD):
     """
     if not path.is_absolute() or path.is_symlink() or not path.is_file():
         raise ValueError("expected absolute ordinary trusted fixture input")
-    if path.stat().st_size > limit:
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > limit:
+            raise ValueError("fixture input too large or non-ordinary")
+        with os.fdopen(descriptor, "rb", closefd=False) as source:
+            data = source.read(limit + 1)
+    finally:
+        os.close(descriptor)
+    if len(data) > limit:
         raise ValueError("fixture input too large")
-    data = path.read_bytes()
     if record is not None and (len(data) != record["bytes"]
                                or hashlib.sha256(data).hexdigest() != record["sha256"]):
         raise ValueError("prepared kit input changed")
     return data
 
 
-def kit_inputs(directory, prefix):
+def kit_inputs(directory, prefix, manifest=None):
     """Load public kit metadata and digest-bound inputs before accessing a guest.
 
     Args:
@@ -54,7 +64,7 @@ def kit_inputs(directory, prefix):
         kit_inputs(Path('/tmp/kk-kit'), 'previous')[0]['repository']
         -> 'kpihx-labs/kk'
     """
-    record = json.loads(checked_file(directory / "kit.json", limit=1024 * 1024))
+    record = json.loads(checked_file(directory / "kit.json", manifest, limit=1024 * 1024))
     if not isinstance(record, dict) or record.get("repository") != "kpihx-labs/kk":
         raise ValueError("unexpected kit repository")
     for key, pattern in (("version", r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?"),
@@ -67,6 +77,21 @@ def kit_inputs(directory, prefix):
         if not isinstance(item["name"], str) or Path(item["name"]).name != item["name"]:
             raise ValueError("non-basename kit member")
         files[prefix + "/" + key] = (checked_file(directory / item["name"], item), 0o400)
+    if "bootstrap" in record:
+        seen = set()
+        for key in ("helper", "notices", "entrypoint"):
+            for member in (key, key + "_bundle"):
+                item = record["bootstrap"][member]
+                name = item["name"]
+                if (not isinstance(name, str) or Path(name).name != name
+                        or name in ("", ".", "..") or name in seen):
+                    raise ValueError("unsafe or duplicate bootstrap member")
+                seen.add(name)
+                limit = 16 * 1024 * 1024 if member.endswith("_bundle") else (
+                    1024 * 1024 if member == "entrypoint" else 128 * 1024 * 1024)
+                files[prefix + "/bootstrap/" + name] = (checked_file(directory / name, item, limit), 0o400)
+            if record["bootstrap"][key + "_bundle"]["name"] != record["bootstrap"][key]["name"] + ".jsonl":
+                raise ValueError("bootstrap bundle basename differs from prepared subject")
     return record, files
 
 
@@ -83,19 +108,46 @@ def exercise(arguments):
     if virsh("domstate", arguments.guest).strip() != "running":
         raise ValueError("start the declared guest explicitly before this gate")
     record, inputs = kit_inputs(arguments.kit, "inputs")
-    files = {"tools/helper": (checked_file(arguments.helper), 0o500),
-              "tools/gh": (checked_file(arguments.gh), 0o500)}
+    files = {"tools/gh": (checked_file(arguments.gh), 0o500)}
+    bootstrap = getattr(arguments, "bootstrap", None)
+    if bootstrap is not None:
+        files["tools/install.sh"] = (checked_file(bootstrap, limit=1024 * 1024), 0o400)
     files.update(inputs)
     previous_path = getattr(arguments, "previous_kit", None)
     previous_sha = getattr(arguments, "expected_previous_binary_sha256", None)
     previous = None
+    previous_manifest = None
+    link = record.get("previous_kit")
+    if link is not None:
+        if (not isinstance(link, dict) or link.get("directory") != "previous"
+                or not isinstance(link.get("manifest"), dict) or link["manifest"].get("name") != "kit.json"):
+            raise ValueError("invalid assembled previous-kit link")
+        nested = arguments.kit / "previous"
+        if nested.is_symlink() or (previous_path is not None and previous_path != nested):
+            raise ValueError("previous kit differs from the assembled link")
+        previous_path, previous_manifest = nested, link["manifest"]
     if previous_path is not None or previous_sha is not None:
         if previous_path is None or not isinstance(previous_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", previous_sha):
             raise ValueError("previous kit and explicit previous binary SHA-256 must be supplied together")
-        previous, previous_files = kit_inputs(previous_path, "previous")
+        previous, previous_files = kit_inputs(previous_path, "previous", previous_manifest)
+        if link is not None and (previous["version"] != link.get("version") or previous["commit"] != link.get("commit")):
+            raise ValueError("previous kit selectors differ from the assembled link")
         if previous["version"] == record["version"] or previous_sha == arguments.expected_binary_sha256:
             raise ValueError("inter-version qualification requires distinct versions and binary bytes")
         files.update(previous_files)
+    signed_bootstrap = bootstrap is not None and "bootstrap" in record and (previous is None or "bootstrap" in previous)
+    authenticate_entrypoint = bootstrap is not None and "bootstrap" in record
+    if authenticate_entrypoint and hashlib.sha256(files["tools/install.sh"][0]).hexdigest() != record["bootstrap"]["entrypoint"]["sha256"]:
+        raise ValueError("selected bootstrap differs from the prepared current entrypoint")
+    if not signed_bootstrap:
+        helper = getattr(arguments, "helper", None)
+        if helper is None:
+            raise ValueError("a trusted --helper is required without complete signed bootstrap inputs")
+        files["tools/helper"] = (checked_file(helper), 0o500)
+    if bootstrap is not None:
+        for source, expected in ((record, arguments.expected_binary_sha256), (previous, previous_sha)):
+            if source and "bootstrap" in source and source["bootstrap"]["helper"]["sha256"] != expected:
+                raise ValueError("bootstrap helper differs from the independently selected binary SHA-256")
     if sum(len(data) for data, _ in files.values()) > MAX_PAYLOAD:
         raise ValueError("fixture payload too large")
     payload = io.BytesIO()
@@ -125,15 +177,18 @@ def exercise(arguments):
     prefix = directory + "/prefix"
     environment = ["/usr/sbin/runuser", "-u", "nobody", "--", "/usr/bin/env",
                    "-u", "GH_TOKEN", "-u", "GITHUB_TOKEN", "-u", "GH_DEBUG",
-                   "HOME=" + directory + "/home", "GH_CONFIG_DIR=" + directory + "/gh-config",
+                    "HOME=" + directory + "/home", "GH_CONFIG_DIR=" + directory + "/gh-config", "GH_HOST=github.com",
                    "TMPDIR=" + directory + "/tmp",
                    "GH_NO_UPDATE_NOTIFIER=1", "GH_PAGER=cat", "PAGER=cat",
                    "PATH=" + directory + "/tools:/usr/sbin:/usr/bin:/sbin:/bin"]
     installer = directory + "/tools/helper"
     report = {"guest": arguments.guest, "uid": uid, "fixture": directory,
-               "kit_source_commit": record["commit"],
-               "previous_source_commit": previous["commit"] if previous else None,
-               "operations": []}
+                "kit_source_commit": record["commit"],
+                "previous_source_commit": previous["commit"] if previous else None,
+                "entrypoint": "signed local bootstrap" if signed_bootstrap else ("shell bootstrap" if bootstrap else "trusted helper"),
+                "trusted_tool_sha256": {name: hashlib.sha256(data).hexdigest()
+                                        for name, (data, _) in files.items() if name.startswith("tools/")},
+                "verifications": [], "operations": []}
     mac = peers[arguments.guest]["mac"]
     physical = virsh("domif-getlink", arguments.guest, mac).split()
     if len(physical) != 2 or physical[0].lower() != mac or physical[1] not in ("up", "down"):
@@ -147,7 +202,44 @@ def exercise(arguments):
         if "UP" in isolated["flags"]:
             raise RuntimeError("guest NIC did not go down")
         report["network_isolation"] = {"interface": interface, "flags": isolated["flags"],
-                                       "other_interfaces": ["lo"], "hypervisor_link": "down"}
+                                        "other_interfaces": ["lo"], "hypervisor_link": "down"}
+        if authenticate_entrypoint:
+            result = guest.run(*environment, directory + "/tools/gh", "attestation", "verify",
+                               directory + "/tools/install.sh", "--repo", "kpihx-labs/kk",
+                               "--signer-workflow", "kpihx-labs/kk/.github/workflows/check.yml",
+                               "--source-ref", "refs/tags/v" + record["version"], "--source-digest", record["commit"],
+                               "--deny-self-hosted-runners", "--bundle", directory + "/inputs/bootstrap/install.sh.jsonl",
+                               "--custom-trusted-root", directory + "/inputs/trusted_root", timeout=180, check=False)
+            report["entrypoint_attestation"] = result
+            if result["code"]:
+                raise RuntimeError("current bootstrap entrypoint attestation failed")
+        for source, namespace in ([(previous, "previous")] if previous else []) + [(record, "inputs")]:
+            verification_prefix = directory + "/verify-" + namespace
+            if guest.run("/usr/bin/test", "-e", verification_prefix, check=False)["code"] != 1:
+                raise RuntimeError("verification prefix must initially be absent")
+            command = ["--version", source["version"], "--commit", source["commit"],
+                       "--prefix", verification_prefix, "--archive", directory + "/" + namespace + "/archive",
+                       "--bundle", directory + "/" + namespace + "/bundle",
+                       "--trusted-root", directory + "/" + namespace + "/trusted_root", "--verify-only"]
+            if bootstrap is not None and "bootstrap" in source:
+                executable = ["/bin/sh", directory + "/tools/install.sh"]
+                command.extend(["--bootstrap-dir", directory + "/" + namespace + "/bootstrap"])
+            else:
+                executable = [installer, "install"]
+            result = guest.run(*environment, *executable, *command, timeout=300, check=False)
+            observed_verification = {"version": source["version"], **result}
+            report["verifications"].append(observed_verification)
+            if result["code"] or len(result["out"]) > 16384:
+                raise RuntimeError("offline verify-only failed")
+            verified = json.loads(result["out"])
+            if (verified.get("activated") is not False or verified.get("version") != source["version"]
+                    or verified.get("commit") != source["commit"]
+                    or verified.get("archive_sha256") != source["archive"]["sha256"]):
+                raise RuntimeError("verify-only result differs from the prepared archive selectors")
+            if guest.run("/usr/bin/test", "-e", verification_prefix, check=False)["code"] != 1:
+                raise RuntimeError("verify-only created or modified its absent prefix")
+            observed_verification["result"] = verified
+            observed_verification["prefix_remained_absent"] = True
         plan = [("fresh", "install", record, "inputs", arguments.expected_binary_sha256),
                 ("reinstall", "install", record, "inputs", arguments.expected_binary_sha256),
                 ("same-version rollback", "rollback", record, "inputs", arguments.expected_binary_sha256)]
@@ -162,16 +254,31 @@ def exercise(arguments):
                        "--trusted-root", directory + "/" + namespace + "/trusted_root"]
             if operation == "install":
                 command.extend(["--commit", source["commit"], "--archive", directory + "/" + namespace + "/archive"])
+            executable = [installer]
+            if bootstrap is not None:
+                # Exercise the actual shell entrypoint, not a reconstructed helper
+                # invocation. Explicit local helper/archive/bundle/roots forbid
+                # bootstrap downloads while the virtual cable is disconnected.
+                command = command[1:]
+                if operation == "rollback":
+                    command.append("--rollback")
+                if "bootstrap" in source:
+                    command.extend(["--bootstrap-dir", directory + "/" + namespace + "/bootstrap"])
+                    if operation == "rollback":
+                        command.extend(["--commit", source["commit"]])
+                else:
+                    command.extend(["--helper", installer])
+                executable = ["/bin/sh", directory + "/tools/install.sh"]
             print("Offline operation: " + name, flush=True)
-            result = guest.run(*environment, installer, *command, timeout=300, check=False)
+            result = guest.run(*environment, *executable, *command, timeout=300, check=False)
             observed = {"operation": name, "expected_sha256": expected_sha, **result}
             report["operations"].append(observed)
             if result["code"]:
                 raise RuntimeError("offline operation failed: " + name)
             observed["installed_sha256"] = guest.run("/usr/bin/sha256sum", prefix + "/bin/kk")["out"].split()[0]
-            observed["installed_version"] = guest.run(*environment, prefix + "/bin/kk", "--version")["out"].strip()
             if observed["installed_sha256"] != expected_sha:
                 raise RuntimeError("installed binary differs from the authenticated expected bytes")
+            observed["installed_version"] = guest.run(*environment, prefix + "/bin/kk", "--version")["out"].strip()
             if observed["installed_version"] != "kk " + source["version"]:
                 raise RuntimeError("installed binary reports a different version")
         report["installed_sha256"] = observed["installed_sha256"]
@@ -194,8 +301,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--guest", required=True)
     parser.add_argument("--kit", type=Path, required=True)
-    parser.add_argument("--helper", type=Path, required=True)
+    parser.add_argument("--helper", type=Path,
+                        help="explicitly trusted native helper; optional with complete signed bootstrap kits and --bootstrap")
     parser.add_argument("--gh", type=Path, required=True)
+    parser.add_argument("--bootstrap", type=Path,
+                        help="optional explicitly trusted install.sh to exercise instead of calling the helper directly")
     parser.add_argument("--expected-binary-sha256", required=True)
     parser.add_argument("--previous-kit", type=Path)
     parser.add_argument("--expected-previous-binary-sha256")

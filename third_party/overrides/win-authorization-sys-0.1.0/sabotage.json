@@ -1,0 +1,225 @@
+{
+  "package": "win-authorization-sys",
+  "description": "Sabotages for win-authorization-sys's allocation-failure paths and SDDL conversions, which were windows-namespace-request-sys's security module until DI-14.8.1 moved them. An allocation that fails is an error the caller receives, never a panic or an abort. Run with tools/run-sabotage.ps1; see tools/README-sabotage.md for the format.",
+  "notCoveredHere": "SecurityDescriptor::try_clone's failure is a declared blind spot (see its survives entry): AlignedBuf::try_clone allocates exactly the size of a buffer that already exists, so no test can make it fail. The failures of the two descriptor allocations, in capture and in conversion, are reached through their shared function, `allocate`, which the tests call with a length no machine has; the OS names the real length, so no descriptor can be made to ask for it. The descriptor's own parsing by Windows is not covered: what Windows accepts is Windows' to say.",
+  "testArgs": ["-p", "win-authorization-sys", "--lib", "--locked"],
+  "sabotages": [
+    {
+      "name": "NR-3: a descriptor allocation failure is reported as an invalid copy",
+      "file": "src/security.rs",
+      "expect": "caught",
+      "why": "An allocation failure is its own failure, SecurityCaptureFailure::Allocate: an invalid copy would send a caller looking for a malformed descriptor.",
+      "find": ["            SecurityCaptureFailure::Allocate,\n            io::Error::from_raw_os_error("],
+      "replace": ["            SecurityCaptureFailure::InvalidCopy,\n            io::Error::from_raw_os_error("]
+    },
+    {
+      "name": "NR-3: a descriptor allocation failure carries the wrong code",
+      "file": "src/security.rs",
+      "expect": "caught",
+      "why": "The error's raw code is ERROR_NOT_ENOUGH_MEMORY, which a caller who funnels everything through raw_os_error reads as 'out of memory'.",
+      "find": ["                i32::try_from(ERROR_NOT_ENOUGH_MEMORY)\n"],
+      "replace": ["                i32::try_from(ERROR_INSUFFICIENT_BUFFER)\n"]
+    },
+    {
+      "name": "NR-3: a copy of security attributes drops the descriptor",
+      "file": "src/security.rs",
+      "expect": "caught",
+      "why": "A copy that kept the inheritance choice but not the descriptor would open files with different security than the original.",
+      "find": ["            descriptor: self\n                .descriptor\n                .as_ref()\n                .map(SecurityDescriptor::try_clone)\n                .transpose()?,\n"],
+      "replace": ["            descriptor: None,\n"]
+    },
+    {
+      "name": "NR-3: a descriptor alignment that is not a power of two is refused by the build",
+      "file": "src/security.rs",
+      "expect": "refused-by-build",
+      "buildError": "SELF_RELATIVE_ALIGNMENT.is_power_of_two()",
+      "why": "AlignedBuf refuses such an alignment and `allocate` reports every refusal as an allocation failure, so a bad constant would read as out of memory on every call. The constant is asserted where it is defined.",
+      "find": ["const SELF_RELATIVE_ALIGNMENT: usize = align_of::<u32>();\n"],
+      "replace": ["const SELF_RELATIVE_ALIGNMENT: usize = 3;\n"]
+    },
+    {
+      "name": "NR-3: BLIND SPOT: a failed copy of a descriptor is reported as an invalid copy",
+      "file": "src/security.rs",
+      "expect": "survives",
+      "why": "Declared blind spot, not a control. SecurityDescriptor::try_clone allocates exactly the size of a buffer that already exists, so no test can make it fail; the failure it would report is the shared `allocation()`, whose result the other entries pin.",
+      "find": ["            .map(|blob| Self { blob })\n            .map_err(|_| SecurityCaptureError::allocation())\n"],
+      "replace": ["            .map(|blob| Self { blob })\n            .map_err(|_| SecurityCaptureError::last_os(SecurityCaptureFailure::InvalidCopy))\n"]
+    },
+    {
+      "name": "NR-3.1: a string is parsed at a revision Windows does not define",
+      "file": "src/security/sddl.rs",
+      "expect": "caught",
+      "why": "SDDL_REVISION_1 is the one revision there is; any other is refused, so every string would be.",
+      "find": ["                sddl.as_terminated_ptr(),\n                SDDL_REVISION_1,\n"],
+      "replace": ["                sddl.as_terminated_ptr(),\n                0,\n"]
+    },
+    {
+      "name": "NR-3.1: a descriptor is written at a revision Windows does not define",
+      "file": "src/security/sddl.rs",
+      "expect": "caught",
+      "why": "As for parsing: the revision names the text format, and only one is defined.",
+      "find": ["                self.as_ptr().cast_mut(),\n                SDDL_REVISION_1,\n"],
+      "replace": ["                self.as_ptr().cast_mut(),\n                0,\n"]
+    },
+    {
+      "name": "NR-3.1: a string with an interior NUL is passed to Windows",
+      "file": "src/security/sddl.rs",
+      "expect": "caught",
+      "why": "Windows reads up to the NUL, so the string would be accepted as a different, shorter descriptor than it says.",
+      "find": ["        if sddl.has_interior_nul() {\n"],
+      "replace": ["        if false {\n"]
+    },
+    {
+      "name": "NR-3.1: the interior-NUL refusal carries a different code",
+      "file": "src/security/sddl.rs",
+      "expect": "caught",
+      "why": "The refusal is made here, not by Windows, and its code is ERROR_INVALID_PARAMETER, which a caller reads as it would Windows' own for a malformed string.",
+      "find": ["                Win32Error::from_code(ERROR_INVALID_PARAMETER).to_io_error(),\n"],
+      "replace": ["                Win32Error::from_code(ERROR_INVALID_PARAMETER + 1).to_io_error(),\n"]
+    },
+    {
+      "name": "NR-3.1: a string Windows refuses is reported as a failure to write one",
+      "file": "src/security/sddl.rs",
+      "expect": "caught",
+      "why": "The two directions have their own failure, which a caller tells apart.",
+      "find": ["                SecurityCaptureFailure::InvalidSddl,\n            ));\n"],
+      "replace": ["                SecurityCaptureFailure::ToSddl,\n            ));\n"]
+    },
+    {
+      "name": "NR-3.1: BLIND SPOT: a descriptor Windows refuses to write is reported as a refused string",
+      "file": "src/security/sddl.rs",
+      "expect": "survives",
+      "why": "Declared blind spot, not a control. No descriptor and mask were found that Windows refuses to write, so the failure's kind cannot be reached from a test; the code it carries is read the same way as for parsing, which the other entries pin.",
+      "find": ["                SecurityCaptureFailure::ToSddl,\n            ));\n"],
+      "replace": ["                SecurityCaptureFailure::InvalidSddl,\n            ));\n"]
+    },
+    {
+      "name": "NR-3.1: the mask asked for is not the mask passed",
+      "file": "src/security/sddl.rs",
+      "expect": "caught",
+      "why": "The mask is which parts of the descriptor are written; passing another writes the wrong parts.",
+      "find": ["                information.bits(),\n"],
+      "replace": ["                SecurityInformation::DACL.bits(),\n"]
+    },
+    {
+      "name": "NR-3.1: the text includes its terminator",
+      "file": "src/security/sddl.rs",
+      "expect": "caught",
+      "why": "The text is the string and no more; a NUL on its end is a string no one wrote, and the reported length is not what tells it (it was measured to vary).",
+      "find": ["        let units = unsafe { slice::from_raw_parts(text, count) };\n"],
+      "replace": ["        let units = unsafe { slice::from_raw_parts(text, count + 1) };\n"]
+    },
+    {
+      "name": "NR-3.1: the text loses its last character",
+      "file": "src/security/sddl.rs",
+      "expect": "caught",
+      "why": "The other half: a count one short cuts the string, which a length that does not count the terminator would do.",
+      "find": ["        let units = unsafe { slice::from_raw_parts(text, count) };\n"],
+      "replace": ["        let units = unsafe { slice::from_raw_parts(text, count - 1) };\n"]
+    },
+    {
+      "name": "NR-3.1: the group is named as the owner",
+      "file": "src/security/sddl.rs",
+      "expect": "caught",
+      "why": "Each part has its own bit, and the names are the values Windows defines.",
+      "find": ["    pub const GROUP: Self = Self(GROUP_SECURITY_INFORMATION);\n"],
+      "replace": ["    pub const GROUP: Self = Self(GROUP_SECURITY_INFORMATION | OWNER_SECURITY_INFORMATION);\n"]
+    },
+    {
+      "name": "NR-3.1: a selection contains only what overlaps it",
+      "file": "src/security/sddl.rs",
+      "expect": "caught",
+      "why": "A selection contains another when every bit of it is set, and everything contains none.",
+      "find": ["        self.0 & other.0 == other.0\n"],
+      "replace": ["        self.0 & other.0 != 0\n"]
+    },
+    {
+      "name": "NR-3.1: BLIND SPOT: the memory Windows allocated is not freed",
+      "file": "src/security/sddl.rs",
+      "expect": "survives",
+      "why": "Declared blind spot, not a control. A leak of this size is not observable from a test; the free is read from the code, which frees on every path through a guard.",
+      "find": ["            unsafe { LocalFree(self.0) };\n"],
+      "replace": ["            unsafe { LocalFree(ptr::null_mut()) };\n"]
+    },
+    {
+      "name": "NR-3.1: control, the null check written as a comparison of the address",
+      "file": "src/security/sddl.rs",
+      "expect": "survives",
+      "why": "A control: a pointer is null when its address is zero, so the file changes and no behaviour. A sweep that reports it caught is reporting everything caught and proves nothing.",
+      "find": ["        if !self.0.is_null() {\n"],
+      "replace": ["        if self.0.addr() != 0 {\n"]
+    },
+    {
+      "name": "DI-14.8.2: a refused query is reported as success",
+      "file": "src/security/query.rs",
+      "expect": "caught",
+      "why": "Windows answers with its own code and the descriptor is only valid when that is success; a query that read nothing must not become an empty descriptor.",
+      "find": ["    if status != ERROR_SUCCESS {\n"],
+      "replace": ["    if status == ERROR_INVALID_DATA {\n"]
+    },
+    {
+      "name": "DI-14.8.2: a refused query carries a code that is not Windows'",
+      "file": "src/security/query.rs",
+      "expect": "caught",
+      "why": "The caller acts on the code Windows refused with; access denied and a bad parameter are different answers.",
+      "find": ["            Win32Error::from_code(status).to_io_error(),\n"],
+      "replace": ["            Win32Error::from_code(ERROR_INVALID_DATA).to_io_error(),\n"]
+    },
+    {
+      "name": "DI-14.8.2: the selection asked for is not the selection passed",
+      "file": "src/security/query.rs",
+      "expect": "caught",
+      "why": "Which parts are read is the caller's choice; reading the DACL whatever was asked for hands back parts that were not selected.",
+      "find": ["            information.bits(),\n"],
+      "replace": ["            SecurityInformation::DACL.bits(),\n"]
+    },
+    {
+      "name": "DI-14.8.2: the kind of object asked for is not the kind passed",
+      "file": "src/security/query.rs",
+      "expect": "caught",
+      "why": "The kind goes to Windows as named: a kind Windows refuses must still be refused, and not replaced by one it accepts.",
+      "find": ["            object_type.as_raw(),\n"],
+      "replace": ["            ObjectType::FILE.as_raw(),\n"]
+    },
+    {
+      "name": "DI-14.8.2: the file kind names the kernel object kind's value",
+      "file": "src/security/query.rs",
+      "expect": "caught",
+      "why": "Each kind is the Win32 value it is named for; the constants are what a caller passes to Windows.",
+      "find": ["    pub const FILE: Self = Self(SE_FILE_OBJECT);\n"],
+      "replace": ["    pub const FILE: Self = Self(SE_KERNEL_OBJECT);\n"]
+    },
+    {
+      "name": "review: a self-relative descriptor is copied by the length Windows reports",
+      "file": "src/security.rs",
+      "expect": "caught",
+      "why": "The reported length counts the parts and says nothing about where they are: with a shared SID the copy reads past the source (the guard page faults), and with a gap it names a part outside itself. This is the code the review found.",
+      "find": ["            unsafe { Self::rebuild_self_relative(descriptor) }?\n"],
+      "replace": ["            {\n                let length = unsafe { windows_sys::Win32::Security::GetSecurityDescriptorLength(descriptor) } as usize;\n                let mut blob = allocate(length)?;\n                unsafe { ptr::copy_nonoverlapping(descriptor.cast::<u8>(), blob.as_mut_ptr(), length) };\n                blob\n            }\n"]
+    },
+    {
+      "name": "review: the safe query passes every kind",
+      "file": "src/security/query.rs",
+      "expect": "caught",
+      "why": "A kind that does not match the handle is not always refused by Windows; the safe entry must refuse it before the call.",
+      "find": ["    if !object_type.reads_any_handle() {\n"],
+      "replace": ["    if false && !object_type.reads_any_handle() {\n"]
+    },
+    {
+      "name": "review: the share kind is counted among those that read any handle",
+      "file": "src/security/query.rs",
+      "expect": "caught",
+      "why": "LMSHARE with a file handle was measured faulting; the set the safe entry passes is the measured one and nothing more.",
+      "find": ["            SE_FILE_OBJECT | SE_KERNEL_OBJECT | SE_WINDOW_OBJECT | SE_UNKNOWN_OBJECT_TYPE\n"],
+      "replace": ["            SE_FILE_OBJECT | SE_KERNEL_OBJECT | SE_WINDOW_OBJECT | SE_UNKNOWN_OBJECT_TYPE | SE_LMSHARE\n"]
+    },
+    {
+      "name": "review: control -- the kinds that read any handle are listed in another order",
+      "file": "src/security/query.rs",
+      "expect": "survives",
+      "why": "Control. The same set, so the classification and refusal tests must not fire on it.",
+      "find": ["            SE_FILE_OBJECT | SE_KERNEL_OBJECT | SE_WINDOW_OBJECT | SE_UNKNOWN_OBJECT_TYPE\n"],
+      "replace": ["            SE_UNKNOWN_OBJECT_TYPE | SE_WINDOW_OBJECT | SE_KERNEL_OBJECT | SE_FILE_OBJECT\n"]
+    }
+  ]
+}

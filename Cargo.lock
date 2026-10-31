@@ -2006,6 +2006,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "io-buffers"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea876d0acdb5e4846b69a92433dc39eec0eb6fd1f041189effc51c98facd5fd8"
+
+[[package]]
 name = "io_tee"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2091,6 +2097,7 @@ dependencies = [
  "image",
  "mdns-sd",
  "nix 0.31.3",
+ "object",
  "opaque-ke",
  "openmls",
  "openmls_basic_credential",
@@ -2117,6 +2124,8 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tower",
+ "win-authorization-sys",
+ "windows-namespace-request-sys",
  "x509-parser",
  "zeroize",
  "zip",
@@ -2682,6 +2691,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "object"
+version = "0.39.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "oid-registry"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2730,8 +2748,6 @@ dependencies = [
 [[package]]
 name = "openmls"
 version = "0.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce4173f914cbc2dd28d9499f19e92f3e1bfebd9eea1607889924a77ca63d3ffc"
 dependencies = [
  "log",
  "openmls_serialization_helpers",
@@ -4675,6 +4691,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "win-authorization-sys"
+version = "0.1.0"
+dependencies = [
+ "io-buffers",
+ "win-error-codes",
+ "windows-sys 0.61.2",
+ "wtf-string",
+]
+
+[[package]]
+name = "win-error-codes"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c07f1170435fb85c67f974ef6cb2df831a025a366ffb407c70a044e3d366439"
+
+[[package]]
+name = "win-shared-os-owned-handle"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e2b59af67831285aa278b195c524e8a9d1532c90be9cc9c91e7bebf43561218"
+
+[[package]]
 name = "winapi-util"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4723,6 +4761,19 @@ name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
+
+[[package]]
+name = "windows-namespace-request-sys"
+version = "0.5.1"
+dependencies = [
+ "io-buffers",
+ "tokio",
+ "win-authorization-sys",
+ "win-error-codes",
+ "win-shared-os-owned-handle",
+ "windows-sys 0.61.2",
+ "wtf-string",
+]
 
 [[package]]
 name = "windows-result"
@@ -4856,6 +4907,15 @@ name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
+
+[[package]]
+name = "wtf-string"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "395437ce07c297d776d3ca78e4d2a5cba9f41d74791947746b01737eca5e03d2"
+dependencies = [
+ "windows-core",
+]
 
 [[package]]
 name = "x-wing"

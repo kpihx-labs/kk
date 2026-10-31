@@ -136,7 +136,7 @@ mod tests {
     use crate::rooms::{Grant, Rights, RootBundle, control::Proposal, mls::CryptoMember};
     #[test]
     fn self_address_is_bound_to_configured_device_purpose_room_and_prior_configuration() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_support::tempdir().unwrap();
         let owner = Identity::create(&directory.path().join("owner")).unwrap();
         let device = Identity::create(&directory.path().join("device")).unwrap();
         let root = RootBundle::create(&owner, "Node address authorization")
@@ -180,7 +180,7 @@ mod tests {
     }
     #[test]
     fn device_signature_context_and_current_invite_rights_bind_learner_intent() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_support::tempdir().unwrap();
         let a = Identity::create(&directory.path().join("a")).unwrap();
         let b = Identity::create(&directory.path().join("b")).unwrap();
         let c = Identity::create(&directory.path().join("c")).unwrap();

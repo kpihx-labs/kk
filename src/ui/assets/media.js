@@ -1,8 +1,15 @@
-import { Packetizer, parse, VideoFrames, dimensions } from "/rtp.js";
+import { Packetizer, parse, VideoFrames, dimensions, RtpClock } from "/rtp.js";
 
 export function setupMedia(ui) {
   const sessions = new Map();
+  const videoQualities = [["Low bandwidth / 256 kbit/s", 256000], ["Balanced / 800 kbit/s", 800000], ["Detailed / 1.5 Mbit/s", 1500000]];
   let generation = 0;
+  function transportReason(event) {
+    if (event?.code === 1008) return "The server closed media for a policy refusal. Refresh room permissions and consent before trying again.";
+    if (event?.code === 1009) return "The media transport rejected an oversized message.";
+    if (event?.code === 1013) return "The media service reported temporary overload. Stop unused sources before retrying.";
+    return "Media disconnected or was refused. The browser did not expose the server's reason; no specific permission or quorum failure can be inferred.";
+  }
   const panel = document.getElementById("media-panel"), tiles = document.getElementById("media-tiles");
   function tile(label) {
     panel.hidden = false; const element = ui.el("article", "media-tile"), heading = ui.el("div", "media-heading");
@@ -35,9 +42,10 @@ export function setupMedia(ui) {
       for (const cleanup of cleanups) { try { cleanup(); } catch {} }
       socket?.close(); card.element.remove(); sessions.delete(key); panel.hidden = sessions.size === 0;
     }, room: room.name, direction, card, cleanups,
+    fail(reason) { if (!closed) { ui.toast(reason); session.stop(); } },
     active() { const current = ui.room(); if (current?.name !== room.name || !current?.status || current.status.owner !== room.status.owner || (direction === "listen" && !current.status.members.includes(peer))) session.stop(); return !closed; },
     cleanup(fn) { if (closed) fn(); else cleanups.push(fn); },
-    transport(value) { socket = value; socket.onclose = session.stop; socket.onerror = () => { ui.toast("Media transport refused or disconnected. Check consent, roles, capacity and the quorum."); session.stop(); }; if (closed) socket.close(); },
+    transport(value) { socket = value; socket.onclose = (event) => { if (!closed && event?.code && event.code !== 1000) ui.toast(transportReason(event)); session.stop(); }; socket.onerror = () => session.fail(transportReason()); if (closed) socket.close(); },
     get closed() { return closed; } };
     sessions.set(key, session); card.button.onclick = session.stop;
     return session;
@@ -45,8 +53,8 @@ export function setupMedia(ui) {
   async function opened(socket) {
     return new Promise((resolve, reject) => {
       function finish(error, message) { clearTimeout(timer); socket.removeEventListener("message", ready); socket.removeEventListener("close", closed); error ? reject(error) : resolve(message); }
-      function ready(event) { if (typeof event.data !== "string") return; try { const message = JSON.parse(event.data); if (message.event === "ready") finish(null, message); } catch { finish(new Error("Invalid media setup response.")); } }
-      function closed() { finish(new Error("The source was stopped or refused. Check consent and media capacity.")); }
+      function ready(event) { if (typeof event.data !== "string") return; try { const message = JSON.parse(event.data); if (message.event === "ready") { if (!Array.isArray(message.peers) || message.peers.some((peer) => typeof peer !== "string")) throw new Error(); finish(null, message); } else if (message.event === "ended") finish(new Error("The media source ended before setup completed. No capture is still shared.")); } catch { finish(new Error("Invalid media setup response; the sharing source was stopped.")); } }
+      function closed(event) { finish(new Error(transportReason(event))); }
       const timer = setTimeout(() => finish(new Error("Media setup timed out.")), 30000);
       socket.addEventListener("message", ready); socket.addEventListener("close", closed, { once: true });
     });
@@ -57,7 +65,7 @@ export function setupMedia(ui) {
     try {
     if (kind === "audio" ? !window.AudioEncoder || !window.AudioContext || !window.AudioWorkletNode || !window.AudioData : !window.VideoEncoder || !window.VideoFrame || !window.MediaStreamTrackProcessor || !window.OffscreenCanvas) throw new Error("This browser lacks the required media encoding APIs. No capture was requested.");
     if (kind === "screen" ? !navigator.mediaDevices?.getDisplayMedia : !navigator.mediaDevices?.getUserMedia) throw new Error("Capture of this source is unavailable in this browser context.");
-    if (![256000, 800000, 1500000].includes(quality)) throw new Error("Choose a listed video quality.");
+    if (!videoQualities.some(([, value]) => value === quality)) throw new Error("Choose a listed video quality.");
     const surface = { any: null, monitor: "monitor", window: "window", browser: "browser" };
     if (!Object.hasOwn(surface, choice.surface)) throw new Error("Choose a listed display source.");
     if (choice.device && !navigator.mediaDevices.getSupportedConstraints?.().deviceId) throw new Error("This browser cannot select a specific capture device. Choose Default device.");
@@ -74,12 +82,55 @@ export function setupMedia(ui) {
     catch (error) {
       if (["NotFoundError", "OverconstrainedError"].includes(error.name)) throw new Error("The selected capture device/source is unavailable. Refresh devices or choose Default device; no substitute was opened.");
       if (["NotAllowedError", "SecurityError"].includes(error.name)) throw new Error("Capture was cancelled or permission was denied. Nothing is shared; submit again only when ready.");
+      if (error.name === "NotReadableError") throw new Error("The browser/OS could not read the selected source. It may be busy or unavailable; no substitute was opened.");
+      if (error.name === "AbortError") throw new Error("The browser/OS aborted capture setup. Nothing is shared; select the source again when ready.");
       throw error;
     }
     session.cleanup(() => { for (const track of stream.getTracks()) { track.onended = null; track.stop(); } });
     if (!session.active()) return;
     if (kind !== "screen") void refreshDevices();
-    for (const track of stream.getTracks()) track.onended = session.stop;
+    const sourceEnded = () => {
+      if (!session.active()) return;
+      session.stop();
+      ui.modal(kind.toUpperCase() + " sharing ended", [ui.el("p", "dialog-note", "The capture device/source ended. This publication, its encoder and transport are stopped. Other sharing and playback continue. Nothing will restart automatically; choose a source and authorize capture again to restart.")], "Choose source to restart", () => {
+        const current = ui.room();
+        if (generation !== consentGeneration || current?.name !== room.name || current?.status?.owner !== room.status.owner) throw new Error("The room/session changed. Open sharing controls in the current room instead.");
+        shareDialog(kind); return false;
+      });
+    };
+    for (const track of stream.getTracks()) track.onended = sourceEnded;
+    if (stream.getTracks().some((track) => track.readyState === "ended")) { sourceEnded(); return; }
+    const privacy = ui.el("button", "outline compact", kind === "audio" ? "Mute" : "Hide video");
+    privacy.type = "button"; privacy.setAttribute?.("aria-pressed", "false");
+    let muted = false;
+    privacy.onclick = () => {
+      if (!session.active()) return;
+      muted = !muted;
+      for (const track of stream.getTracks()) track.enabled = !muted;
+      privacy.textContent = muted ? (kind === "audio" ? "Unmute" : "Show video") : (kind === "audio" ? "Mute" : "Hide video");
+      privacy.setAttribute?.("aria-pressed", String(muted));
+      session.card.element.dataset.muted = String(muted);
+    };
+    session.card.element.append(privacy, ui.el("small", "muted", "Mute/hide sends silence/black while capture stays open. Stop releases the source; changing it requires fresh consent."));
+    // Never silently move to another device when the selected input disappears.
+    // Only explicit non-default IDs are reconciled: enumeration may conceal IDs
+    // before permission and display sources are governed by track.onended.
+    if (kind !== "screen" && choice.device && navigator.mediaDevices.addEventListener) {
+      let checking = false;
+      const changed = async () => {
+        if (checking || !session.active()) return;
+        checking = true;
+        try {
+          const entries = await navigator.mediaDevices.enumerateDevices();
+          if (session.active() && !entries.some((entry) => entry.deviceId === choice.device && entry.kind === (kind === "camera" ? "videoinput" : "audioinput"))) {
+            ui.toast("The selected device was removed. Sharing stopped; choose a source again to authorize capture."); session.stop();
+          }
+        } catch { /* A transient enumeration failure is not proof of removal. */ }
+        finally { checking = false; }
+      };
+      navigator.mediaDevices.addEventListener("devicechange", changed);
+      session.cleanup(() => navigator.mediaDevices.removeEventListener("devicechange", changed));
+    }
     if (kind === "screen") {
       const actual = stream.getVideoTracks()[0]?.getSettings?.().displaySurface;
       const label = { monitor: "Entire screen", window: "Window/application window", browser: "Browser tab" };
@@ -96,7 +147,7 @@ export function setupMedia(ui) {
       if (kind === "audio") {
         if (!window.AudioEncoder) throw new Error("This browser does not provide an Opus AudioEncoder. Use the native CLI.");
         const context = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" }); session.cleanup(() => context.close()); await context.resume(); if (!session.active()) return; await context.audioWorklet.addModule("/audio-worklet.js"); if (!session.active()) return;
-        const encoder = new AudioEncoder({ output: (chunk) => transmit(chunk), error: () => session.stop() });
+        const encoder = new AudioEncoder({ output: (chunk) => transmit(chunk), error: () => session.fail("Opus encoding failed. Audio sharing stopped and the source was released.") });
         const settings = { codec: "opus", sampleRate: 48000, numberOfChannels: 1, bitrate: cfg.audio_bitrate };
         session.cleanup(() => { if (encoder.state !== "closed") encoder.close(); });
         const supported = await AudioEncoder.isConfigSupported(settings); if (!session.active()) return;
@@ -104,11 +155,14 @@ export function setupMedia(ui) {
         encoder.configure(settings);
         const source = context.createMediaStreamSource(stream), worklet = new AudioWorkletNode(context, "kk-capture", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
         source.connect(worklet); worklet.connect(context.destination); session.cleanups.push(() => { source.disconnect(); worklet.disconnect(); }); let frames = 0;
-        worklet.port.onmessage = (event) => { const timestamp = frames * 1000000 / 48000; frames += 960; if (!session.active() || encoder.state !== "configured" || encoder.encodeQueueSize > 2) return;
-          const audio = new AudioData({ format: "f32", sampleRate: 48000, numberOfFrames: 960, numberOfChannels: 1, timestamp, data: event.data }); encoder.encode(audio); audio.close(); };
+        worklet.port.onmessage = (event) => { if (!session.active()) return; if (!(event.data instanceof ArrayBuffer) || event.data.byteLength !== 960 * Float32Array.BYTES_PER_ELEMENT) { session.fail("Audio capture produced an invalid PCM block. Sharing stopped and the source was released."); return; } const timestamp = frames * 1000000 / 48000; frames += 960; if (encoder.state !== "configured" || encoder.encodeQueueSize > 2) return;
+          let audio;
+          try { audio = new AudioData({ format: "f32", sampleRate: 48000, numberOfFrames: 960, numberOfChannels: 1, timestamp, data: event.data }); encoder.encode(audio); }
+          catch { session.fail("Audio encoding failed. Sharing stopped and the capture source was released; restart requires fresh consent."); }
+          finally { audio?.close(); } };
       } else {
         if (!window.VideoEncoder || !window.MediaStreamTrackProcessor) throw new Error("This browser lacks the native video encoding APIs. Use the CLI or a supported browser.");
-        const encoder = new VideoEncoder({ output: (chunk) => { if (!transmit(chunk)) forceKey = true; }, error: () => session.stop() });
+        const encoder = new VideoEncoder({ output: (chunk) => { if (!transmit(chunk)) forceKey = true; }, error: () => session.fail("VP8 encoding failed. Video sharing stopped and the source was released.") });
         const settings = { codec: "vp8", width: cfg.width, height: cfg.height, bitrate: quality, framerate: cfg.fps, latencyMode: "realtime" };
         session.cleanup(() => { if (encoder.state !== "closed") encoder.close(); });
         const supported = await VideoEncoder.isConfigSupported(settings); if (!session.active()) return;
@@ -118,12 +172,54 @@ export function setupMedia(ui) {
         const preview = document.createElement("video"); preview.muted = true; preview.autoplay = true; preview.playsInline = true; preview.srcObject = stream; card.element.append(preview); session.cleanup(() => { preview.srcObject = null; });
         const reader = new MediaStreamTrackProcessor({ track: stream.getVideoTracks()[0] }).readable.getReader(); session.cleanups.push(() => reader.cancel());
         let frameNumber = 0, last = -Infinity, forceKey = true;
+        const liveQuality = ui.el("select"), qualityLabel = ui.el("label", "", "Video quality");
+        for (const [label, value] of videoQualities) { const option = ui.el("option", "", label); option.value = String(value); liveQuality.append(option); }
+        liveQuality.value = String(quality); qualityLabel.append(liveQuality); card.element.append(qualityLabel);
+        let changingQuality = false;
+        liveQuality.onchange = async () => {
+          if (!session.active() || changingQuality) return;
+          const bitrate = Number(liveQuality.value), previous = settings.bitrate;
+          if (!videoQualities.some(([, value]) => value === bitrate)) { liveQuality.value = String(previous); ui.toast("Choose a listed video quality. The current quality was kept."); return; }
+          if (bitrate === previous) return;
+          changingQuality = true; liveQuality.disabled = true;
+          try {
+            const next = { ...settings, bitrate }, supported = await VideoEncoder.isConfigSupported(next);
+            if (!session.active()) return;
+            if (!supported.supported) { liveQuality.value = String(previous); ui.toast("This quality is unavailable. The current quality and capture were kept."); return; }
+            if (encoder.state !== "configured") throw new Error("Encoder is no longer configured.");
+            // WebCodecs queues configure after existing encode work. Preserve
+            // capture, dimensions and RTP clock; the next input is a keyframe.
+            encoder.configure(next); settings.bitrate = bitrate; forceKey = true;
+          } catch {
+            liveQuality.value = String(previous);
+            if (session.active()) {
+              if (encoder.state === "configured") ui.toast("Quality change was refused. The current quality and capture were kept.");
+              else session.fail("The video encoder stopped during quality selection. Sharing stopped; authorize a new publication to restart.");
+            }
+          } finally { changingQuality = false; liveQuality.disabled = false; }
+        };
         (async () => { try { while (session.active()) { const { value: frame, done } = await reader.read(); if (done) break;
           if (!session.active()) { frame.close(); break; }
           if (encoder.encodeQueueSize > 2 || frame.timestamp - last < 1000000 / cfg.fps) { frame.close(); continue; }
-          last = frame.timestamp; drawing.drawImage(frame, 0, 0, cfg.width, cfg.height); const scaled = new VideoFrame(canvas, { timestamp: frame.timestamp }); frame.close();
-          const keyFrame = forceKey || frameNumber++ % (cfg.fps * 2) === 0; forceKey = false; encoder.encode(scaled, { keyFrame }); scaled.close();
+          let scaled;
+          try { last = frame.timestamp; drawing.drawImage(frame, 0, 0, cfg.width, cfg.height); scaled = new VideoFrame(canvas, { timestamp: frame.timestamp }); }
+          finally { frame.close(); }
+          try { const keyFrame = forceKey || frameNumber++ % (cfg.fps * 2) === 0; forceKey = false; encoder.encode(scaled, { keyFrame }); }
+          finally { scaled.close(); }
         } } catch { if (!session.closed) ui.toast("Native capture ended."); } finally { session.stop(); } })();
+      }
+      if (session.active()) {
+        const change = ui.el("button", "outline compact", "Change source…"); change.type = "button";
+        change.onclick = () => {
+          if (!session.active()) return;
+          // Capture replacement needs a fresh publication/track and RTP clock;
+          // never reuse this session's consent or silently substitute a device.
+          ui.modal("Change this capture source", [ui.el("p", "dialog-note", "A new source requires a new publication. Confirming stops only this publication, then opens fresh source selection and consent. If you cancel or the new source fails, this sharing stays stopped. Other sharing and playback continue.")], "Stop this publication and choose again", () => {
+            if (!session.active()) throw new Error("This publication already ended. Open sharing controls to authorize a new source.");
+            session.stop(); shareDialog(kind); return false;
+          });
+        };
+        card.element.append(change);
       }
     } catch (error) { session.stop(); throw error; }
   }
@@ -134,22 +230,123 @@ export function setupMedia(ui) {
     try { if (kind === "audio") {
       if (!window.AudioDecoder || !window.AudioContext || !window.AudioWorkletNode || !window.EncodedAudioChunk) throw new Error("Opus playback is unavailable in this browser.");
       context = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" }); session.cleanup(() => context.close()); await context.resume(); if (!session.active()) return; await context.audioWorklet.addModule("/audio-worklet.js"); if (!session.active()) return;
-      worklet = new AudioWorkletNode(context, "kk-playback", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] }); session.cleanup(() => worklet.disconnect()); worklet.connect(context.destination);
+      worklet = new AudioWorkletNode(context, "kk-playback", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] }); session.cleanup(() => worklet.disconnect());
+      const gain = context.createGain(); gain.gain.value = 1; session.cleanup(() => gain.disconnect());
+      worklet.connect(gain); gain.connect(context.destination);
+      const volume = ui.el("input"), volumeText = ui.el("span", "", "Volume: 100%"), volumeLabel = ui.el("label");
+      volume.type = "range"; volume.min = "0"; volume.max = "100"; volume.step = "1"; volume.value = "100";
+      volume.setAttribute?.("aria-label", "Volume for this received source"); card.element.dataset.volume = "100";
+      volume.oninput = () => {
+        if (!session.active()) return;
+        const percent = Number(volume.value); if (!Number.isFinite(percent) || percent < 0 || percent > 100) return;
+        gain.gain.setTargetAtTime(percent / 100, context.currentTime, 0.01);
+        volumeText.textContent = "Volume: " + percent + "%"; card.element.dataset.volume = String(percent);
+      };
+      volumeLabel.append(volumeText, volume); card.element.append(volumeLabel);
+      const mute = ui.el("button", "outline compact", "Mute playback"); mute.type = "button";
+      let muted = false; mute.setAttribute?.("aria-pressed", "false");
+      mute.onclick = () => {
+        if (!session.active()) return;
+        muted = !muted; worklet.port.postMessage({ muted });
+        mute.textContent = muted ? "Unmute playback" : "Mute playback";
+        mute.setAttribute?.("aria-pressed", String(muted)); card.element.dataset.muted = String(muted);
+      };
+      card.element.append(mute, ui.el("small", "muted", "Playback mute is local only. Stop withdraws this source's receive consent."));
+      // Output IDs stay local to this playback context. Silent QA sinks cannot
+      // be changed to physical outputs by this control.
+      if (context.setSinkId && typeof context.sinkId === "string" && navigator.mediaDevices?.enumerateDevices) {
+        const chooseOutput = ui.el("button", "outline compact", "Audio output…"), outputLabel = ui.el("small", "muted", "Audio output: system default");
+        chooseOutput.type = "button"; let outputId = context.sinkId, switching = false, recheckOutput = false;
+        async function defaultOutput() {
+          if (!session.active() || switching) return;
+          switching = true; chooseOutput.disabled = true;
+          try {
+            await context.setSinkId("");
+            if (!session.active()) return;
+            if (context.sinkId !== "") throw new Error("Default output was not confirmed.");
+            outputId = ""; outputLabel.textContent = "Audio output: system default (previous output unavailable)";
+            ui.toast("The selected audio output is unavailable. Reception continues on the browser's default output; no other device was selected.");
+          } catch {
+            if (!session.active()) return;
+            muted = true; worklet.port.postMessage({ muted }); mute.textContent = "Unmute playback"; mute.setAttribute?.("aria-pressed", "true"); card.element.dataset.muted = "true";
+            outputLabel.textContent = "Audio output unavailable / reception kept, playback muted";
+            ui.toast("The default audio output could not be opened. Reception remains connected and muted; choose an output explicitly.");
+          } finally { switching = false; chooseOutput.disabled = false; if (recheckOutput) { recheckOutput = false; void checkOutput(); } }
+        }
+        async function checkOutput() {
+          if (!session.active() || !outputId) return;
+          if (switching) { recheckOutput = true; return; }
+          const selected = outputId;
+          try {
+            const entries = await navigator.mediaDevices.enumerateDevices();
+            if (session.active() && !switching && outputId === selected && !entries.some((entry) => entry.kind === "audiooutput" && entry.deviceId === selected)) await defaultOutput();
+          } catch { /* Listing failure alone is not evidence that an output disappeared. */ }
+        }
+        const sinkChanged = () => { if (!switching && outputId && context.sinkId !== outputId) void defaultOutput(); };
+        const deviceChanged = () => checkOutput();
+        context.addEventListener?.("sinkchange", sinkChanged); session.cleanup(() => context.removeEventListener?.("sinkchange", sinkChanged));
+        navigator.mediaDevices.addEventListener?.("devicechange", deviceChanged); session.cleanup(() => navigator.mediaDevices.removeEventListener?.("devicechange", deviceChanged));
+        chooseOutput.onclick = async () => {
+          if (!session.active()) return;
+          try {
+            const entries = (await navigator.mediaDevices.enumerateDevices()).slice(0, 64).filter((entry) => entry.kind === "audiooutput" && typeof entry.deviceId === "string" && entry.deviceId.length > 0 && entry.deviceId.length <= 1024);
+            if (!session.active()) return;
+            const choices = new Map([["", "System default"]]);
+            for (const [index, entry] of entries.entries()) if (entry.deviceId !== "default") choices.set(entry.deviceId, String(entry.label || "Audio output " + (index + 1)).slice(0, 160));
+            const select = ui.el("select"); select.name = "output";
+            for (const [id, label] of choices) { const option = ui.el("option", "", label); option.value = id; select.append(option); }
+            select.value = choices.has(outputId) ? outputId : "";
+            ui.modal("Choose local audio output", [ui.el("p", "dialog-note", "Only this source changes output. No microphone is opened. If the output disappears, reception continues on the browser default with a warning, never on another automatically selected device."), select], "Use this output", async (data) => {
+              if (!session.active()) throw new Error("Playback ended. Accept the source again before selecting its output.");
+              const selected = data.get("output"); if (!choices.has(selected)) throw new Error("Choose a listed audio output.");
+              switching = true;
+              try {
+                await context.setSinkId(selected);
+                if (!session.active()) return;
+                if (context.sinkId !== selected) throw new Error("Output selection was not confirmed.");
+                outputId = selected; outputLabel.textContent = "Audio output: " + choices.get(selected);
+              } catch (error) {
+                if (error.name === "NotFoundError") { switching = false; await defaultOutput(); return; }
+                session.stop(); throw new Error("The selected audio output could not be opened. Playback stopped; no fallback output was selected.");
+              }
+              finally { switching = false; if (recheckOutput) { recheckOutput = false; void checkOutput(); } }
+            });
+          } catch { if (session.active()) ui.toast("Audio output listing is unavailable. The current output was not changed."); }
+        };
+        card.element.append(chooseOutput, outputLabel);
+      }
     } else if (!window.VideoDecoder || !window.EncodedVideoChunk) throw new Error("VP8 playback is unavailable in this browser.");
     } catch (error) { session.stop(); throw error; }
     let socket;
     try { socket = websocket(room.name, kind, "listen", "?from=" + encodeURIComponent(from)); session.transport(socket); }
     catch (error) { session.stop(); throw error; }
     try {
-    let decoder = null, track = "", base = null, keyNeeded = true, revision = 0;
+    let decoder = null, track = "", clock = null, keyNeeded = true, revision = 0;
     let frames = new VideoFrames(cfg.frame_bytes, cfg.packet_age_ms), canvas = null, drawing = null;
     card.element.dataset.decoded = "0";
     if (kind !== "audio") { canvas = document.createElement("canvas"); canvas.width = cfg.width; canvas.height = cfg.height; drawing = canvas.getContext("2d", { alpha: false }); card.element.append(canvas); }
     function configure() {
       const configuredRevision = ++revision;
-      if (decoder && decoder.state !== "closed") decoder.close(); base = null; keyNeeded = true; frames = new VideoFrames(cfg.frame_bytes, cfg.packet_age_ms);
-      if (kind === "audio") { decoder = new AudioDecoder({ output: (audio) => { if (!session.active() || configuredRevision !== revision || audio.numberOfFrames > 9600) { audio.close(); return; } const samples = new Float32Array(audio.numberOfFrames); audio.copyTo(samples, { planeIndex: 0, format: "f32-planar" }); audio.close(); worklet.port.postMessage(samples.buffer, [samples.buffer]); card.element.dataset.decoded = String(Number(card.element.dataset.decoded) + 1); }, error: () => { if (configuredRevision === revision) session.stop(); } }); decoder.configure({ codec: "opus", sampleRate: 48000, numberOfChannels: 1 }); }
-      else { decoder = new VideoDecoder({ output: (frame) => { if (session.active() && configuredRevision === revision) { drawing.drawImage(frame, 0, 0, canvas.width, canvas.height); card.element.dataset.decoded = String(Number(card.element.dataset.decoded) + 1); } frame.close(); }, error: () => { if (configuredRevision === revision) keyNeeded = true; } }); decoder.configure({ codec: "vp8", optimizeForLatency: true }); }
+      if (kind === "audio") worklet.port.postMessage({ reset: true });
+      if (decoder && decoder.state !== "closed") decoder.close(); clock = new RtpClock(kind === "audio" ? 48000 : 90000); keyNeeded = true; frames = new VideoFrames(cfg.frame_bytes, cfg.packet_age_ms);
+      if (kind === "audio") {
+        decoder = new AudioDecoder({ output: (audio) => {
+          try {
+            if (!session.active() || configuredRevision !== revision || !audio.numberOfFrames || audio.numberOfFrames > 9600) return;
+            const samples = new Float32Array(audio.numberOfFrames); audio.copyTo(samples, { planeIndex: 0, format: "f32-planar" });
+            worklet.port.postMessage(samples.buffer, [samples.buffer]); card.element.dataset.decoded = String(Number(card.element.dataset.decoded) + 1);
+          } catch { if (configuredRevision === revision) session.fail("Audio playback failed. This receiver stopped; choose the source again to restart."); }
+          finally { audio.close(); }
+        }, error: () => { if (configuredRevision === revision) session.fail("Opus decoding failed. Playback stopped; choose the source again to restore consent."); } });
+        decoder.configure({ codec: "opus", sampleRate: 48000, numberOfChannels: 1 });
+      } else {
+        decoder = new VideoDecoder({ output: (frame) => {
+          try { if (session.active() && configuredRevision === revision) { drawing.drawImage(frame, 0, 0, canvas.width, canvas.height); card.element.dataset.decoded = String(Number(card.element.dataset.decoded) + 1); } }
+          catch { if (configuredRevision === revision) session.fail("Video rendering failed. This receiver stopped; choose the source again to restart."); }
+          finally { frame.close(); }
+        }, error: () => { if (configuredRevision === revision) keyNeeded = true; } });
+        decoder.configure({ codec: "vp8", optimizeForLatency: true });
+      }
     }
     session.cleanups.push(() => { if (decoder && decoder.state !== "closed") decoder.close(); });
     socket.onmessage = (event) => {
@@ -161,24 +358,24 @@ export function setupMedia(ui) {
       if (id !== track) { track = id; try { configure(); } catch { session.stop(); return; } }
       const packet = parse(bytes.subarray(24), kind); if (!packet || (kind === "audio" && decoder.state !== "configured")) return;
       if (decoder.decodeQueueSize > 2) { keyNeeded = true; return; }
-      base ??= packet.timestamp; const offset = (packet.timestamp - base) >>> 0, rate = kind === "audio" ? 48000 : 90000;
-      if (offset > rate * 3600) return; const timestamp = offset * 1000000 / rate;
       try {
-        if (kind === "audio") decoder.decode(new EncodedAudioChunk({ type: "key", timestamp, data: packet.payload }));
+        if (kind === "audio") { const timestamp = clock.next(packet.timestamp); if (timestamp === null) return; decoder.decode(new EncodedAudioChunk({ type: "key", timestamp, data: packet.payload })); }
         else { const dropped = frames.dropped; const frame = frames.push(packet); if (frames.dropped > dropped) keyNeeded = true; if (!frame) return;
-          if (frame.key) { if (!dimensions(frame.bytes, cfg.width, cfg.height)) return; if (decoder.state !== "configured") { configure(); base = frame.timestamp; } keyNeeded = false; }
-          if (keyNeeded) return; decoder.decode(new EncodedVideoChunk({ type: frame.key ? "key" : "delta", timestamp: ((frame.timestamp - base) >>> 0) * 1000000 / 90000, data: frame.bytes }));
+          if (frame.key) { if (!dimensions(frame.bytes, cfg.width, cfg.height)) return; if (decoder.state !== "configured") configure(); keyNeeded = false; }
+          if (keyNeeded) return; const timestamp = clock.next(frame.timestamp); if (timestamp === null) return;
+          decoder.decode(new EncodedVideoChunk({ type: frame.key ? "key" : "delta", timestamp, data: frame.bytes }));
         }
         card.status.textContent = "Encrypted / live / volatile buffers";
       } catch { keyNeeded = true; }
     };
     } catch (error) { session.stop(); throw error; }
   }
-  function shareDialog() {
+  function shareDialog(initialKind) {
     const room = ui.room(), consentGeneration = generation;
     if (!navigator.mediaDevices) { ui.toast("Native capture is unavailable in this browser context."); return; }
     const kind = ui.el("select"); kind.name = "kind"; for (const value of ["audio", "camera", "screen"]) { const option = ui.el("option", "", value); option.value = value; kind.append(option); }
-    const quality = ui.el("select"); quality.name = "quality"; for (const [label, value] of [["Low bandwidth / 256 kbit/s", 256000], ["Balanced / 800 kbit/s", 800000], ["Detailed / 1.5 Mbit/s", 1500000]]) { const option = ui.el("option", "", label); option.value = value; option.selected = value === 800000; quality.append(option); }
+    if (["audio", "camera", "screen"].includes(initialKind)) kind.value = initialKind;
+    const quality = ui.el("select"); quality.name = "quality"; for (const [label, value] of videoQualities) { const option = ui.el("option", "", label); option.value = value; option.selected = value === 800000; quality.append(option); }
     const surface = ui.el("select"); surface.name = "surface";
     for (const [value, label] of [["any", "Browser/OS chooser (any source)"], ["monitor", "Entire screen (preference)"], ["window", "Window/application window (preference)"], ["browser", "Browser tab (preference)"]]) { const option = ui.el("option", "", label); option.value = value; surface.append(option); }
     const device = ui.el("select"); device.name = "device";
@@ -219,5 +416,5 @@ export function setupMedia(ui) {
     if (!peer.options.length) { ui.toast("Invite a sender first."); return; }
     ui.modal("Consent to a source", [ui.el("p", "dialog-note", "This opens local playback only for the chosen member and source kind. Stop withdraws consent; no camera or microphone is opened here."), peer, kind], "Accept this source", async (data) => listen(room, data.get("kind"), data.get("from"), consentGeneration));
   }
-  return { shareDialog, receiveDialog, refreshLabels() { const room = ui.room(); for (const session of sessions.values()) { const {direction, peer, kind} = session.card.element.dataset; if (direction === "listen" && room?.name === session.room) session.card.title.textContent = kind.toUpperCase() + " / " + ui.memberName(room, peer); } }, stopAll() { generation++; for (const session of [...sessions.values()]) session.stop(); } };
+  return { shareDialog, receiveDialog, refreshLabels() { const room = ui.room(); for (const session of [...sessions.values()]) { if (!session.active()) continue; const {direction, peer, kind} = session.card.element.dataset; if (direction === "listen" && room?.name === session.room) session.card.title.textContent = kind.toUpperCase() + " / " + ui.memberName(room, peer); } }, stopAll() { generation++; for (const session of [...sessions.values()]) session.stop(); } };
 }

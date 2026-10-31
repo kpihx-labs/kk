@@ -11,7 +11,7 @@ async fn premature_valid_receipt_cannot_complete_a_flow_control_blocked_body() {
 }
 
 async fn response_close_case(premature_receipt: bool) {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let sender = Identity::create(&root.path().join("sender")).unwrap();
     let recipient = Identity::create(&root.path().join("recipient")).unwrap();
     let source = root.path().join("source");
@@ -79,7 +79,7 @@ async fn response_close_case(premature_receipt: bool) {
 async fn tampered_truncated_and_extra_payloads_never_publish_a_file() {
     for mode in ["digest", "truncated", "extra", "race"] {
         use std::os::unix::fs::PermissionsExt;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let a = Identity::create(&root.path().join("a")).unwrap();
         let b = Identity::create(&root.path().join("b")).unwrap();

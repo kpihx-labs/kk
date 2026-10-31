@@ -84,7 +84,7 @@ impl Group {
                         group.pending = None;
                         group.actor.provider.delete_blob("prepared_control")?;
                     }
-                    group.apply_ordered_from(record.epoch(), commit, Some(author))?;
+                    group.apply_ordered_from_policy(record.epoch(), commit, Some(author), true)?;
                 }
             }
             if group.state.epoch().as_u64() != record.epoch() {
@@ -113,8 +113,202 @@ mod tests {
     use openraft::{CommittedLeaderId, Entry, EntryPayload, LogId, storage::RaftStateMachine};
 
     #[tokio::test]
+    async fn committed_private_add_replays_after_expiry_with_scope_and_atomic_checkpoint_preserved()
+    {
+        use std::time::{Duration, SystemTime, UNIX_EPOCH};
+        let directory = crate::test_support::tempdir().unwrap();
+        let alice = Identity::create(&directory.path().join("alice")).unwrap();
+        let bob = Identity::create(&directory.path().join("bob")).unwrap();
+        let charlie = Identity::create(&directory.path().join("charlie")).unwrap();
+        let anchor = RootBundle::create(&alice, "Private accepted Add replay")
+            .unwrap()
+            .verify(&alice.peer())
+            .unwrap();
+        let actor = CryptoMember::create_private(
+            &alice,
+            &anchor,
+            vec![],
+            &directory.path().join("private-a"),
+        )
+        .unwrap();
+        let origin = actor.public_identity().unwrap();
+        let mut leader = Group::create(actor).unwrap();
+        let mut machine = StateMachine::create(
+            LogStore::create(&directory.path().join("control")).unwrap(),
+            &anchor,
+            origin,
+        )
+        .await
+        .unwrap();
+        let entry = |index, payload| Entry::<TypeConfig> {
+            log_id: LogId::new(
+                CommittedLeaderId::new(1, PeerId::from_peer(&alice.peer())),
+                index,
+            ),
+            payload,
+        };
+        machine
+            .apply([entry(0, EntryPayload::Blank)])
+            .await
+            .unwrap();
+        leader
+            .apply_committed(&machine.committed_after(None).await.unwrap()[0])
+            .unwrap();
+        let grant = Grant::issue(&anchor, &[], &alice, &bob.peer(), Rights::PARTICIPANT).unwrap();
+        let path = directory.path().join("private-b");
+        let mut member = CryptoMember::create_private(&bob, &anchor, vec![grant], &path).unwrap();
+        let proposal = leader
+            .prepare_admission(
+                &alice,
+                &machine.public_view().await.unwrap(),
+                &member.key_package().unwrap(),
+            )
+            .unwrap();
+        machine
+            .apply([entry(
+                1,
+                EntryPayload::Normal(proposal.with_ordered_decision(true)),
+            )])
+            .await
+            .unwrap();
+        let admission = machine
+            .committed_after(leader.applied_position())
+            .await
+            .unwrap()
+            .remove(0);
+        let welcome = leader.apply_committed(&admission).unwrap().unwrap();
+        let mut delayed =
+            Group::join_committed(member, &welcome, &alice.peer(), &admission).unwrap();
+        let before = delayed.applied_position();
+        let grant = Grant::issue(&anchor, &[], &alice, &charlie.peer(), Rights::READER).unwrap();
+        let candidate = CryptoMember::new(&charlie, &anchor, vec![grant]).unwrap();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let expires = now + 5;
+        let package = KeyPackage::builder()
+            .key_package_lifetime(Lifetime::init(now - 1, expires))
+            .build(
+                crate::rooms::mls::SUITE,
+                &candidate.provider,
+                &candidate.signer,
+                candidate.credential.clone(),
+            )
+            .unwrap()
+            .key_package()
+            .tls_serialize_detached()
+            .unwrap();
+        let proposal = leader
+            .prepare_admission(&alice, &machine.public_view().await.unwrap(), &package)
+            .unwrap();
+        assert!(machine.preflight(proposal.clone()).await.unwrap().is_ok());
+        machine
+            .apply([entry(
+                2,
+                EntryPayload::Normal(proposal.with_ordered_decision(true)),
+            )])
+            .await
+            .unwrap();
+        let accepted = machine.committed_after(before).await.unwrap().remove(0);
+        leader.apply_committed(&accepted).unwrap();
+        let remaining = (expires + 1).saturating_sub(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        );
+        tokio::time::sleep(Duration::from_secs(remaining)).await;
+        assert!(delayed.validate_package(&package).is_err());
+        let (_, commit, true) = accepted.change().unwrap() else {
+            panic!("fixture did not commit admission");
+        };
+        // Unordered SDK input must remain fresh; this failure cannot consume the
+        // receiving ratchet or durably advance its accepted-log cursor.
+        assert!(delayed.apply_ordered(accepted.epoch(), commit).is_err());
+        drop(delayed);
+        let mut delayed =
+            Group::restore(CryptoMember::open_private(&bob, &anchor, &path).unwrap()).unwrap();
+        assert_eq!(delayed.applied_position(), before);
+        // Historical validation still rejects ciphertext tampering and the wrong
+        // authenticated committer; reopen after each rolled-back crypto attempt.
+        let mut corrupt = commit.to_vec();
+        *corrupt.last_mut().unwrap() ^= 1;
+        assert!(
+            delayed
+                .transactional(|group| group.apply_ordered_from_policy(
+                    accepted.epoch(),
+                    &corrupt,
+                    Some(alice.peer().fingerprint_bytes()),
+                    true
+                ))
+                .is_err()
+        );
+        drop(delayed);
+        let mut delayed =
+            Group::restore(CryptoMember::open_private(&bob, &anchor, &path).unwrap()).unwrap();
+        assert!(
+            delayed
+                .transactional(|group| group.apply_ordered_from_policy(
+                    accepted.epoch(),
+                    commit,
+                    Some(bob.peer().fingerprint_bytes()),
+                    true
+                ))
+                .is_err()
+        );
+        drop(delayed);
+        let mut delayed =
+            Group::restore(CryptoMember::open_private(&bob, &anchor, &path).unwrap()).unwrap();
+        delayed.actor.provider.inject_checkpoint_commit_failure();
+        assert!(matches!(
+            delayed.apply_committed(&accepted),
+            Err(Error::Storage(_))
+        ));
+        drop(delayed);
+        let mut delayed =
+            Group::restore(CryptoMember::open_private(&bob, &anchor, &path).unwrap()).unwrap();
+        assert_eq!(delayed.epoch(), 1);
+        assert_eq!(delayed.applied_position(), before);
+        delayed.apply_committed(&accepted).unwrap();
+        assert_eq!(delayed.epoch(), 2);
+        assert_eq!(
+            delayed.applied_position(),
+            Some(accepted.position().unwrap())
+        );
+        assert!(
+            delayed
+                .peers()
+                .iter()
+                .any(|peer| peer.fingerprint_bytes() == charlie.peer().fingerprint_bytes())
+        );
+        assert!(delayed.apply_committed(&accepted).unwrap().is_none());
+        drop(delayed);
+        let mut delayed =
+            Group::restore(CryptoMember::open_private(&bob, &anchor, &path).unwrap()).unwrap();
+        assert_eq!(
+            delayed.applied_position(),
+            Some(accepted.position().unwrap())
+        );
+        assert_eq!(
+            Identity::load(&directory.path().join("bob"))
+                .unwrap()
+                .peer()
+                .fingerprint_bytes(),
+            bob.peer().fingerprint_bytes()
+        );
+        let message = leader
+            .encrypt_text("message after historical catch-up", false)
+            .unwrap();
+        assert_eq!(
+            delayed.decrypt_text(&message).unwrap().content.text(),
+            "message after historical catch-up"
+        );
+    }
+
+    #[tokio::test]
     async fn failed_private_commit_releases_neither_welcome_nor_applied_position() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_support::tempdir().unwrap();
         let alice = Identity::create(&directory.path().join("alice")).unwrap();
         let bob = Identity::create(&directory.path().join("bob")).unwrap();
         let anchor = RootBundle::create(&alice, "Private cursor COMMIT fault")
@@ -152,7 +346,10 @@ mod tests {
         let proposal =
             Proposal::add(&alice, anchor.id(), 0, anchor.id(), &commit, &package).unwrap();
         machine
-            .apply([entry(1, EntryPayload::Normal(proposal))])
+            .apply([entry(
+                1,
+                EntryPayload::Normal(proposal.with_ordered_decision(true)),
+            )])
             .await
             .unwrap();
         let accepted = machine.committed_after(before).await.unwrap().remove(0);

@@ -116,7 +116,7 @@ async fn leader(raft: &Raft<TypeConfig>, excluded: Option<PeerId>) -> PeerId {
 
 #[tokio::test]
 async fn minority_cannot_ack_and_majority_recovers_a_partitioned_leader() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_support::tempdir().unwrap();
     let identities: Vec<_> = (0..3)
         .map(|index| Identity::create(&directory.path().join(format!("identity-{index}"))).unwrap())
         .collect();
@@ -198,7 +198,10 @@ async fn minority_cannot_ack_and_majority_recovers_a_partitioned_leader() {
             &package,
         )
         .unwrap();
-        let applied = nodes[&initial].client_write(add).await.unwrap();
+        let applied = nodes[&initial]
+            .client_write(add.with_ordered_decision(true))
+            .await
+            .unwrap();
         assert!(applied.data.accepted);
         assert_eq!(applied.data.epoch, 1);
         router.isolated.write().unwrap().insert(initial);
@@ -214,7 +217,7 @@ async fn minority_cannot_ack_and_majority_recovers_a_partitioned_leader() {
         .unwrap();
         let no_ack = tokio::time::timeout(
             Duration::from_millis(900),
-            nodes[&initial].client_write(minority),
+            nodes[&initial].client_write(minority.with_ordered_decision(true)),
         )
         .await;
         assert!(
@@ -242,7 +245,10 @@ async fn minority_cannot_ack_and_majority_recovers_a_partitioned_leader() {
             &identities[0].peer(),
         )
         .unwrap();
-        let result = nodes[&elected].client_write(remove_creator).await.unwrap();
+        let result = nodes[&elected]
+            .client_write(remove_creator.with_ordered_decision(true))
+            .await
+            .unwrap();
         assert!(result.data.accepted);
         assert_eq!(result.data.epoch, 2);
         router.isolated.write().unwrap().remove(&initial);

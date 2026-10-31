@@ -2,6 +2,10 @@ use super::*;
 use crate::rooms::{Grant, Rights, RootBundle, mls::CryptoMember};
 use futures_util::FutureExt;
 
+fn private_fixture_root() -> tempfile::TempDir {
+    crate::test_support::tempdir().unwrap()
+}
+
 // A deliberately paced, pinned wire peer makes the resume response a barrier:
 // the real service has selected its inbox and spent its reservation, but cannot
 // consume any body bytes until the test releases them. No timing-based races.
@@ -169,7 +173,7 @@ mod consent {
 
     #[tokio::test]
     async fn revoked_wire_peer_observes_eof_without_remaining_upload_credit() {
-        let root = tempfile::tempdir().unwrap();
+        let root = private_fixture_root();
         let alice = Identity::create(&root.path().join("alice")).unwrap();
         let bob = Identity::create(&root.path().join("bob")).unwrap();
         let server =
@@ -270,7 +274,7 @@ mod consent {
         tokio::time::timeout(
             DEADLINE * 4,
             tokio::task::LocalSet::new().run_until(async {
-                let root = tempfile::tempdir().unwrap();
+                let root = private_fixture_root();
                 let (control, alice, bob, room) = fixture(root.path()).await;
                 let (handle, actor, _events) = Actor::new(room);
                 let running = tokio::task::spawn_local(actor.run());
@@ -504,7 +508,7 @@ mod consent {
         tokio::time::timeout(
             DEADLINE * 4,
             tokio::task::LocalSet::new().run_until(async {
-                let root = tempfile::tempdir().unwrap();
+                let root = private_fixture_root();
                 let (control, alice, bob, room) = fixture(root.path()).await;
                 let room_id = control.room_id();
                 let network = control.network.clone();
@@ -628,7 +632,7 @@ mod consent {
         tokio::time::timeout(
             DEADLINE * 4,
             tokio::task::LocalSet::new().run_until(async {
-                let root = tempfile::tempdir().unwrap();
+                let root = private_fixture_root();
                 let (control, alice, bob, room) = fixture(root.path()).await;
                 let room_id = control.room_id();
                 let network = control.network.clone();
@@ -752,7 +756,7 @@ mod consent {
         tokio::time::timeout(
             DEADLINE * 4,
             tokio::task::LocalSet::new().run_until(async {
-                let root = tempfile::tempdir().unwrap();
+                let root = private_fixture_root();
                 let (control, alice, bob, room) = fixture(root.path()).await;
                 let (handle, actor, _events) = Actor::new(room);
                 let running = tokio::task::spawn_local(actor.run());
@@ -872,11 +876,308 @@ mod consent {
     }
 
     #[tokio::test]
+    async fn saturated_file_lane_reports_busy_without_overriding_consent_or_audience() {
+        tokio::time::timeout(DEADLINE * 4, tokio::task::LocalSet::new().run_until(async {
+            let root = private_fixture_root();
+            let (control, alice, bob, room) = fixture(root.path()).await;
+            let (handle, actor, _events) = Actor::new(room);
+            let running = tokio::task::spawn_local(actor.run());
+            handle.ready(DEADLINE).await.unwrap();
+            control.register_room(handle.clone()).await.unwrap();
+            let inbox = root.path().join("inbox");
+            let budget = crate::config::NODE_MAX_FILES as u64;
+            control.enable_files(inbox.clone(), 1, budget).unwrap();
+            let source = root.path().join("source");
+            std::fs::write(&source, [42]).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o600)).unwrap();
+            }
+            let info = control.network.share_file(
+                &source,
+                std::collections::BTreeSet::from([PeerId::from_peer(&bob.peer())]),
+            ).await.unwrap();
+            let endpoint = crate::transport::client(
+                control.local_addr().unwrap(), &bob, &alice.peer(), ALPN,
+            ).unwrap();
+            let connection = endpoint.connect(control.local_addr().unwrap(), crate::config::TLS_NAME)
+                .unwrap().await.unwrap();
+            let mut held = Vec::new();
+            for index in 0..crate::config::NODE_MAX_FILES {
+                let (send, mut recv, hash) = offer(&connection, control.room_id(), &[index as u8], None).await;
+                resume_barrier(&mut recv).await;
+                held.push((send, recv, hash, index as u8));
+            }
+            // Both directions share the same bounded lane. Rejections before an
+            // offer header must not spend another receive reservation.
+            for request in [serde_json::json!("RoomFile"), serde_json::json!({"FileFetch": info.sha256})] {
+                let (mut send, mut recv) = connection.open_bi().await.unwrap();
+                write_frame(&mut send, serde_json::json!({"room": control.room_id(), "request": request})).await;
+                assert_eq!(read_frame(&mut recv).await, serde_json::json!({"RoomFile": "Busy"}));
+                assert!(recv.read_to_end(1).await.unwrap().is_empty());
+            }
+            control.network.unshare_file(info.sha256).unwrap();
+            let (mut send, mut recv) = connection.open_bi().await.unwrap();
+            write_frame(&mut send, serde_json::json!({"room": control.room_id(), "request": {"FileFetch": info.sha256}})).await;
+            assert_eq!(read_frame(&mut recv).await, serde_json::json!({"RoomFile": "Denied"}));
+            control.configure_files(None, 1, budget).unwrap();
+            let (mut send, mut recv) = connection.open_bi().await.unwrap();
+            write_frame(&mut send, serde_json::json!({"room": control.room_id(), "request": "RoomFile"})).await;
+            assert_eq!(read_frame(&mut recv).await, serde_json::json!({"RoomFile": "Denied"}));
+            control.configure_files(Some(inbox.clone()), 1, budget).unwrap();
+            // The old streams stay revoked after the regrant, not merely busy.
+            for (mut send, mut recv, _, byte) in held {
+                let _ = send.write_all(&[byte]).await;
+                let _ = send.finish();
+                assert!(recv.read_to_end(32).await.map_or(true, |ack| ack.is_empty()));
+            }
+            assert_eq!(std::fs::read(&source).unwrap(), [42]);
+            assert!(std::fs::read_dir(&inbox).unwrap().all(|entry| {
+                !entry.unwrap().file_name().to_string_lossy().ends_with(".bin")
+            }));
+            connection.close(0u32.into(), b"");
+            endpoint.close(0u32.into(), b"");
+            control.unregister_room().unwrap();
+            handle.shutdown(DEADLINE).await.unwrap();
+            drop(running.await.unwrap());
+            shutdown(control).await;
+        })).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn forward_received_retains_the_verified_inode_after_path_replacement_and_withdrawal() {
+        forward_received_fixture(false).await;
+    }
+
+    #[tokio::test]
+    async fn forward_received_after_file_runtime_restart_keeps_reception_off() {
+        forward_received_fixture(true).await;
+    }
+
+    async fn forward_received_fixture(restart: bool) {
+        tokio::time::timeout(
+            DEADLINE * 4,
+            tokio::task::LocalSet::new().run_until(async {
+                let root = private_fixture_root();
+                let (control, alice, bob, room) = fixture(root.path()).await;
+                let (handle, actor, _events) = Actor::new(room);
+                let running = tokio::task::spawn_local(actor.run());
+                handle.ready(DEADLINE).await.unwrap();
+                control.register_room(handle.clone()).await.unwrap();
+                let inbox = root.path().join("inbox");
+                control.enable_files(inbox.clone(), 64, 64).unwrap();
+                let bytes = b"retained verified copy";
+                let digest: [u8; 32] = Sha256::digest(bytes).into();
+                let info = crate::files::FileInfo {
+                    bytes: bytes.len() as u64,
+                    sha256: digest,
+                };
+                let id = format!("{}-{}.bin", alice.peer().fingerprint(), info.hash_hex());
+                let original = inbox.join(&id);
+                std::fs::write(&original, bytes).unwrap();
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o600))
+                        .unwrap();
+                }
+                // Stopping incoming reception must neither delete a saved copy nor
+                // disable a new, independently authorized outgoing operation.
+                control.configure_files(None, 64, 64).unwrap();
+                let restarted = if restart {
+                    control.network.close();
+                    // A new file/transport runtime has no inherited Consent,
+                    // receive budget, configured inbox, or active grant.
+                    let (factory, server) = crate::rooms::control::raft::network::Factory::bind(
+                        control.room_id(),
+                        alice.clone(),
+                        BTreeMap::from([
+                            (PeerId::from_peer(&alice.peer()), alice.peer()),
+                            (PeerId::from_peer(&bob.peer()), bob.peer()),
+                        ]),
+                        "127.0.0.1:0".parse().unwrap(),
+                    )
+                    .unwrap();
+                    factory.register_room(handle.clone()).await.unwrap();
+                    assert!(!factory.files_enabled().unwrap());
+                    Some((factory, server))
+                } else {
+                    None
+                };
+                let forwarder = restarted
+                    .as_ref()
+                    .map(|(factory, _)| factory)
+                    .unwrap_or(&control.network);
+                let endpoint = crate::transport::server(
+                    "127.0.0.1:0".parse().unwrap(),
+                    &bob,
+                    &alice.peer(),
+                    ALPN,
+                )
+                .unwrap();
+                let node = Node {
+                    endpoint: Some(endpoint.local_addr().unwrap()),
+                    ..Default::default()
+                };
+                let target = PeerId::from_peer(&bob.peer());
+                if restart {
+                    assert!(matches!(
+                        forwarder
+                            .room_file_received(target, &node, &id, false, DEADLINE)
+                            .await,
+                        Err(Error::Configuration(_))
+                    ));
+                    let missing = root.path().join("absent-source-root");
+                    assert!(!forwarder.bind_received_root(missing.clone(), 64).unwrap());
+                    assert!(
+                        !missing.exists(),
+                        "read-only binding must not create an inbox"
+                    );
+                    assert!(forwarder.bind_received_root(inbox.clone(), 64).unwrap());
+                    assert!(forwarder.bind_received_root(inbox.clone(), 64).unwrap());
+                    assert!(forwarder.bind_received_root(inbox.clone(), 32).is_err());
+                    assert!(
+                        forwarder
+                            .bind_received_root(root.path().to_owned(), 64)
+                            .is_err()
+                    );
+                    assert!(
+                        !forwarder.files_enabled().unwrap(),
+                        "source binding must not grant reception"
+                    );
+                }
+                let room_id = control.room_id();
+                let alice_peer = alice.peer();
+                let destination = root.path().join("forwarded.bin");
+                let policy = crate::files::ReceivePolicy::accept(destination.clone(), 64).unwrap();
+                let retained = root.path().join("retained-original.bin");
+                let remote_original = original.clone();
+                let remote_retained = retained.clone();
+                let remote = tokio::task::spawn_local(async move {
+                    let connection = endpoint.accept().await.unwrap().await.unwrap();
+                    let (mut send, mut recv) = connection.accept_bi().await.unwrap();
+                    assert_eq!(
+                        read_frame(&mut recv).await,
+                        serde_json::json!({"room": room_id, "request": "RoomFile"})
+                    );
+                    // Connection creation follows source verification. Replace the
+                    // pathname before permitting the real sender to start its body.
+                    std::fs::rename(&remote_original, remote_retained).unwrap();
+                    std::fs::write(&remote_original, b"unverified replacement").unwrap();
+                    write_frame(
+                        &mut send,
+                        serde_json::json!({"RoomFile": {"Accepted": room_id}}),
+                    )
+                    .await;
+                    let receipt =
+                        crate::files::stream::receive(&alice_peer, &policy, recv, send, || Ok(()))
+                            .await
+                            .unwrap();
+                    // Retain the peer until its exact receipt has reached the sender.
+                    (endpoint, connection, receipt)
+                });
+                let receipt = forwarder
+                    .room_file_received(target, &node, &id, false, DEADLINE)
+                    .await
+                    .unwrap();
+                let (endpoint, connection, remote_receipt) = remote.await.unwrap();
+                assert_eq!(receipt.info.sha256, digest);
+                assert_eq!(remote_receipt.info.sha256, digest);
+                assert_eq!(std::fs::read(destination).unwrap(), bytes);
+                assert_eq!(std::fs::read(retained).unwrap(), bytes);
+                assert_eq!(std::fs::read(original).unwrap(), b"unverified replacement");
+                assert!(!forwarder.files_enabled().unwrap());
+                if restart {
+                    forwarder.unregister_room().unwrap();
+                    forwarder.close();
+                }
+                connection.close(0u32.into(), b"");
+                endpoint.close(0u32.into(), b"");
+                control.unregister_room().unwrap();
+                handle.shutdown(DEADLINE).await.unwrap();
+                drop(running.await.unwrap());
+                shutdown(control).await;
+            }),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn delayed_availability_cannot_outlive_room_registration() {
+        tokio::time::timeout(
+            DEADLINE * 4,
+            tokio::task::LocalSet::new().run_until(async {
+                let root = private_fixture_root();
+                let (control, alice, bob, room) = fixture(root.path()).await;
+                let (handle, actor, _events) = Actor::new(room);
+                let running = tokio::task::spawn_local(actor.run());
+                handle.ready(DEADLINE).await.unwrap();
+                control.register_room(handle.clone()).await.unwrap();
+                let endpoint = crate::transport::server(
+                    "127.0.0.1:0".parse().unwrap(),
+                    &bob,
+                    &alice.peer(),
+                    ALPN,
+                )
+                .unwrap();
+                let node = Node {
+                    endpoint: Some(endpoint.local_addr().unwrap()),
+                    ..Default::default()
+                };
+                let target = PeerId::from_peer(&bob.peer());
+                let room_id = control.room_id();
+                let (ready, barrier) = tokio::sync::oneshot::channel();
+                let (release, released) = tokio::sync::oneshot::channel();
+                let remote = tokio::task::spawn_local(async move {
+                    let connection = endpoint.accept().await.unwrap().await.unwrap();
+                    let (mut send, mut recv) = connection.accept_bi().await.unwrap();
+                    let hash = [7; 32];
+                    assert_eq!(
+                        read_frame(&mut recv).await,
+                        serde_json::json!({"room": room_id, "request": {"FileAvailability": hash}})
+                    );
+                    assert!(recv.read_to_end(1).await.unwrap().is_empty());
+                    ready.send(()).unwrap();
+                    released.await.unwrap();
+                    write_frame(
+                        &mut send,
+                        serde_json::json!({"FileAvailability": {"bytes": 1, "sha256": hash}}),
+                    )
+                    .await;
+                    send.finish().unwrap();
+                    connection.closed().await;
+                });
+                let query = control
+                    .network
+                    .file_availability(target, &node, [7; 32], DEADLINE);
+                let detach = async {
+                    barrier.await.unwrap();
+                    control.unregister_room().unwrap();
+                    release.send(()).unwrap();
+                };
+                let (result, ()) = tokio::join!(query, detach);
+                assert!(
+                    matches!(result, Err(Error::Denied)),
+                    "detached room accepted a delayed hint: {result:?}"
+                );
+                handle.shutdown(DEADLINE).await.unwrap();
+                drop(running.await.unwrap());
+                shutdown(control).await;
+                remote.await.unwrap();
+            }),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
     async fn live_zero_byte_receives_preserve_attempt_budget_across_regrants() {
         tokio::time::timeout(
             DEADLINE * 4,
             tokio::task::LocalSet::new().run_until(async {
-                let root = tempfile::tempdir().unwrap();
+                let root = private_fixture_root();
                 let (control, alice, bob, room) = fixture(root.path()).await;
                 let (handle, actor, _events) = Actor::new(room);
                 let running = tokio::task::spawn_local(actor.run());
@@ -946,7 +1247,7 @@ async fn wait_leader(node: &ControlNode) {
 
 #[tokio::test]
 async fn foreground_service_resumes_exact_public_receipts_without_reinitializing() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_fixture_root();
     let alice = Arc::new(Identity::create(&directory.path().join("alice")).unwrap());
     let bob = Identity::create(&directory.path().join("bob")).unwrap();
     let anchor = RootBundle::create(&alice, "Service resume fixture")
@@ -1027,7 +1328,7 @@ async fn foreground_service_resumes_exact_public_receipts_without_reinitializing
 
 #[tokio::test]
 async fn original_author_routes_to_remote_leader_over_actual_mutual_tls() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_fixture_root();
     let identities: Vec<_> = (0..3)
         .map(|index| {
             Arc::new(Identity::create(&directory.path().join(format!("identity-{index}"))).unwrap())

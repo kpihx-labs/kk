@@ -11,7 +11,7 @@ fn message_alerts_are_default_off_and_only_explicit_updates_enable_them() {
             .get("message_notifications")
             .is_none()
     );
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let directory = root.path().join("profile");
     let initial = Settings::load(&directory).unwrap();
     assert!(!initial.message_notifications);
@@ -69,7 +69,7 @@ fn sharing_defaults_off_for_legacy_settings_and_survives_partial_updates() {
     .unwrap();
     assert!(!legacy.share_display_name);
     assert_eq!(legacy.sidebar_mode, SidebarMode::Expanded);
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let directory = root.path().join("profile");
     assert!(!Settings::load(&directory).unwrap().share_display_name);
     Settings::update_with(&directory, |settings| {
@@ -92,7 +92,7 @@ fn sharing_defaults_off_for_legacy_settings_and_survives_partial_updates() {
 
 #[test]
 fn sidebar_modes_are_typed_and_preserve_other_settings() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let directory = root.path().join("profile");
     for mode in [
         SidebarMode::Expanded,
@@ -114,7 +114,7 @@ fn sidebar_modes_are_typed_and_preserve_other_settings() {
 
 #[test]
 fn supplied_fields_update_together_and_absent_fields_are_preserved() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let directory = root.path().join("profile");
     let appearance = Appearance {
         hue: Some(130),
@@ -135,7 +135,7 @@ fn supplied_fields_update_together_and_absent_fields_are_preserved() {
 
 #[test]
 fn concurrent_independent_field_updates_preserve_both_changes() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let directory = root.path().join("profile");
     let directory = directory.as_path();
     let stale = Settings::load(directory).unwrap();
@@ -182,7 +182,7 @@ fn concurrent_independent_field_updates_preserve_both_changes() {
 
 #[test]
 fn concurrent_partial_appearance_callbacks_preserve_distinct_subfields() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let directory = root.path().join("profile");
     let directory = directory.as_path();
     let (locked_tx, locked_rx) = mpsc::channel();
@@ -222,7 +222,7 @@ fn concurrent_partial_appearance_callbacks_preserve_distinct_subfields() {
 
 #[test]
 fn callback_errors_and_invalid_results_preserve_saved_bytes() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let directory = root.path().join("profile");
     Settings::update(&directory, Some("Retained".into()), None).unwrap();
     let before = std::fs::read(directory.join("settings.json")).unwrap();
@@ -252,7 +252,7 @@ fn callback_errors_and_invalid_results_preserve_saved_bytes() {
 
 #[test]
 fn invalid_updates_leave_all_saved_fields_unchanged() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let directory = root.path().join("profile");
     let directory = directory.as_path();
     Settings::update(directory, Some("Retained".into()), None).unwrap();
@@ -291,7 +291,7 @@ fn invalid_updates_leave_all_saved_fields_unchanged() {
 
 #[test]
 fn invalid_existing_settings_are_not_silently_repaired() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let directory = root.path().join("profile");
     let directory = directory.as_path();
     super::super::storage::update(directory, "settings.json", |current: &mut Settings| {

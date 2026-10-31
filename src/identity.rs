@@ -1,11 +1,15 @@
 use std::{fs, io::Read, path::Path};
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use rustls::pki_types::PrivatePkcs8KeyDer;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use sha2::{Digest, Sha256};
 
 use crate::{Error, Result, config};
+
+#[cfg(unix)]
+#[path = "identity/unix.rs"]
+mod unix;
 
 /// A verified out-of-band public identity. Constructing it does not verify its origin.
 #[derive(Clone)]
@@ -59,32 +63,16 @@ impl Identity {
     /// Create a new private identity directory. Never replaces existing state.
     #[cfg(unix)]
     pub fn create(directory: &Path) -> Result<Self> {
-        use std::{
-            io::Write,
-            os::unix::fs::{DirBuilderExt, OpenOptionsExt},
-        };
-
+        let directory = unix::Directory::create(directory)?;
         let generated = rcgen::generate_simple_self_signed(vec![config::TLS_NAME.to_owned()])
             .map_err(|_| Error::Identity("certificate generation failed"))?;
         let certificate = generated.cert.der().to_vec();
         let key = PrivatePkcs8KeyDer::from(generated.signing_key.serialize_der());
-        fs::DirBuilder::new().mode(0o700).create(directory)?;
         // A partial failure leaves a private directory, never a silently regenerated key.
-        let mut key_file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(directory.join("private-key.der"))?;
-        key_file.write_all(key.secret_pkcs8_der())?;
-        key_file.sync_all()?;
-        let mut certificate_file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o644)
-            .open(directory.join("certificate.der"))?;
-        certificate_file.write_all(&certificate)?;
-        certificate_file.sync_all()?;
-        Self::load(directory)
+        directory.write("private-key.der", key.secret_pkcs8_der(), 0o600)?;
+        directory.write("certificate.der", &certificate, 0o644)?;
+        directory.sync()?;
+        Self::load_opened(&directory)
     }
 
     #[cfg(not(unix))]
@@ -95,23 +83,19 @@ impl Identity {
     /// Load an existing protected identity; no implicit creation or repair.
     #[cfg(unix)]
     pub fn load(directory: &Path) -> Result<Self> {
-        use std::os::unix::fs::PermissionsExt;
+        Self::load_opened(&unix::Directory::open(directory)?)
+    }
 
-        let metadata = fs::symlink_metadata(directory)?;
-        if !metadata.is_dir() || metadata.permissions().mode() & 0o777 != 0o700 {
-            return Err(Error::Identity(
-                "directory must be a non-symlink with mode 0700",
-            ));
-        }
-        let key_path = directory.join("private-key.der");
-        let metadata = fs::symlink_metadata(&key_path)?;
-        if !metadata.is_file() || metadata.permissions().mode() & 0o777 != 0o600 {
-            return Err(Error::Identity(
-                "private key must be a regular file with mode 0600",
-            ));
-        }
-        let public = Peer::load(&directory.join("certificate.der"))?;
-        let key: PrivateKeyDer<'static> = PrivatePkcs8KeyDer::from(read_bounded(&key_path)?).into();
+    #[cfg(unix)]
+    fn load_opened(directory: &unix::Directory) -> Result<Self> {
+        let public = Peer::from_der(directory.read("certificate.der", false)?)?;
+        let key: PrivateKeyDer<'static> =
+            PrivatePkcs8KeyDer::from(directory.read("private-key.der", true)?).into();
+        Self::from_parts(public, key)
+    }
+
+    #[cfg(any(unix, windows))]
+    fn from_parts(public: Peer, key: PrivateKeyDer<'static>) -> Result<Self> {
         // Rustls checks certificate/key consistency before an identity can be used.
         rustls::sign::CertifiedKey::from_der(
             vec![public.certificate.clone()],
@@ -121,6 +105,48 @@ impl Identity {
         .and_then(|certified_key| certified_key.keys_match())
         .map_err(|_| Error::Identity("invalid or mismatched private key"))?;
         Ok(Self { public, key })
+    }
+
+    /// Windows capability backend: reserve a fresh identity directory before
+    /// generating anything. An existing/partial directory is never adopted.
+    #[cfg(windows)]
+    pub fn create_windows(
+        parent: &crate::profile::windows::ProtectedDirectory,
+        leaf: &std::ffi::OsStr,
+    ) -> Result<Self> {
+        let directory = parent.create_child(leaf)?;
+        let generated = rcgen::generate_simple_self_signed(vec![config::TLS_NAME.to_owned()])
+            .map_err(|_| Error::Identity("certificate generation failed"))?;
+        let certificate = generated.cert.der().to_vec();
+        let key = PrivatePkcs8KeyDer::from(generated.signing_key.serialize_der());
+        let mut private = directory.create_private_file(std::ffi::OsStr::new("private-key.der"))?;
+        private.write_bytes(key.secret_pkcs8_der())?;
+        drop(private);
+        // The certificate is the final publication, never a partial named DER.
+        directory.publish_public(std::ffi::OsStr::new("certificate.der"), &certificate)?;
+        Self::load_windows_opened(&directory)
+    }
+
+    /// Load through a retained parent capability without pathname bootstrap.
+    #[cfg(windows)]
+    pub fn load_windows(
+        parent: &crate::profile::windows::ProtectedDirectory,
+        leaf: &std::ffi::OsStr,
+    ) -> Result<Self> {
+        let directory = parent.open_child(leaf)?;
+        Self::load_windows_opened(&directory)
+    }
+
+    #[cfg(windows)]
+    fn load_windows_opened(
+        directory: &crate::profile::windows::ProtectedDirectory,
+    ) -> Result<Self> {
+        let mut certificate =
+            directory.read_private_file(std::ffi::OsStr::new("certificate.der"))?;
+        let public = Peer::from_der(std::mem::take(&mut *certificate))?;
+        let mut private = directory.read_private_file(std::ffi::OsStr::new("private-key.der"))?;
+        let key = PrivatePkcs8KeyDer::from(std::mem::take(&mut *private)).into();
+        Self::from_parts(public, key)
     }
 
     #[cfg(not(unix))]
@@ -135,13 +161,55 @@ impl Identity {
 }
 
 fn read_bounded(path: &Path) -> Result<Vec<u8>> {
-    if !fs::symlink_metadata(path)?.is_file() {
+    #[cfg(unix)]
+    let file = fs::File::from(rustix::fs::open(
+        path,
+        rustix::fs::OFlags::RDONLY
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::NONBLOCK
+            | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    )?);
+    #[cfg(windows)]
+    let file = {
+        use std::os::windows::fs::OpenOptionsExt;
+        // OPEN_REPARSE_POINT inspects the opened object, not its link target.
+        // Only read sharing is permitted while this bounded import is active.
+        // Public certificates confer no trust until fingerprint verification.
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        const FILE_SHARE_READ: u32 = 1;
+        fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)?
+    };
+    #[cfg(not(any(unix, windows)))]
+    let file = {
+        if !fs::symlink_metadata(path)?.is_file() {
+            return Err(Error::Identity(
+                "expected a regular non-symlink identity file",
+            ));
+        }
+        fs::File::open(path)?
+    };
+    let metadata = file.metadata()?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(Error::Identity(
+                "public identity must not be a reparse point",
+            ));
+        }
+    }
+    if !metadata.is_file() {
         return Err(Error::Identity(
             "expected a regular non-symlink identity file",
         ));
     }
-    let file = fs::File::open(path)?;
-    if file.metadata()?.len() > config::MAX_IDENTITY_BYTES as u64 {
+    if metadata.len() > config::MAX_IDENTITY_BYTES as u64 {
         return Err(Error::Identity("identity file is too large"));
     }
     let mut bytes = Vec::new();

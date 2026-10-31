@@ -196,7 +196,24 @@ fn blocking_line(hidden: bool, cancel: rustix::fd::OwnedFd) -> Result<Zeroizing<
     Ok(Zeroizing::new(value.to_owned()))
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+async fn line(hidden: bool, _prompt: &str) -> Result<Zeroizing<String>> {
+    if io::stdin().is_terminal() {
+        return Err(Error::Configuration(
+            "Windows console input requires safe echo restoration; use explicitly redirected UTF-8 stdin",
+        ));
+    }
+    let worker = crate::stdio_worker::configured()?;
+    if hidden {
+        crate::output::diagnostic(b"INPUT sensitive stdin\n").await?;
+    }
+    let bytes = worker.read().await?;
+    let value = std::str::from_utf8(&bytes)
+        .map_err(|_| Error::Configuration("text input must be UTF-8"))?;
+    Ok(Zeroizing::new(value.to_owned()))
+}
+
+#[cfg(not(any(unix, windows)))]
 async fn line(_hidden: bool, _prompt: &str) -> Result<Zeroizing<String>> {
     Err(Error::UnsupportedPlatform)
 }

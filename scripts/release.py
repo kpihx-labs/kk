@@ -19,11 +19,14 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGETS = {"x86_64-unknown-linux-gnu": "linux-x86_64", "aarch64-unknown-linux-gnu": "linux-aarch64"}
+TARGETS = {"x86_64-unknown-linux-gnu": "linux-x86_64", "aarch64-unknown-linux-gnu": "linux-aarch64",
+           "x86_64-apple-darwin": "macos-x86_64", "aarch64-apple-darwin": "macos-aarch64"}
 # Explicit platform/container contract; a future Windows helper is not an ELF rename.
 HELPERS = {
     "x86_64-unknown-linux-gnu": {"platform": "linux", "architecture": "x86_64", "executable_format": "elf", "suffix": ".bin"},
     "aarch64-unknown-linux-gnu": {"platform": "linux", "architecture": "aarch64", "executable_format": "elf", "suffix": ".bin"},
+    "x86_64-apple-darwin": {"platform": "macos", "architecture": "x86_64", "executable_format": "macho", "suffix": ".bin"},
+    "aarch64-apple-darwin": {"platform": "macos", "architecture": "aarch64", "executable_format": "macho", "suffix": ".bin"},
 }
 MAX_MEMBERS = 4096
 MAX_UNPACKED_BYTES = 256 * 1024 * 1024
@@ -78,21 +81,22 @@ def archive(path, root, files, epoch):
             stream.addfile(info, io.BytesIO(data))
 
 
-def archive_snapshot(path):
+def archive_snapshot(path, limit=None):
     """Open once, reject links/special files, and freeze bounded input bytes."""
+    limit = MAX_UNPACKED_BYTES if limit is None else limit
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError as error:
         raise ValueError("Compressed release archive is non-ordinary or unavailable") from error
     try:
         metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_UNPACKED_BYTES:
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > limit:
             raise ValueError("Compressed release archive is non-ordinary or oversized")
         with os.fdopen(descriptor, "rb", closefd=False) as source:
-            snapshot = source.read(MAX_UNPACKED_BYTES + 1)
+            snapshot = source.read(limit + 1)
     finally:
         os.close(descriptor)
-    if len(snapshot) > MAX_UNPACKED_BYTES:
+    if len(snapshot) > limit:
         raise ValueError("Compressed release archive is oversized")
     return snapshot
 
@@ -206,6 +210,33 @@ def verify(path, expected=None):
             "authenticity": "authenticate the archive with its CI attestation or an independently trusted digest"}
 
 
+def override_snapshot(directory, omitted=()):
+    """Public imported source only; cache markers are not upstream source."""
+    files, total = {}, 0
+    for path in sorted(directory.rglob("*")):
+        if path.is_symlink():
+            raise ValueError("Symlink in imported source")
+        if not path.is_file() or path.name == ".cargo-ok":
+            continue
+        relative = path.relative_to(directory).as_posix()
+        member_path(relative)
+        if relative in omitted:
+            continue
+        if len(files) >= 10000:
+            raise ValueError("Imported source exceeds inventory budget")
+        data = archive_snapshot(path, min(16 * 1024 * 1024, 64 * 1024 * 1024 - total))
+        total += len(data)
+        if total > 64 * 1024 * 1024:
+            raise ValueError("Imported source exceeds inventory budget")
+        files[relative] = digest(data)
+    return files
+
+
+def override_tree_digest(directory, omitted=()):
+    return digest(json.dumps(override_snapshot(directory, omitted), sort_keys=True,
+                             separators=(",", ":")).encode())
+
+
 def check_override_sources():
     base = ROOT / "third_party/overrides"
     origins = json.loads((base / "sources.json").read_text())
@@ -216,7 +247,60 @@ def check_override_sources():
         with path.open("rb") as source:
             if hashlib.file_digest(source, "sha256").hexdigest() != expected:
                 raise ValueError("Imported upstream primitive changed: " + relative)
+    for key, origin in origins["packages"].items():
+        if "directory" not in origin:
+            continue
+        member_path(origin["directory"])
+        directory = base / origin["directory"]
+        if directory.is_symlink() or not directory.resolve().is_relative_to(base.resolve()):
+            raise ValueError("Unsafe recorded override directory")
+        package = tomllib.loads((directory / "Cargo.toml").read_text())["package"]
+        vcs = json.loads((directory / ".cargo_vcs_info.json").read_text())
+        if (key != package["name"] + "@" + package["version"]
+                or origin.get("registry_version", package["version"]) != package["version"]
+                or package["repository"].rstrip("/") != origin["repository"].rstrip("/")
+                or vcs["git"]["sha1"] != origin["revision"]
+                or vcs.get("path_in_vcs", "") != origin["path_in_vcs"]):
+            raise ValueError("Override identity/revision differs from source ledger")
+        for relative, expected in origin["reviewed_files"].items():
+            member_path(relative)
+            path = directory / relative
+            if path.is_symlink() or not path.resolve().is_relative_to(directory.resolve()) or digest(archive_snapshot(path, 16 * 1024 * 1024)) != expected:
+                raise ValueError("Reviewed override file changed: " + key + "/" + relative)
+        if override_tree_digest(directory, origin["reviewed_files"]) != origin["upstream_tree_sha256"]:
+            raise ValueError("Unreviewed imported source changed: " + key)
+        manifest = tomllib.loads((ROOT / "Cargo.toml").read_text())
+        scope = manifest.get("target", {}).get(origin["sdk_target"], {}) if "sdk_target" in origin else manifest
+        dependency = scope.get("dependencies", {}).get(origin["sdk_dependency"])
+        if (not isinstance(dependency, dict) or dependency.get("path") != directory.relative_to(ROOT).as_posix()
+                or dependency.get("package", origin["sdk_dependency"]) != package["name"]
+                or dependency.get("version") != "=" + package["version"]
+                or any(field in dependency for field in ("git", "registry"))):
+            raise ValueError("SDK dependency must directly inherit the recorded override")
     return origins["packages"]
+
+
+def check_override_source_files(source_files, notices):
+    """Offline source must carry path-dependency code and its original legal data."""
+    current = None
+    for item in notices:
+        origin = item.get("override") or {}
+        if "directory" not in origin:
+            continue
+        if current is None:
+            current = check_override_sources()
+        if current.get(item["name"] + "@" + item["version"]) != origin:
+            raise ValueError("Override provenance changed during source preparation")
+        base = ROOT / "third_party/overrides" / origin["directory"]
+        required = [base / name for name in override_snapshot(base)]
+        required += [ROOT / name for name in ("Cargo.toml", "Cargo.lock", "third_party/overrides/sources.json", "third_party/notices.json")]
+        for name in origin["required_notices"]:
+            member_path(name)
+            required.append(base / name if Path(name).name == name else ROOT / "third_party" / name)
+        for path in required:
+            name = path.relative_to(ROOT).as_posix()
+            if name not in source_files or source_files[name][0] != path.read_bytes():
+                raise ValueError("Offline SDK source missing or changed: " + name)
 
 
 def licenses():
@@ -230,6 +314,11 @@ def licenses():
             continue
         key = package["name"] + "@" + package["version"]
         override = overrides.get(key) if package["source"] is None else None
+        recorded = overrides.get(key, {})
+        if "directory" in recorded:
+            expected = ROOT / "third_party/overrides" / recorded["directory"] / "Cargo.toml"
+            if package["source"] is not None or Path(package["manifest_path"]).absolute() != expected:
+                raise ValueError("Resolved SDK dependency bypasses its recorded path")
         if package["source"] is None and override is None:
             raise ValueError("Unrecorded local dependency source: " + key)
         if not package.get("license"):
@@ -267,6 +356,21 @@ def licenses():
             if relative not in included:
                 included.append(relative)
         notices.append({"name": package["name"], "version": package["version"], "license": package["license"], "repository":package.get("repository"), "revision":revision, "path_in_vcs":vcs.get("path_in_vcs", ""), "override": override, "notices": included})
+        if "directory" in recorded:
+            if package["license"] != tomllib.loads(expected.read_text())["package"]["license"]:
+                raise ValueError("Resolved override license differs from original manifest")
+            for relative in recorded["required_notices"]:
+                member_path(relative)
+                if Path(relative).name == relative:
+                    name = f"licenses/{package['name']}-{package['version']}/{relative}"
+                    if name not in included or digest(files[name][0]) != recorded["reviewed_files"].get(relative):
+                        raise ValueError("Missing or changed original local override notice")
+                    data = files[name][0]
+                    blob = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data, usedforsecurity=False).hexdigest()
+                    if blob != recorded.get("license_git_blob"):
+                        raise ValueError("Original local override notice differs from upstream Git blob")
+                elif relative not in included or extra["sources"][relative]["revision"] != recorded["revision"]:
+                    raise ValueError("Missing or mismatched original override notice")
     return notices, files
 
 
@@ -336,9 +440,37 @@ def bootstrap_assets(target, version, commit, files, destination):
     return publish_assets({helper_name: helper, notice_name: notices}, destination)
 
 
+def macos_minimum(binary):
+    """Read Apple's parsed deployment metadata; never run the candidate binary."""
+    if platform.system() != "Darwin":
+        raise ValueError("macOS packaging requires native Apple otool/codesign")
+    command("/usr/bin/codesign", "--verify", "--strict", str(binary))
+    output = command("/usr/bin/otool", "-l", str(binary))
+    versions = []
+    for block in re.split(r"(?m)^Load command [0-9]+$", output):
+        if re.search(r"(?m)^\s*cmd LC_BUILD_VERSION$", block):
+            if not re.search(r"(?m)^\s*platform (?:1|macos)$", block):
+                raise ValueError("Mach-O deployment platform is not macOS")
+            match = re.search(r"(?m)^\s*minos ([0-9]+\.[0-9]+(?:\.[0-9]+)?)$", block)
+        elif re.search(r"(?m)^\s*cmd LC_VERSION_MIN_MACOSX$", block):
+            match = re.search(r"(?m)^\s*version ([0-9]+\.[0-9]+(?:\.[0-9]+)?)$", block)
+        else:
+            continue
+        if match is None:
+            raise ValueError("Missing Mach-O deployment version")
+        components = [int(part) for part in match[1].split(".")]
+        components += [0] * (3 - len(components))
+        if components[0] < 10 or components[0] > 65535 or any(part > 255 for part in components[1:]):
+            raise ValueError("Invalid Mach-O deployment version")
+        versions.append(".".join(map(str, components)))
+    if len(versions) != 1:
+        raise ValueError("Expected exactly one thin Mach-O macOS deployment requirement")
+    return versions[0]
+
+
 def bundle(target, destination):
     if target not in TARGETS:
-        raise ValueError("Only qualified Linux release targets are supported")
+        raise ValueError("Unsupported native release target")
     if command("git", "status", "--porcelain"):
         raise ValueError("Release archives require a clean committed source tree")
     metadata = tomllib.loads((ROOT / "Cargo.toml").read_text())["package"]
@@ -359,13 +491,18 @@ def bundle(target, destination):
     for name in ["LICENSE", "README.md", "CONTRACT.md", "Cargo.lock"]:
         files[name] = ((ROOT / name).read_bytes(), 0o644)
     files["THIRD-PARTY.json"] = ((json.dumps(notices, indent=2) + "\n").encode(), 0o644)
-    required = set(re.findall(r"GLIBC_(\d+\.\d+(?:\.\d+)?)", command("readelf", "--version-info", str(binary))))
+    apple = target.endswith("-apple-darwin")
+    minimum_os = macos_minimum(binary) if apple else None
+    required = set() if apple else set(re.findall(r"GLIBC_(\d+\.\d+(?:\.\d+)?)", command("readelf", "--version-info", str(binary))))
     manifest = {"format": 1, "version": version, "target": target, "commit": commit,
                 "rustc": command("rustc", "--version"), "build_python_libc": platform.libc_ver(),
-                "build_system_libc": command("ldd", "--version").splitlines()[0],
+                "build_system_libc": None if apple else command("ldd", "--version").splitlines()[0],
                 "binary_glibc_required": max(required, key=lambda value:tuple(map(int,value.split(".")))) if required else None,
                 "runtime_dependencies": ["GStreamer tools/base/good with Opus/VP8", "util-linux prlimit/setpriv for bounded Linux native capture"],
                 "files": {name: digest(data) for name, (data, _) in sorted(files.items())}}
+    if apple:
+        manifest["binary_macos_required"] = minimum_os
+        manifest["runtime_dependencies"] = ["Apple system libraries in Mach-O load commands", "GStreamer tools/base/good with Opus/VP8 for native media"]
     files["build-manifest.json"] = ((json.dumps(manifest, indent=2) + "\n").encode(), 0o644)
     destination.mkdir(parents=True, exist_ok=True)
     # Regenerate the complete expected set privately, including source/checksums.
@@ -401,6 +538,7 @@ def bundle(target, destination):
             raise ValueError("Vendored source contains a symlink")
         if path.is_file():
             source_files["vendor/" + path.relative_to(vendor).as_posix()] = (path.read_bytes(), 0o755 if path.stat().st_mode & 0o111 else 0o644)
+    check_override_source_files(source_files, notices)
     config = '.cargo/config.toml'
     if config in source_files:
         raise ValueError("Review existing Cargo configuration before vendoring")

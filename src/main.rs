@@ -7,7 +7,7 @@ use std::{
 };
 
 fn main() -> ExitCode {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     if let Some(status) = kk::stdio_worker::dispatch() {
         return status;
     }
@@ -28,7 +28,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> kk::Result<()> {
-    #[cfg(target_vendor = "apple")]
+    #[cfg(any(target_vendor = "apple", windows))]
     kk::stdio_worker::configure(std::env::current_exe()?)?;
     tokio::runtime::Builder::new_current_thread()
         .enable_all()

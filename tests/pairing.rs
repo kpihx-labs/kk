@@ -1,4 +1,5 @@
 #![cfg(target_os = "linux")]
+mod support;
 
 use age::secrecy::SecretString;
 use kk::{
@@ -13,7 +14,7 @@ use std::{
 
 #[tokio::test]
 async fn real_tcp_pake_and_pinned_tls_proof_precede_contact_storage() {
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let a = Identity::create(&root.path().join("a")).unwrap();
     let b = Identity::create(&root.path().join("b")).unwrap();
     let ra = Registry::open(root.path().join("pa")).unwrap();
@@ -67,7 +68,7 @@ async fn real_tcp_pake_and_pinned_tls_proof_precede_contact_storage() {
 
 #[tokio::test]
 async fn wrong_code_wrong_invitation_and_denial_never_call_commit() {
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let a = Identity::create(&root.path().join("a")).unwrap();
     let b = Identity::create(&root.path().join("b")).unwrap();
     for mode in ["code", "id", "deny"] {
@@ -121,7 +122,7 @@ async fn wrong_code_wrong_invitation_and_denial_never_call_commit() {
 
 #[tokio::test]
 async fn store_failure_is_not_reported_as_atomic_success() {
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let a = Identity::create(&root.path().join("a")).unwrap();
     let b = Identity::create(&root.path().join("b")).unwrap();
     for failing_server in [true, false] {

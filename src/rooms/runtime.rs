@@ -4,7 +4,7 @@
 use super::{
     control::{
         Proposal, View,
-        raft::{ApplyResult, Position, service::ControlNode},
+        raft::{ApplyResult, PeerId, Position, service::ControlNode},
     },
     group::{Group, Text},
 };
@@ -12,10 +12,27 @@ use crate::{
     Error, Identity, Peer, Result, config,
     contacts::{Action, Registry},
 };
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 mod actor;
 pub mod history;
 pub use actor::{Actor, Event, Handle, Publication, ReferencedPublication, Status};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingMutationKind {
+    Admission,
+    Removal,
+}
+
+/// Safe local recovery metadata, not public acceptance or admission delivery.
+/// Contains no proposal payload, Welcome, package, key or enrollment capability.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct PendingMutation {
+    pub id: [u8; 32],
+    pub kind: PendingMutationKind,
+    pub member: super::control::raft::PeerId,
+    pub epoch_before: u64,
+}
 
 pub struct MediaPolicy {
     pub epoch: u64,
@@ -57,6 +74,9 @@ impl RoomCapabilities {
 }
 
 pub struct Room {
+    // Public replacement fence only: fresh for each foreground load, never
+    // persisted, derived from a secret, or accepted as authorization.
+    foreground_instance: [u8; 16],
     identity: Arc<Identity>,
     control: Arc<ControlNode>,
     group: Group,
@@ -74,6 +94,15 @@ impl Room {
         group: Group,
         profile: Registry,
     ) -> Result<Self> {
+        Self::with_foreground_instance(identity, control, group, profile, foreground_instance()?)
+    }
+    fn with_foreground_instance(
+        identity: Arc<Identity>,
+        control: Arc<ControlNode>,
+        group: Group,
+        profile: Registry,
+        foreground_instance: [u8; 16],
+    ) -> Result<Self> {
         if group.owner() != identity.peer().fingerprint()
             || control.id() != super::control::raft::PeerId::from_peer(&identity.peer())
             || group.room_id() != control.room_id()
@@ -81,6 +110,7 @@ impl Room {
             return Err(Error::Authentication);
         }
         Ok(Self {
+            foreground_instance,
             identity,
             control,
             group,
@@ -103,6 +133,9 @@ impl Room {
         deadline: Duration,
     ) -> Result<Self> {
         crate::transport::validate_duration(deadline, config::MAX_FILE_TIMEOUT)?;
+        // Obtain entropy before receiving/applying a Welcome or mutating private
+        // state. No new fallible randomness after the durable join checkpoint.
+        let foreground_instance = foreground_instance()?;
         if candidate.owner != identity.peer().fingerprint()
             || candidate.anchor.id() != control.room_id()
             || control.id() != super::control::raft::PeerId::from_peer(&identity.peer())
@@ -117,7 +150,13 @@ impl Room {
                 .ok_or(Error::Node("room admission is not committed"))?;
             membership_policy(&profile, &identity, &control.public_view().await?.peers())?;
             let group = Group::join_committed(candidate, &artifact.wire, inviter, &record)?;
-            let mut room = Self::new(identity, control, group, profile)?;
+            let mut room = Self::with_foreground_instance(
+                identity,
+                control,
+                group,
+                profile,
+                foreground_instance,
+            )?;
             room.synchronize(deadline).await?;
             membership_policy(&room.profile, &room.identity, &room.peers())?;
             Ok(room)
@@ -479,8 +518,116 @@ impl Room {
         let view = self.synchronize(deadline).await?;
         self.group.prepare_departure(&self.identity, &view, peer)
     }
+
+    /// Voluntary departure has no target argument and requires no moderator grant.
+    /// Another backend creates the MLS Remove; timeout remains an uncertain outcome.
+    pub async fn leave_self(&mut self, deadline: Duration) -> Result<ApplyResult> {
+        crate::transport::validate_duration(deadline, config::MAX_FILE_TIMEOUT)?;
+        tokio::time::timeout(deadline, async {
+            let view = self.synchronize(deadline).await?;
+            let request =
+                super::control::departure::Request::issue(&self.identity, self.room_id(), &view)?;
+            let result = self.control.request_departure(request, deadline).await?;
+            if result.accepted {
+                match self.synchronize(deadline).await {
+                    Err(Error::Revoked) if !self.group.is_active() => (),
+                    Err(error) => return Err(error),
+                    Ok(_) => return Err(Error::Authentication),
+                }
+            }
+            Ok(result)
+        })
+        .await
+        .map_err(|_| Error::Timeout)?
+    }
+
+    /// A member's signed consent authorizes only that exact member/context.
+    /// Existing moderator/MLS and voter-change primitives remain the effect owners.
+    pub(crate) async fn accept_departure_request(
+        &mut self,
+        request: super::control::departure::Request,
+        deadline: Duration,
+    ) -> Result<ApplyResult> {
+        crate::transport::validate_duration(deadline, config::MAX_FILE_TIMEOUT)?;
+        tokio::time::timeout(deadline, async {
+            let view = self.synchronize(deadline).await?;
+            let member = request.verify(self.room_id(), &view)?;
+            let target = PeerId::from_peer(&member);
+            if target == self.control.id()
+                || self.group.prepared_control()?.is_some()
+                || !view
+                    .member_rights(&self.identity.peer().fingerprint_bytes())
+                    .is_some_and(|rights| rights.can_remove())
+            {
+                return Err(Error::Denied);
+            }
+            if view
+                .member_rights(&target.0)
+                .is_some_and(|rights| rights.can_control())
+                && !view.peers().iter().any(|peer| {
+                    PeerId::from_peer(peer) != target
+                        && view
+                            .member_rights(&peer.fingerprint_bytes())
+                            .is_some_and(|rights| rights.can_control())
+                })
+            {
+                return Err(Error::Denied);
+            }
+            let configuration = self.control.control_membership();
+            let mut voters: BTreeSet<_> = configuration.membership().voter_ids().collect();
+            if voters.remove(&target) {
+                if voters.is_empty() {
+                    return Err(Error::Denied);
+                }
+                // No implicit promotion, no shutdown of any other controller.
+                // Failure/timeout prevents the subsequent data-membership change.
+                self.control.set_voters(voters, deadline).await?;
+            }
+            let view = self.synchronize(deadline).await?;
+            request.verify(self.room_id(), &view)?;
+            self.group
+                .prepare_departure(&self.identity, &view, &member)?;
+            self.submit_prepared(deadline).await
+        })
+        .await
+        .map_err(|_| Error::Timeout)?
+    }
     pub fn prepared_control(&self) -> Result<Option<Proposal>> {
         self.group.prepared_control()
+    }
+
+    pub fn pending_mutation(&self) -> Result<Option<PendingMutation>> {
+        self.group
+            .prepared_control_with_member()?
+            .map(|(proposal, member)| {
+                Ok(PendingMutation {
+                    id: proposal.id()?,
+                    member,
+                    kind: match proposal.action()? {
+                        super::control::Action::Add => PendingMutationKind::Admission,
+                        super::control::Action::Remove => PendingMutationKind::Removal,
+                    },
+                    epoch_before: proposal.epoch_before(),
+                })
+            })
+            .transpose()
+    }
+
+    /// Explicit retry of the operation the caller inspected/confirmed. Never
+    /// prepare a replacement or replay a different pending mutation. The actor
+    /// serializes this check and submission; cancellation retains uncertain state.
+    /// Admission acceptance does not complete an invitation or deliver a Welcome.
+    pub async fn retry_prepared(
+        &mut self,
+        expected: [u8; 32],
+        deadline: Duration,
+    ) -> Result<ApplyResult> {
+        crate::transport::validate_duration(deadline, config::MAX_FILE_TIMEOUT)?;
+        let pending = self.pending_mutation()?.ok_or(Error::Denied)?;
+        if pending.id != expected {
+            return Err(Error::Denied);
+        }
+        self.submit_prepared(deadline).await
     }
 
     /// Retry the persisted EXACT signed operation. An uncertain result leaves its
@@ -513,6 +660,15 @@ impl Room {
     pub fn into_group(self) -> Group {
         self.group
     }
+}
+
+fn foreground_instance() -> Result<[u8; 16]> {
+    use ring::rand::{SecureRandom, SystemRandom};
+    let mut instance = [0; 16];
+    SystemRandom::new()
+        .fill(&mut instance)
+        .map_err(|_| Error::Configuration("foreground instance randomness unavailable"))?;
+    Ok(instance)
 }
 
 fn membership_policy(profile: &Registry, identity: &Identity, peers: &[Peer]) -> Result<()> {

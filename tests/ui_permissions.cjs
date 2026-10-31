@@ -6,9 +6,11 @@ const source = fs.readFileSync(__dirname + "/../src/ui/assets/app.js", "utf8");
 
 function harness() {
   const calls = [], notices = [], dialogs = [];
-  const target = {name:"team", status:{active:true, address:"127.0.0.1:45462", members:["self","reader"], voters:["self"], capabilities:{publish:true,invite:true,remove:true,control:true,admission_roles:["participant","reader","inviter","moderator"]}}};
+  const target = {name:"team", status:{active:true, address:"127.0.0.1:45462", foreground_instance:Array(16).fill(1), members:["self","reader"], voters:["self"], capabilities:{publish:true,invite:true,remove:true,control:true,admission_roles:["participant","reader","inviter","moderator"]}}};
   const el = (_tag, _cls, text) => ({text, children:[], append(...children){this.children.push(...children);}});
   const ctx = vm.createContext({target, URL, room:()=>ctx.target, toast:value=>notices.push(value), el, memberChoice:(_target,peer)=>peer,
+    foregroundInstance:target=>target.status.foreground_instance,
+    recoverySession:target=>JSON.stringify([target.name,target.status.foreground_instance]),
     field:()=>({querySelector:()=>({})}), roleField:(_value,roles)=>({roles}),
     modal:(title,items,_label,submit)=>dialogs.push({title,items,submit}),
     act:async action=>{

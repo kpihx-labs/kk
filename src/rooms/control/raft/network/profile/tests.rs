@@ -9,7 +9,7 @@ enum LegacyRequest {
 async fn optional_failures_preserve_cached_mtls_link_and_an_independent_live_stream() {
     for conversation in [false, true] {
         for failure in ["legacy", "reset", "malformed", "timeout", "oversized"] {
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::test_support::tempdir().unwrap();
             let alice = Arc::new(Identity::create(&root.path().join("alice")).unwrap());
             let bob = Arc::new(Identity::create(&root.path().join("bob")).unwrap());
             let a = PeerId::from_peer(&alice.peer());

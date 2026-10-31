@@ -328,16 +328,38 @@ pub(super) fn validate_package(
     crypto: &impl OpenMlsCrypto,
     bytes: &[u8],
 ) -> Result<Candidate> {
+    validate_package_inner(anchor, crypto, bytes, false)
+}
+
+/// Only for accepted control-log replay, after current freshness was checked at
+/// the leader's guarded admission boundary. Never prepares a new MLS admission.
+pub(super) fn validate_package_for_replay(
+    anchor: &Anchor,
+    crypto: &impl OpenMlsCrypto,
+    bytes: &[u8],
+) -> Result<Candidate> {
+    validate_package_inner(anchor, crypto, bytes, true)
+}
+
+fn validate_package_inner(
+    anchor: &Anchor,
+    crypto: &impl OpenMlsCrypto,
+    bytes: &[u8],
+    committed: bool,
+) -> Result<Candidate> {
     if bytes.len() > config::ROOM_MAX_WIRE_BYTES {
         return Err(Error::Limit {
             resource: "MLS frame",
             max: config::ROOM_MAX_WIRE_BYTES,
         });
     }
-    let package = KeyPackageIn::tls_deserialize_exact_bytes(bytes)
-        .map_err(|_| Error::Protocol)?
-        .validate(crypto, ProtocolVersion::Mls10)
-        .map_err(|_| Error::Authentication)?;
+    let incoming = KeyPackageIn::tls_deserialize_exact_bytes(bytes).map_err(|_| Error::Protocol)?;
+    let package = if committed {
+        incoming.validate_for_replay(crypto, ProtocolVersion::Mls10)
+    } else {
+        incoming.validate(crypto, ProtocolVersion::Mls10)
+    }
+    .map_err(|_| Error::Authentication)?;
     let lifetime = package.life_time();
     if package.ciphersuite() != SUITE
         || package.last_resort()

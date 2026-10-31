@@ -1,17 +1,25 @@
 //! Verified prebuilt installation. Never executes the candidate or opens profiles.
-//! Linux-only until filesystem and artifact gates are qualified on other hosts.
+//! Unix managed transactions; native platform qualification remains separate evidence.
 use std::path::PathBuf;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[path = "install/archive.rs"]
 mod archive;
 #[cfg(target_os = "linux")]
 #[path = "install/elf.rs"]
 mod elf;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "macos", all(test, target_os = "linux")))]
+#[path = "install/mac_verifier.rs"]
+mod mac_verifier;
+// Pure format/metadata inspection also runs in Linux unit tests. Darwin host
+// syscalls, codesign and deployment checks remain gated in provenance.rs.
+#[cfg(any(target_os = "macos", all(test, target_os = "linux")))]
+#[path = "install/macho.rs"]
+mod macho;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[path = "install/managed.rs"]
 mod managed;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[path = "install/provenance.rs"]
 mod provenance;
 
@@ -24,11 +32,11 @@ pub enum Error {
 }
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Clone, Default)]
 pub(super) struct Cancel(std::sync::Arc<std::sync::atomic::AtomicBool>);
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl Cancel {
     pub fn check(&self) -> Result<()> {
         if self.0.load(std::sync::atomic::Ordering::Acquire) {
@@ -38,24 +46,24 @@ impl Cancel {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct CancelOnDrop(Cancel);
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl Drop for CancelOnDrop {
     fn drop(&mut self) {
         self.0.0.store(true, std::sync::atomic::Ordering::Release);
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 async fn worker<T: Send + 'static>(job: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
     tokio::task::spawn_blocking(job)
         .await
         .map_err(|_| Error::Refused("installer worker failed"))?
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl From<rustix::io::Errno> for Error {
     fn from(value: rustix::io::Errno) -> Self {
         Self::Io(value.into())
@@ -79,6 +87,15 @@ pub struct Outcome {
     pub version: String,
     pub previous: Option<String>,
     pub executable: PathBuf,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct Verification {
+    pub version: String,
+    pub commit: String,
+    pub target: String,
+    pub archive_sha256: String,
+    pub activated: bool,
 }
 
 pub(crate) fn refuse<T>(reason: &'static str) -> Result<T> {
@@ -115,7 +132,7 @@ pub(crate) fn version(value: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn sha(value: &str) -> bool {
     value.len() == 64
         && value
@@ -123,7 +140,7 @@ pub(crate) fn sha(value: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn digest(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     Sha256::digest(bytes)
@@ -134,7 +151,7 @@ pub(crate) fn digest(bytes: &[u8]) -> String {
 
 /// Authenticate a frozen private copy with gh before any archive parsing or writes.
 pub async fn install(request: InstallRequest) -> Result<Outcome> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         version(&request.version)?;
         if request.commit.len() != 40
@@ -175,12 +192,58 @@ pub async fn install(request: InstallRequest) -> Result<Outcome> {
         })
         .await
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = request;
         refuse(
-            "native installation is qualified only for Linux; Windows/macOS releases are unavailable",
+            "native installation is unavailable on this platform; Windows requires protected-storage and IPC support",
         )
+    }
+}
+
+/// Authenticate and inspect release bytes without opening or changing the prefix.
+pub async fn verify(request: InstallRequest) -> Result<Verification> {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        version(&request.version)?;
+        if request.commit.len() != 40
+            || !request
+                .commit
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return refuse("commit must be a full lowercase SHA");
+        }
+        if !request.prefix.is_absolute() || request.bundle.is_some() && request.archive.is_none() {
+            return refuse("absolute prefix required; bundle requires local archive");
+        }
+        let target = host_target()?;
+        let cancel = Cancel::default();
+        let _lifetime = CancelOnDrop(cancel.clone());
+        let bytes = provenance::authenticate(&request, target, cancel.clone()).await?;
+        let parsing_cancel = cancel.clone();
+        let version = request.version.clone();
+        let commit = request.commit.clone();
+        let (verified, archive_sha256) = worker(move || {
+            parsing_cancel.check()?;
+            let verified = archive::verify(&bytes, &version, &commit, target, &parsing_cancel)?;
+            parsing_cancel.check()?;
+            Ok((verified, digest(&bytes)))
+        })
+        .await?;
+        provenance::check_abi(&verified, cancel).await?;
+        Ok(Verification {
+            version: request.version,
+            commit: request.commit,
+            target: target.to_owned(),
+            archive_sha256,
+            activated: false,
+        })
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = request;
+        refuse("native verification is unavailable on this platform")
     }
 }
 
@@ -206,7 +269,7 @@ pub async fn rollback_with_trust(
     trusted_root: Option<PathBuf>,
 ) -> Result<Outcome> {
     version(&selected)?;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         let cancel = Cancel::default();
         let _lifetime = CancelOnDrop(cancel.clone());
@@ -236,10 +299,10 @@ pub async fn rollback_with_trust(
         provenance::check_abi(&fresh, cancel.clone()).await?;
         worker(move || managed::rollback(&prefix, &fresh, &archive_digest, cancel)).await
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = (prefix, bundle, trusted_root);
-        refuse("native rollback is qualified only for Linux")
+        refuse("native rollback is unavailable on this platform")
     }
 }
 
@@ -249,5 +312,14 @@ pub fn host_target() -> Result<&'static str> {
         "x86_64" => Ok("x86_64-unknown-linux-gnu"),
         "aarch64" => Ok("aarch64-unknown-linux-gnu"),
         _ => refuse("no qualified artifact for this CPU"),
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn host_target() -> Result<&'static str> {
+    match std::env::consts::ARCH {
+        "x86_64" => Ok("x86_64-apple-darwin"),
+        "aarch64" => Ok("aarch64-apple-darwin"),
+        _ => refuse("unsupported macOS release CPU"),
     }
 }

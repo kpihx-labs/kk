@@ -15,7 +15,7 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_support::tempdir().unwrap();
         let identities: Vec<_> = (0..4)
             .map(|i| Identity::create(&directory.path().join(format!("group-{i}"))).unwrap())
             .collect();

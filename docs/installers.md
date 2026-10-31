@@ -2,17 +2,17 @@
 
 ## Status
 The same-package native helper lives in `src/install.rs` and submodules with CLI wiring.
-`scripts/install.sh` bootstraps Linux with authenticated raw helper and notices
+`scripts/install.sh` bootstraps Linux/macOS with authenticated raw helper and notices
 assets; `--helper` instead accepts an explicitly already-trusted native `kk`.
 PowerShell on Linux supports only explicit `-Helper`; without it it exits 3.
 Help exits 0; input/tool failures exit nonzero. No profile/PATH/service/identity changes occur.
 This is not release or native-platform qualification.
 
 The format/platform authority remains [release.py](../scripts/release.py), not a second registry.
-Linux host/CPU selects a candidate; its authenticated manifest must match.
-Only Linux transactions are enabled. Windows/macOS are refused; ZIP is not Windows
-support. Separately provision capable `gh`, `curl`, `jq`, `sha256sum`, `timeout` and Linux tools;
-the native helper also needs `ldconfig`. No Rust/Node/Python is needed by end users.
+Host OS/CPU selects a candidate; its authenticated manifest must match.
+Linux/macOS transaction paths exist; Windows is refused (ZIP is not Windows support).
+Provision capable `gh`, plus bootstrap curl/jq, timeout or gtimeout, sha256sum or shasum.
+Native ABI tools: Linux ldconfig; macOS codesign/sw_vers. No end-user compiler is needed.
 
 ## Inspect Before Running
 After release gates, retrieve its entrypoint with separately trusted tooling,
@@ -77,13 +77,13 @@ The helper owns the complete transaction, including these gates:
 
    A bounded capability check runs before bootstrap download. Missing flags/tool,
    timeout or failure is fatal. Bootstrap uses private retained paths (same-UID
-   tampering excluded); native archive gh reads sealed memfd bytes via procfs.
+    tampering excluded); Linux uses sealed memfd/procfs, [Darwin private files](macos-install.md).
 4. USB/local `--archive` uses the same private immutable snapshot and provenance/content path as download.
    Offline use needs exported `--bundle` AND separately provisioned `--trusted-root` (gh `--custom-trusted-root`).
-   Both trust inputs are bounded kernel-sealed snapshots; all local input paths must be absolute.
+    Trust inputs are bounded Linux kernel-sealed or Darwin private/rechecked snapshots; paths must be absolute.
    Authenticate public roots out of band; true air-gapped replay remains a separate qualification gate.
    Rollback reauthenticates the retained original archive through gh; mutable receipts are not provenance.
-   Shell explicit-root mode requires `--helper`; PowerShell always requires `-Helper`. No helper bootstrap in that mode.
+    Shell requires `--helper` or [signed local `--bootstrap-dir`](offline-install.md); PowerShell requires `-Helper`.
 5. Authenticate the snapshot before parsing archives. Verify manifest format,
    target, version, commit, exact member set and every digest before extraction.
    Match release.py bounds on compressed/expanded/member/manifest bytes and count;

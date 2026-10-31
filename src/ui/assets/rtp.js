@@ -28,6 +28,19 @@ export function parse(bytes, kind) {
   if (header >= bytes.length || padding > bytes.length - header || (bytes[0] & 32 && padding === 0)) return null;
   return { timestamp: view.getUint32(4), sequence: view.getUint16(2), ssrc: view.getUint32(8), marker: Boolean(bytes[1] & 128), payload: bytes.subarray(header, bytes.length - padding) };
 }
+// Unwrap at decoded-frame boundaries, not packet boundaries: VP8 fragments can
+// arrive out of order. A fixed initial subtraction would stall hour-long calls
+// and eventually wrap back to zero. Old/duplicate frames never rewind playback.
+export class RtpClock {
+  constructor(rate) { this.rate = rate; this.last = null; this.ticks = 0; }
+  next(timestamp) {
+    if (this.last === null) { this.last = timestamp; return 0; }
+    const delta = (timestamp - this.last) | 0;
+    if (delta <= 0) return null;
+    this.ticks += delta; this.last = timestamp;
+    return Math.round(this.ticks * 1000000 / this.rate);
+  }
+}
 export class VideoFrames {
   constructor(maximum, age) { this.frames = new Map(); this.maximum = maximum; this.age = age; this.dropped = 0; }
   push(packet) {

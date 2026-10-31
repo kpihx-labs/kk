@@ -13,8 +13,12 @@ class Capture extends AudioWorkletProcessor {
   }
 }
 class Playback extends AudioWorkletProcessor {
-  constructor() { super(); this.queue = []; this.offset = 0; this.samples = 0; this.port.onmessage = (event) => {
-    const samples = new Float32Array(event.data); if (samples.length > 9600) return;
+  constructor() { super(); this.queue = []; this.offset = 0; this.samples = 0; this.muted = false; this.port.onmessage = (event) => {
+    if (typeof event.data?.muted === "boolean") { this.muted = event.data.muted; this.queue = []; this.offset = 0; this.samples = 0; return; }
+    if (event.data?.reset === true) { this.queue = []; this.offset = 0; this.samples = 0; return; }
+    if (this.muted) return;
+    if (!(event.data instanceof ArrayBuffer) || event.data.byteLength % 4 !== 0) return;
+    const samples = new Float32Array(event.data); if (!samples.length || samples.length > 9600) return;
     if (this.samples + samples.length > 12000) { this.queue = []; this.offset = 0; this.samples = 0; }
     this.queue.push(samples); this.samples += samples.length;
   }; }

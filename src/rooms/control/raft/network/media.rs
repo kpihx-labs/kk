@@ -442,7 +442,37 @@ impl Drop for Usage {
     }
 }
 impl Subscription {
+    /// Keep the authorization lease observable while a local decoder drains.
+    /// Source EOF does not grant a new lease or revive a revoked subscription.
+    pub async fn revoked(&self) -> Result<()> {
+        let mut updates = self.usage.hub.updated.subscribe();
+        loop {
+            let shared = self.shared.upgrade().ok_or(Error::Cancelled)?;
+            if !self.usage.hub.allowed(
+                self.peer,
+                true,
+                shared.media_epoch.load(Ordering::SeqCst),
+                self.usage.generation,
+            ) {
+                return Err(Error::Denied);
+            }
+            drop(shared);
+            tokio::select! {
+                changed = updates.changed() => { changed.map_err(|_| Error::Cancelled)?; },
+                _ = tokio::time::sleep(config::MEDIA_PACKET_MAX_AGE) => {},
+            }
+        }
+    }
     pub async fn next(&mut self) -> Result<Frame> {
+        match self.next_frame().await {
+            Ok(Some(frame)) => Ok(frame),
+            Ok(None) | Err(Error::Timeout) => Err(Error::Cancelled),
+            Err(error) => Err(error),
+        }
+    }
+    /// Explicit source EOF is distinct from revoked permission or lost owners.
+    /// Existing next() callers retain their cancellation-shaped EOF behavior.
+    pub async fn next_frame(&mut self) -> Result<Option<Frame>> {
         loop {
             let shared = self.shared.upgrade().ok_or(Error::Cancelled)?;
             let epoch = shared.media_epoch.load(Ordering::SeqCst);
@@ -454,21 +484,30 @@ impl Subscription {
                 return Err(Error::Denied);
             }
             drop(shared);
-            let ended = {
+            let (ended, orderly) = {
                 let state = self.usage.hub.state.lock().map_err(|_| Error::Protocol)?;
                 let active = state
                     .listeners
                     .get(&(self.peer, self.kind))
                     .is_some_and(|listener| listener.token == self.token && listener.active);
-                active
+                let ended = active
                     && !state.tracks.values().any(|track| {
                         track.listener == self.token
                             && track.seen.elapsed() < config::MEDIA_SOURCE_IDLE
                             && track.ending.is_none_or(|until| until > Instant::now())
-                    })
+                    });
+                let orderly = state
+                    .tracks
+                    .values()
+                    .any(|track| track.listener == self.token && track.ending.is_some());
+                (ended, orderly)
             };
             if ended {
-                return Err(Error::Cancelled);
+                return if orderly {
+                    Ok(None)
+                } else {
+                    Err(Error::Timeout)
+                };
             }
             tokio::select! {
                 message = self.receiver.recv() => {
@@ -476,7 +515,7 @@ impl Subscription {
                     let shared = self.shared.upgrade().ok_or(Error::Cancelled)?;
                     let current = shared.media_epoch.load(Ordering::SeqCst);
                     if message.epoch == current && message.arrived.elapsed() <= config::MEDIA_PACKET_MAX_AGE
-                        && self.usage.hub.allowed(self.peer, true, current, self.usage.generation) { return Ok(message.frame); }
+                        && self.usage.hub.allowed(self.peer, true, current, self.usage.generation) { return Ok(Some(message.frame)); }
                 },
                 _ = tokio::time::sleep(config::MEDIA_PACKET_MAX_AGE) => {},
             }

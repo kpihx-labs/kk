@@ -263,6 +263,16 @@ impl Relation {
     }
 }
 impl Operation {
+    /// Reaction frames remain decodable for existing ciphertext/history only.
+    /// Encoding is a compatibility codec, not permission to publish an operation.
+    pub(crate) fn validate_publication(&self) -> Result<()> {
+        if matches!(self, Self::Reaction { .. }) {
+            return Err(Error::Configuration(
+                "reaction publication is no longer supported",
+            ));
+        }
+        Ok(())
+    }
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Text(_) => "text",
@@ -373,7 +383,8 @@ impl Operation {
     }
 }
 
-/// A bounded presentation projection, not a membership or existence oracle.
+/// Compatibility projection for legacy reactions, not an active product feature
+/// or a membership/existence oracle. New reaction publication is rejected.
 /// Apply authenticated references in event order; a removal can only address
 /// that event's MLS author, never a display name or a caller-supplied author.
 #[derive(Default)]

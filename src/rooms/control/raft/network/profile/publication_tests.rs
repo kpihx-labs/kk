@@ -94,7 +94,7 @@ async fn every_write_poll_fences_sdk_replacement_and_cross_process_directory_opt
         "directory-opt-out",
     ] {
         for after in [0, 4] {
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::test_support::tempdir().unwrap();
             let directory = root.path().join("profile");
             crate::profile::private_directory(&directory, true).unwrap();
             let identity = Arc::new(Identity::create(&directory.join("identity")).unwrap());
@@ -189,7 +189,7 @@ async fn every_write_poll_fences_sdk_replacement_and_cross_process_directory_opt
 
 #[tokio::test]
 async fn pending_publication_does_not_hold_a_lease_and_is_deadline_cancellable() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let identity = Arc::new(Identity::create(&root.path().join("identity")).unwrap());
     let own = PeerId::from_peer(&identity.peer());
     let (factory, server) = Factory::bind(
@@ -227,7 +227,7 @@ async fn pending_publication_does_not_hold_a_lease_and_is_deadline_cancellable()
 #[tokio::test]
 async fn directory_validation_precedes_sdk_guard_and_callback_holds_only_the_poll_fences() {
     for revoke_before_callback in [false, true] {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let directory = root.path().join("profile");
         crate::profile::private_directory(&directory, true).unwrap();
         let identity = Arc::new(Identity::create(&directory.join("identity")).unwrap());

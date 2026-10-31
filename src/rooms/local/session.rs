@@ -18,6 +18,9 @@ use tokio::{
 };
 use zeroize::Zeroize;
 
+#[path = "transfers.rs"]
+mod transfers;
+
 const DEADLINE: Duration = Duration::from_secs(90);
 // Reserved local control commands are tiny and sent immediately on connect.
 // Stalled pre-command readers must not hold admission for the data timeout.
@@ -69,6 +72,9 @@ pub enum Command {
         limit: usize,
         response_bytes: usize,
     },
+    HistoryResolve {
+        target: crate::rooms::conversation::Target,
+    },
     MediaPublish {
         kind: crate::media::Kind,
         peers: Vec<raft::PeerId>,
@@ -78,6 +84,14 @@ pub enum Command {
         peer: raft::PeerId,
     },
     Status,
+    PendingMutation,
+    RetryPrepared {
+        expected: [u8; 32],
+        confirm: bool,
+    },
+    LeaveSelf {
+        confirm: bool,
+    },
     FileReception {
         inbox: Option<PathBuf>,
         max_bytes: u64,
@@ -93,16 +107,49 @@ pub enum Command {
         text: String,
         sensitive: bool,
     },
-    React {
-        target: crate::rooms::conversation::Target,
-        value: crate::rooms::conversation::Reaction,
-        added: bool,
-        sensitive: bool,
-    },
     File {
         source: PathBuf,
         target: raft::PeerId,
         sensitive: bool,
+    },
+    ForwardReceived {
+        id: String,
+        target: raft::PeerId,
+        sensitive: bool,
+    },
+    FileStart {
+        source: PathBuf,
+        target: raft::PeerId,
+        sensitive: bool,
+    },
+    ForwardReceivedStart {
+        id: String,
+        target: raft::PeerId,
+        sensitive: bool,
+    },
+    FileRetryStart {
+        previous: String,
+        source: PathBuf,
+        target: raft::PeerId,
+        sensitive: bool,
+    },
+    ForwardReceivedRetryStart {
+        previous: String,
+        id: String,
+        target: raft::PeerId,
+        sensitive: bool,
+    },
+    FileTransfers,
+    ReceivedFiles,
+    DeleteReceived {
+        id: String,
+        confirm: bool,
+    },
+    FileTransferStatus {
+        id: String,
+    },
+    FileTransferCancel {
+        id: String,
     },
     FileShare {
         source: PathBuf,
@@ -129,13 +176,19 @@ pub enum Command {
 }
 impl Command {
     fn deadline(&self) -> Duration {
-        if matches!(self, Self::Reply { .. } | Self::React { .. }) {
+        if matches!(self, Self::Reply { .. }) {
             config::ROOM_CONVERSATION_TIMEOUT
         } else if matches!(self, Self::Invite(_)) {
             config::ROOM_INVITATION_WAIT + DEADLINE
         } else if matches!(
             self,
-            Self::File { .. } | Self::FileShare { .. } | Self::FileFetch { .. }
+            Self::File { .. }
+                | Self::FileShare { .. }
+                | Self::FileFetch { .. }
+                | Self::FileStart { .. }
+                | Self::ForwardReceivedStart { .. }
+                | Self::FileRetryStart { .. }
+                | Self::ForwardReceivedRetryStart { .. }
         ) {
             crate::config::DEFAULT_FILE_TIMEOUT
         } else {
@@ -287,14 +340,106 @@ async fn offer(stream: &Arc<Mutex<UnixStream>>, proposal: Proposal) -> Result<bo
     ipc::read(&mut stream).await
 }
 
+/// Format a verified file receipt for the local client without exposing hidden hashes.
+/// `receipt` is the backend result and `sensitive` is the caller's disclosure choice.
+/// Returns metadata only: ordinary receipts include their hash; hidden receipts
+/// carry a null hash. Neither example promises human reading or future availability.
+fn file_receipt_value(receipt: &crate::files::Receipt, sensitive: bool) -> Value {
+    json!({
+        "bytes": receipt.info.bytes,
+        "resumed_from": receipt.resumed_from,
+        "sha256": if sensitive { None } else { Some(receipt.info.hash_hex()) },
+        "sensitive": sensitive,
+        "meaning": "verified-durable-recipient-file-not-a-replica-availability-promise"
+    })
+}
+
 async fn dispatch(
     command: &Command,
     stream: &Arc<Mutex<UnixStream>>,
     handle: &Handle,
-    control: &ControlNode,
+    control: &Arc<ControlNode>,
     identity: &Identity,
+    transfers: &transfers::Transfers,
 ) -> Result<Value> {
     match command {
+        Command::FileRetryStart {
+            previous,
+            source,
+            target,
+            sensitive,
+        } => {
+            let admission = transfers.reserve_retry(previous)?;
+            let source = crate::files::SendSource::capture(source)?;
+            Ok(json!(transfers.start(
+                admission,
+                control.clone(),
+                *target,
+                source,
+                *sensitive
+            )?))
+        }
+        Command::ForwardReceivedRetryStart {
+            previous,
+            id,
+            target,
+            sensitive,
+        } => {
+            let admission = transfers.reserve_retry(previous)?;
+            let received = control
+                .open_room_received(id, admission.remaining()?)
+                .await?;
+            Ok(json!(transfers.start(
+                admission,
+                control.clone(),
+                *target,
+                received.into_send_source(),
+                *sensitive
+            )?))
+        }
+        Command::FileStart {
+            source,
+            target,
+            sensitive,
+        } => {
+            let admission = transfers.reserve()?;
+            let source = crate::files::SendSource::capture(source)?;
+            Ok(json!(transfers.start(
+                admission,
+                control.clone(),
+                *target,
+                source,
+                *sensitive
+            )?))
+        }
+        Command::ForwardReceivedStart {
+            id,
+            target,
+            sensitive,
+        } => {
+            let admission = transfers.reserve()?;
+            let received = control
+                .open_room_received(id, admission.remaining()?)
+                .await?;
+            Ok(json!(transfers.start(
+                admission,
+                control.clone(),
+                *target,
+                received.into_send_source(),
+                *sensitive
+            )?))
+        }
+        Command::FileTransfers => Ok(json!(transfers.list()?)),
+        Command::ReceivedFiles => Ok(json!(
+            control.received_files(config::DEFAULT_TIMEOUT).await?
+        )),
+        Command::DeleteReceived { id, confirm } => Ok(json!({
+            "deleted": control
+                .delete_received(id, *confirm, config::DEFAULT_TIMEOUT)
+                .await?
+        })),
+        Command::FileTransferStatus { id } => Ok(json!(transfers.status(id)?)),
+        Command::FileTransferCancel { id } => Ok(json!(transfers.cancel(id).await?)),
         Command::HistoryEnable { policy } => {
             Ok(json!(handle.history_enable_file(*policy, DEADLINE).await?))
         }
@@ -339,8 +484,46 @@ async fn dispatch(
                 .min(config::MAX_RECORD_PLAINTEXT_BYTES - 1024);
             Ok(json!(handle.history_search(search, DEADLINE).await?))
         }
+        Command::HistoryResolve { target } => Ok(json!(
+            handle.history_resolve(target.clone(), DEADLINE).await?
+        )),
+        Command::PendingMutation => match handle.pending_mutation(DEADLINE).await? {
+            None => Ok(json!(null)),
+            Some(pending) => Ok(json!({
+                "id": pending.id,
+                "id_hex": pending.id.iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
+                "kind": pending.kind,
+                "member": pending.member,
+                "epoch_before": pending.epoch_before
+            })),
+        },
+        Command::RetryPrepared { expected, confirm } => {
+            if !confirm {
+                return Err(Error::Denied);
+            }
+            let result = handle.retry_prepared(*expected, DEADLINE).await?;
+            Ok(json!({
+                "accepted": result.accepted,
+                "epoch": result.epoch,
+                "replayed": result.replayed,
+                "meaning": "control-acceptance-not-invitation-resumption-or-delivery"
+            }))
+        }
+        Command::LeaveSelf { confirm } => {
+            if !confirm {
+                return Err(Error::Denied);
+            }
+            Ok(json!(handle.leave_self(DEADLINE).await?))
+        }
         Command::Status => {
             let status = handle.status(DEADLINE).await?;
+            let applied = status.applied.map(|position| json!({
+                "index": position.log.index.to_string(),
+                "term": position.log.leader_id.term.to_string(),
+                "leader": position.log.leader_id.node_id,
+                "hash": position.hash.iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
+                "meaning": "private-group-local-applied-public-record-not-fresh-quorum-or-public-head"
+            }));
             // Pass one complete membership snapshot, never a filtered recipient
             // list. This schedules refresh work without awaiting peer traffic.
             let (profile_names, profile_names_error) =
@@ -349,7 +532,7 @@ async fn dispatch(
                     Err(error) => (std::collections::BTreeMap::new(), Some(error.to_string())),
                 };
             Ok(
-                json!({"room": raft::PeerId(status.room), "owner": status.owner, "epoch": status.epoch,
+                json!({"room": raft::PeerId(status.room), "owner": status.owner, "foreground_instance": status.foreground_instance, "epoch": status.epoch,"applied":applied,
                 "active": status.active, "running": status.running, "busy": status.busy, "members": status.members, "capabilities": status.capabilities,
                 "freshness": "local-durable-cache", "leader_hint": control.current_leader().await, "media": control.media_status()?,
                   "files": {"accepted": control.files_enabled()?}, "profile_names": profile_names, "profile_names_error": profile_names_error,
@@ -427,11 +610,17 @@ async fn dispatch(
                     crate::config::DEFAULT_FILE_TIMEOUT,
                 )
                 .await?;
-            Ok(
-                json!({"bytes": receipt.info.bytes, "resumed_from": receipt.resumed_from,
-                "sha256": if *sensitive { None } else { Some(receipt.info.hash_hex()) }, "sensitive": sensitive,
-                "meaning": "verified-durable-recipient-file-not-a-replica-availability-promise"}),
-            )
+            Ok(file_receipt_value(&receipt, *sensitive))
+        }
+        Command::ForwardReceived {
+            id,
+            target,
+            sensitive,
+        } => {
+            let receipt = control
+                .send_room_received_file(*target, id, *sensitive, config::DEFAULT_FILE_TIMEOUT)
+                .await?;
+            Ok(file_receipt_value(&receipt, *sensitive))
         }
         Command::Controllers { voters } => {
             let position = handle.approve_controllers(voters.clone(), DEADLINE).await?;
@@ -467,20 +656,6 @@ async fn dispatch(
             let operation = crate::rooms::conversation::Operation::Reply {
                 target: target.clone(),
                 text: crate::ReceivedText::from_bytes(text.as_bytes(), *sensitive)?,
-            };
-            structured_application(control, handle, operation).await
-        }
-        Command::React {
-            target,
-            value,
-            added,
-            sensitive,
-        } => {
-            let operation = crate::rooms::conversation::Operation::Reaction {
-                target: target.clone(),
-                value: *value,
-                added: *added,
-                sensitive: *sensitive,
             };
             structured_application(control, handle, operation).await
         }
@@ -582,6 +757,10 @@ fn is_control(command: &Command) -> bool {
     matches!(
         command,
         Command::Status
+            | Command::FileTransfers
+            | Command::ReceivedFiles
+            | Command::FileTransferStatus { .. }
+            | Command::FileTransferCancel { .. }
             | Command::HistoryStatus {}
             | Command::Stop
             | Command::FileUnshare { .. }
@@ -605,7 +784,8 @@ fn operation_lane(
         | Command::HistoryDisable {}
         | Command::HistoryClear {}
         | Command::HistoryRefresh {}
-        | Command::HistorySearch { .. } => history
+        | Command::HistorySearch { .. }
+        | Command::HistoryResolve { .. } => history
             .clone()
             .try_acquire_owned()
             .map(Some)
@@ -627,6 +807,7 @@ struct Incoming {
     stream: UnixStream,
     control_only: bool,
     history: Arc<tokio::sync::Semaphore>,
+    transfers: std::rc::Rc<transfers::Transfers>,
 }
 
 async fn connection(
@@ -642,6 +823,7 @@ async fn connection(
         mut stream,
         control_only,
         history,
+        transfers,
     } = incoming;
     let handshake = if control_only {
         CONTROL_HANDSHAKE
@@ -666,7 +848,7 @@ async fn connection(
     let stream = Arc::new(Mutex::new(stream));
     let operation = async {
         let _lane = operation_lane(&command, &work, &invitations, &history)?;
-        dispatch(&command, &stream, &handle, &control, &identity).await
+        dispatch(&command, &stream, &handle, &control, &identity, &transfers).await
     };
     let deadline = command.deadline();
     let result = tokio::time::timeout(deadline, operation)
@@ -689,8 +871,10 @@ async fn connection(
     .map_err(|_| Error::Timeout)?;
     // A bounded status observer may leave before its read-only reply. Other
     // commands keep delivery errors visible because their effects may commit.
-    if matches!(command, Command::Status)
-        && matches!(&delivered, Err(Error::Io(error)) if matches!(error.kind(), std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset))
+    if matches!(
+        command,
+        Command::Status | Command::FileTransfers | Command::FileTransferStatus { .. }
+    ) && matches!(&delivered, Err(Error::Io(error)) if matches!(error.kind(), std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset))
     {
         return Ok(());
     }
@@ -729,11 +913,17 @@ async fn run(
     let private = directory.join("private");
     profile::private_directory(&private, false)?;
     room.configure_history_directory(std::path::absolute(private)?)?;
+    let transfers = transfers::Transfers::new(directory)?;
     let (handle, actor, mut events) = Actor::new(room);
     let task = tokio::task::spawn_local(actor.run());
     let registered = control.register_room(handle.clone()).await;
     let configured = control
         .configure_profile_directory(Some(profile.to_owned()))
+        .and_then(|()| {
+            control
+                .bind_received_root(directory.join("inbox"), options.max_bytes)
+                .map(|_| ())
+        })
         .and_then(|()| match options.inbox {
             Some(inbox) => control.enable_files(inbox, options.max_bytes, options.file_budget),
             None => Ok(()),
@@ -849,10 +1039,10 @@ async fn run(
                     }
                 },
                 accepted = control_listener.accept(), if controls.len() < 4 => {
-                    controls.spawn_local(connection(Incoming { stream: accepted?, control_only: true, history: history.clone() }, handle.clone(), control.clone(), identity.clone(), stop.clone(), work.clone(), invitations.clone()));
+                    controls.spawn_local(connection(Incoming { stream: accepted?, control_only: true, history: history.clone(), transfers: transfers.clone() }, handle.clone(), control.clone(), identity.clone(), stop.clone(), work.clone(), invitations.clone()));
                 },
                 accepted = listener.accept(), if connections.len() < 32 => {
-                    connections.spawn_local(connection(Incoming { stream: accepted?, control_only: false, history: history.clone() }, handle.clone(), control.clone(), identity.clone(), stop.clone(), work.clone(), invitations.clone()));
+                    connections.spawn_local(connection(Incoming { stream: accepted?, control_only: false, history: history.clone(), transfers: transfers.clone() }, handle.clone(), control.clone(), identity.clone(), stop.clone(), work.clone(), invitations.clone()));
                 },
             }
         }
@@ -862,6 +1052,7 @@ async fn run(
     while connections.join_next().await.is_some() {}
     controls.abort_all();
     while controls.join_next().await.is_some() {}
+    let transfers_stopped = transfers.shutdown().await;
     let unregistered = control.unregister_room();
     let stopped = handle.shutdown(DEADLINE).await;
     if stopped.is_err() {
@@ -884,6 +1075,7 @@ async fn run(
         eprintln!("Room control cleanup failed: {error}");
     }
     result
+        .and(transfers_stopped)
         .and(unregistered)
         .and(stopped)
         .and(joined)

@@ -320,7 +320,7 @@ mod tests {
         if std::env::var("KK_TEST_SOCKET_LIFETIME_CHILD").as_deref() != Ok("1") {
             return;
         }
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_support::tempdir().unwrap();
         let identity = crate::Identity::create(&directory.path().join("owner")).unwrap();
         let peer = identity.peer();
         let server_config = crate::transport::server_config(

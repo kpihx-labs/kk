@@ -114,3 +114,7 @@ found only 192px of chat at 881x786. Rebuilt spacing replay used executable
 `e286b483004b99ce50722e8693dbb516e03f3af4ce405d0112b9c035cbee2295`:
 Morgan at `http://127.0.0.1:39585` has 337px chat, visible composer and no horizontal
 overflow at the same size; compact sidebar survives foreground restart.
+
+Current independent candidate evidence: [f817 GUI qualification](ui-candidate-f817-qualification.md)
+records bilateral pairing, messages/reply, live file consent, forwarding while receiving is off,
+actual cancellation before/after handoff and a digest-verified 16-MiB resumed transfer.

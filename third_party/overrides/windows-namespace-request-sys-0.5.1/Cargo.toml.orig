@@ -1,0 +1,96 @@
+# Copyright (c) 2026 Mike Grier
+
+[package]
+name = "windows-namespace-request-sys"
+version = "0.5.1" # x-release-please-version
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/windows-namespace-request-sys"
+description = "Owned, marshalable parameter sets for synchronous Win32 namespace calls."
+readme = "README.md"
+keywords = ["windows", "filesystem", "namespace", "marshal", "ffi"]
+categories = ["api-bindings", "os::windows-apis", "filesystem"]
+
+[lib]
+path = "src/lib.rs"
+
+# The crate is Windows-only, so docs.rs must build it on a Windows target or it
+# would render an empty crate.
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+targets = ["x86_64-pc-windows-msvc"]
+
+# Deliberately NOT a dependency on windows-thread-ambient-sys. A request carries
+# no ambient context and a context is useful to work that never opens a file;
+# the two are paired at the submission site by whoever owns both. See
+# DESIGN-NOTES.md.
+[dependencies]
+wtf-string = { version = "0.1.0", path = "../wtf-string" }
+
+# The security descriptor and attributes a request takes, which were this crate's `security` module
+# until they were moved to where Microsoft Learn files them. Re-exported at the paths they had.
+win-authorization-sys = { version = "0.1.0", path = "../win-authorization-sys" }
+
+# `Win32Error`, re-exported under the name this crate has always used. Its `io::Error` form keeps
+# a code of 2^31 or more, which this crate's own earlier type did not (WE-D-1).
+win-error-codes = { version = "0.0.2", path = "../win-error-codes" }
+
+# The aligned buffer the query results and captured security descriptors are held in,
+# re-exported as `AlignedBuf` because it appears in public signatures (IB-2+.4 in
+# io-buffers' COMPLETED-CHECKLIST.md). The version is the one io-buffers' first release is fixed to.
+io-buffers = { version = "0.1.0", path = "../io-buffers" }
+
+# The handle an entry takes, held shared with its other holders rather than duplicated (D-32).
+win-shared-os-owned-handle = { version = "0.1.0", path = "../win-shared-os-owned-handle" }
+
+# A *dev* dependency only. The crate itself deliberately does not depend on the
+# ambient-context crate (see DESIGN-NOTES.md, D-1); the acceptance test pairs
+# the two at a submission site, which is precisely the relationship being
+# demonstrated, and a dev-dependency is how to demonstrate it without creating
+# the coupling the design refuses.
+[dev-dependencies]
+windows-thread-ambient-sys = { version = "0.3.3", path = "../windows-thread-ambient-sys" }
+
+# Test-only: `tests/device_handle_evidence.rs` asks a volume or a disk for its device number, which
+# this crate does not wrap because Learn files it with the volume controls, and makes a named pipe,
+# which Learn files with the pipe functions. Neither crate depends on this one.
+#
+# Path-only, with no `version`, as `windows-ioring-sys`'s dev-dependencies are and for the reason it
+# gives: Cargo checks a pinned version against the path at every build, so a release of either crate
+# would break this one, and a versionless dev-dependency is left out of the published manifest.
+win-volume-sys = { path = "../win-volume-sys" }
+win-pipes-sys = { path = "../win-pipes-sys" }
+
+# Test-only. `Win32_System_Environment` is for the hidden `=X:` per-drive current-directory entries. Rust's
+# `std::env` cannot reach them at all -- it rejects a key containing `=` -- and
+# they are the state `GetFullPathNameW` reads and rewrites when it roots a
+# drive-relative path, so a test that does not control them can only bound that
+# behaviour rather than pin it. A dev-dependency, so no consumer
+# inherits the feature.
+[dev-dependencies.windows-sys]
+version = "0.61.2"
+default-features = false
+# `Win32_Foundation` is named here rather than inherited from the dependency
+# below: reading an entry has to clear and re-read the last error to tell an
+# empty value from an absent one, and a test target must not depend on a
+# feature staying enabled for a reason unrelated to it.
+features = [
+	"Win32_Foundation",
+	"Win32_Storage_FileSystem",
+	"Win32_System_Environment",
+]
+
+[dependencies.windows-sys]
+version = "0.61.2"
+default-features = false
+features = [
+	"Win32_Foundation",
+	"Win32_Security",
+	"Win32_Storage_FileSystem",
+	"Win32_System_Environment",
+	"Win32_System_Threading",
+]

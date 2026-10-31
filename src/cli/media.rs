@@ -1,5 +1,8 @@
-use clap::{Subcommand, ValueEnum};
-use kk::{Error, Result, media::Source};
+use clap::{Args, Subcommand, ValueEnum};
+use kk::{
+    Error, Result,
+    media::{Codec, OutputTarget, Source},
+};
 use std::io::{self, Write};
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -7,6 +10,36 @@ pub enum TrackKind {
     Audio,
     Camera,
     Screen,
+}
+
+#[derive(Args, Default)]
+pub struct OutputOptions {
+    /// Explicit local PulseAudio sink; audio only, never falls back to default
+    #[arg(long, conflicts_with = "output_display")]
+    output_device: Option<String>,
+    /// Explicit local X11 playback display, e.g. :101; video only
+    #[arg(long, conflicts_with = "output_device")]
+    output_display: Option<String>,
+}
+impl OutputOptions {
+    fn target(&self, codec: Codec) -> Result<OutputTarget> {
+        let target = match (&self.output_device, &self.output_display) {
+            (Some(device), None) => OutputTarget::AudioDevice {
+                device: device.clone(),
+            },
+            (None, Some(display)) => OutputTarget::DisplayX11 {
+                display: display.clone(),
+            },
+            (None, None) => OutputTarget::Default,
+            _ => {
+                return Err(Error::Configuration(
+                    "choose exactly one native output target",
+                ));
+            }
+        };
+        target.validate(codec)?;
+        Ok(target)
+    }
 }
 #[cfg(unix)]
 impl TrackKind {
@@ -47,11 +80,13 @@ pub enum RoomCommand {
         #[arg(long)]
         from: String,
         /// Validate bounded RTP and report counts, without playback or recording
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["x11", "output_device", "output_display"])]
         inspect: bool,
         /// Render video on the explicit DISPLAY X11 server, not an automatic sink
-        #[arg(long, conflicts_with = "inspect")]
+        #[arg(long, conflicts_with_all = ["inspect", "output_device", "output_display"])]
         x11: bool,
+        #[command(flatten)]
+        output: OutputOptions,
         #[arg(long, required = true)]
         consent: bool,
     },
@@ -76,6 +111,182 @@ fn playback_exit(exit: kk::media::Exit) -> Result<()> {
 
 #[cfg(test)]
 mod exit_tests {
+    use clap::Parser;
+    #[derive(Parser)]
+    struct NativeArgs {
+        #[command(subcommand)]
+        command: super::Command,
+    }
+    #[derive(Parser)]
+    struct RoomArgs {
+        #[command(subcommand)]
+        command: super::RoomCommand,
+    }
+
+    #[test]
+    fn explicit_media_outputs_parse_without_changing_default_or_doctor_commands() {
+        assert!(NativeArgs::try_parse_from(["kk", "capabilities"]).is_ok());
+        assert!(NativeArgs::try_parse_from(["kk", "doctor"]).is_ok());
+        let preview = NativeArgs::try_parse_from([
+            "kk",
+            "preview",
+            "camera",
+            "--device",
+            "/dev/video7",
+            "--output-display",
+            ":101",
+            "--consent",
+        ])
+        .unwrap();
+        let super::Command::Preview { output, .. } = preview.command else {
+            panic!("preview expected")
+        };
+        assert!(
+            matches!(output.target(kk::media::Codec::Vp8).unwrap(), kk::media::OutputTarget::DisplayX11 { display } if display == ":101")
+        );
+        let args = RoomArgs::try_parse_from([
+            "kk",
+            "listen",
+            "audio",
+            "--from",
+            "synthetic-peer",
+            "--consent",
+        ])
+        .unwrap();
+        let super::RoomCommand::Listen { output, .. } = args.command else {
+            panic!("listen expected")
+        };
+        assert!(matches!(
+            output.target(kk::media::Codec::Opus).unwrap(),
+            kk::media::OutputTarget::Default
+        ));
+        for extra in [
+            vec!["--inspect", "--output-device", "owned"],
+            vec!["--x11", "--output-display", ":101"],
+            vec!["--output-device", "owned", "--output-display", ":101"],
+        ] {
+            let mut args = vec![
+                "kk",
+                "listen",
+                "audio",
+                "--from",
+                "synthetic-peer",
+                "--consent",
+            ];
+            args.extend(extra);
+            assert!(RoomArgs::try_parse_from(args).is_err());
+        }
+    }
+
+    #[test]
+    fn explicit_output_kind_and_identifier_errors_are_inert() {
+        let audio = super::OutputOptions {
+            output_device: Some("owned-null".into()),
+            output_display: None,
+        };
+        assert!(audio.target(kk::media::Codec::Opus).is_ok());
+        assert!(audio.target(kk::media::Codec::Vp8).is_err());
+        let video = super::OutputOptions {
+            output_device: None,
+            output_display: Some("remote.example:0".into()),
+        };
+        assert!(video.target(kk::media::Codec::Vp8).is_err());
+        let injection = super::OutputOptions {
+            output_device: Some("owned ! filesink".into()),
+            output_display: None,
+        };
+        assert!(injection.target(kk::media::Codec::Opus).is_err());
+    }
+    #[test]
+    fn native_output_flags_parse_without_capture_and_keep_defaults() {
+        let args = NativeArgs::try_parse_from([
+            "media",
+            "preview",
+            "microphone",
+            "--device",
+            "owned-input",
+            "--consent",
+        ])
+        .unwrap();
+        let super::Command::Preview { output, .. } = args.command else {
+            panic!("preview expected")
+        };
+        assert!(matches!(
+            output.target(kk::media::Codec::Opus).unwrap(),
+            kk::media::OutputTarget::Default
+        ));
+        let args = NativeArgs::try_parse_from([
+            "media",
+            "preview",
+            "screen-x11",
+            "--device",
+            ":101",
+            "--output-display",
+            ":102",
+            "--consent",
+        ])
+        .unwrap();
+        let super::Command::Preview { output, .. } = args.command else {
+            panic!("preview expected")
+        };
+        assert!(
+            matches!(output.target(kk::media::Codec::Vp8).unwrap(), kk::media::OutputTarget::DisplayX11 { display } if display == ":102")
+        );
+        assert!(output.target(kk::media::Codec::Opus).is_err());
+        assert!(matches!(
+            NativeArgs::try_parse_from(["media", "capabilities"])
+                .unwrap()
+                .command,
+            super::Command::Capabilities
+        ));
+    }
+
+    #[test]
+    fn native_output_conflicts_and_untrusted_targets_fail_before_effects() {
+        for flags in [
+            vec!["--output-device", "owned", "--output-display", ":101"],
+            vec!["--inspect", "--output-display", ":101"],
+            vec!["--x11", "--output-device", "owned"],
+        ] {
+            let mut args = vec![
+                "media",
+                "listen",
+                "screen",
+                "--from",
+                "synthetic",
+                "--consent",
+            ];
+            args.extend(flags);
+            assert!(RoomArgs::try_parse_from(args).is_err());
+        }
+        let invalid = super::OutputOptions {
+            output_device: Some("sink ! filesink".into()),
+            output_display: None,
+        };
+        assert!(invalid.target(kk::media::Codec::Opus).is_err());
+        let remote = super::OutputOptions {
+            output_device: None,
+            output_display: Some("remote.example:0".into()),
+        };
+        assert!(remote.target(kk::media::Codec::Vp8).is_err());
+        let args = RoomArgs::try_parse_from([
+            "media",
+            "listen",
+            "audio",
+            "--from",
+            "synthetic",
+            "--output-device",
+            "owned-sink",
+            "--consent",
+        ])
+        .unwrap();
+        let super::RoomCommand::Listen { output, .. } = args.command else {
+            panic!("listen expected")
+        };
+        assert!(
+            matches!(output.target(kk::media::Codec::Opus).unwrap(), kk::media::OutputTarget::AudioDevice { device } if device == "owned-sink")
+        );
+    }
     #[cfg(not(unix))]
     #[tokio::test]
     async fn room_media_refuses_without_local_ipc() {
@@ -93,6 +304,7 @@ mod exit_tests {
                 from: String::new(),
                 inspect: true,
                 x11: false,
+                output: Default::default(),
                 consent: true,
             },
         ] {
@@ -173,6 +385,31 @@ pub(super) async fn room(
                 return Err(Error::Denied);
             }
             let kind = kind.kind();
+            let native_source = if rtp_file.is_none() {
+                let device = device.ok_or(Error::Configuration(
+                    "native media requires an explicit device/display",
+                ))?;
+                if window != 0 && kind != MediaKind::Screen {
+                    return Err(Error::Configuration("--window requires a screen source"));
+                }
+                let source = match kind {
+                    MediaKind::Audio => Source::Microphone { device },
+                    MediaKind::Camera => Source::Camera { device },
+                    MediaKind::Screen => Source::ScreenX11 {
+                        display: device,
+                        window,
+                    },
+                };
+                source.validate()?;
+                Some(source)
+            } else {
+                if device.is_some() || window != 0 {
+                    return Err(Error::Configuration(
+                        "RTP file replay cannot select capture devices or windows",
+                    ));
+                }
+                None
+            };
             let peers = to
                 .into_iter()
                 .map(|peer| {
@@ -188,22 +425,7 @@ pub(super) async fn room(
                 kind,
                 publication.recipients()
             )?;
-            let mut native = if rtp_file.is_none() {
-                let device = device.ok_or(Error::Configuration(
-                    "native media requires an explicit device/display",
-                ))?;
-                let source = match kind {
-                    MediaKind::Audio => Source::Microphone { device },
-                    MediaKind::Camera => Source::Camera { device },
-                    MediaKind::Screen => Source::ScreenX11 {
-                        display: device,
-                        window,
-                    },
-                };
-                Some(source.capture()?)
-            } else {
-                None
-            };
+            let mut native = native_source.map(Source::capture).transpose()?;
             let mut file = rtp_file
                 .map(|path| kk::media::rtp_file(&path))
                 .transpose()?;
@@ -266,12 +488,37 @@ pub(super) async fn room(
             from,
             inspect,
             x11,
+            output,
             consent,
         } => {
             if !consent {
                 return Err(Error::Denied);
             }
             let kind = kind.kind();
+            if inspect && (x11 || output.output_device.is_some() || output.output_display.is_some())
+            {
+                return Err(Error::Configuration(
+                    "inspection cannot select a playback output",
+                ));
+            }
+            if x11 && (output.output_device.is_some() || output.output_display.is_some()) {
+                return Err(Error::Configuration(
+                    "--x11 cannot be combined with an explicit output target",
+                ));
+            }
+            let output = if x11 {
+                OutputTarget::DisplayX11 {
+                    display: std::env::var("DISPLAY").map_err(|_| {
+                        Error::Configuration("X11 playback requires DISPLAY or --output-display")
+                    })?,
+                }
+            } else {
+                output.target(kind.codec())?
+            };
+            output.validate(kind.codec())?;
+            if !inspect && kk::media::native_capabilities().adapter.is_none() {
+                return Err(Error::UnsupportedPlatform);
+            }
             if x11 && kind == MediaKind::Audio {
                 return Err(Error::Configuration("X11 playback requires a video source"));
             }
@@ -290,13 +537,18 @@ pub(super) async fn room(
             let mut track = None;
             let mut packets = 0u64;
             let mut bytes = 0u64;
+            let mut natural_end = false;
+            let interrupt = tokio::signal::ctrl_c();
+            tokio::pin!(interrupt);
             let processing = async {
                 loop {
                     let frame = tokio::select! {
-                        signal = tokio::signal::ctrl_c() => { signal?; break; },
+                        biased;
+                        signal = &mut interrupt => { signal?; break; },
                         frame = receiver.next() => frame?,
                     };
                     let Some(frame) = frame else {
+                        natural_end = true;
                         break;
                     };
                     if !inspect {
@@ -308,17 +560,15 @@ pub(super) async fn room(
                                 Sink {
                                     codec: kind.codec(),
                                 }
-                                .playback_with(x11)?,
+                                .playback_on(output.clone())?,
                             );
                             track = Some(frame.track);
                         }
-                        let input = sink
-                            .as_mut()
-                            .and_then(|sink| sink.input.as_mut())
-                            .ok_or(Error::Protocol)?;
                         tokio::time::timeout(
                             kk::config::MEDIA_PACKET_MAX_AGE,
-                            frame.packet.write(input),
+                            sink.as_mut()
+                                .ok_or(Error::Protocol)?
+                                .write_packet(&frame.packet),
                         )
                         .await
                         .map_err(|_| Error::Timeout)??;
@@ -329,12 +579,24 @@ pub(super) async fn room(
                 Ok::<(), Error>(())
             }
             .await;
-            drop(receiver);
             let cleanup = if let Some(sink) = sink {
-                sink.shutdown().await.and_then(playback_exit)
+                if natural_end && processing.is_ok() {
+                    sink.finish_input_or_cancel(async {
+                        tokio::select! {
+                            biased;
+                            signal = &mut interrupt => signal.map_err(Error::Io),
+                            revoked = receiver.cancelled() => revoked,
+                        }
+                    })
+                    .await
+                    .and_then(playback_exit)
+                } else {
+                    sink.shutdown().await.and_then(playback_exit)
+                }
             } else {
                 Ok(())
             };
+            drop(receiver);
             processing?;
             cleanup?;
             writeln!(
@@ -358,6 +620,8 @@ pub enum Kind {
 pub enum Command {
     /// Inspect native plugin availability; never opens capture devices
     Doctor,
+    /// Report compiled native adapters, not installed devices or permission
+    Capabilities,
     /// Explicit local native encode/decode preview, not room network transmission
     Preview {
         #[arg(value_enum)]
@@ -368,6 +632,8 @@ pub enum Command {
         /// Explicit X11 window ID; zero deliberately selects that display's root
         #[arg(long, default_value_t = 0)]
         window: u64,
+        #[command(flatten)]
+        output: OutputOptions,
         /// Authorize capture and local playback on this device
         #[arg(long, required = true)]
         consent: bool,
@@ -376,6 +642,15 @@ pub enum Command {
 
 pub(super) async fn run(command: Command) -> Result<()> {
     match command {
+        Command::Capabilities => {
+            writeln!(
+                io::stdout(),
+                "{}",
+                serde_json::to_string(&kk::media::native_capabilities())
+                    .map_err(|_| Error::Protocol)?
+            )?;
+            Ok(())
+        }
         Command::Doctor => {
             let plugins = kk::media::doctor().await?;
             writeln!(
@@ -389,6 +664,7 @@ pub(super) async fn run(command: Command) -> Result<()> {
             source,
             device,
             window,
+            output,
             consent,
         } => {
             if !consent {
@@ -402,7 +678,12 @@ pub(super) async fn run(command: Command) -> Result<()> {
                     window,
                 },
             };
-            let mut process = source.preview()?;
+            source.validate()?;
+            if window != 0 && source.kind() != kk::media::Kind::Screen {
+                return Err(Error::Configuration("--window requires screen-x11 preview"));
+            }
+            let target = output.target(source.codec())?;
+            let mut process = source.preview_on(target)?;
             let outcome = tokio::select! {
                 signal = tokio::signal::ctrl_c() => Some(signal),
                 result = process.finished() => {

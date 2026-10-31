@@ -15,6 +15,7 @@ source hashes + strict audit + vectors + independent peers
 
 | Family | Purpose and limit |
 | --- | --- |
+| OpenMLS replay validation | Explicit committed-replay API retains cryptographic validation and signed lifetime bounds; fresh admission keeps current-clock validation. Direct SDK path dependency, not a cryptographic primitive replacement. |
 | OpenMLS credential / Libcrux / traits | Matching upstream snapshot with corrected dependencies; default storage stays synchronous |
 | age / age-core | Updated RustCrypto dependencies; CLI-only helper gated to its actual features |
 | i18n-config | Maintained TOML dependency instead of basic-toml |
@@ -41,7 +42,7 @@ not accidentally supplied by another dependency's enabled features.
 
 | Gate | Checks |
 | --- | --- |
-| `make check` | Product behavior, source-hash guards and notice/packaging invariants |
+| `make check` | Product behavior, source hashes, SDK path inheritance and notice/offline-source closure |
 | Strict CI audit | Entire root locked graph, no advisory ignore or denied-warning suppression |
 | `make sdk-check` | Preserved expansion vectors plus independent official/restricted wire peers |
 | `make hax-check` | Actual conditional macro implementation with the upstream nightly |
@@ -51,6 +52,19 @@ The reference SDK is intentionally historical, is independently resolved, and is
 never linked into the product. Its test/cache requirements do not expand the
 offline product-build promise. Hax macro compilation is not an F*/Lean proof run;
 the application itself uses the repository-pinned stable toolchain.
+
+OpenMLS provenance checks bind the copied package identity and VCS revision to the
+ledger, hash the unchanged upstream tree, and pin the separately reviewed local
+file. Original MIT metadata and the collected upstream notice remain authoritative.
+The offline archive must carry the complete path source plus its legal/provenance
+records: Cargo vendoring alone does not carry local path dependencies.
+
+SDK inheritance here means repository/path consumers and the preserved offline
+source graph. Root `[patch]` tables do not propagate into independent consumers;
+the OpenMLS correction must remain a direct dependency. A normalized Cargo registry
+package strips path selection and is not qualified by these static checks. Do not
+claim registry SDK publication without separately resolving that source-selection
+boundary. These guards do not substitute for deterministic replay or wire tests.
 
 Wire-test design: [independent interoperability gate](../lab/opaque-interop/README.md).
 

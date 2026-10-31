@@ -1,4 +1,6 @@
 use std::process::Command;
+#[cfg(unix)]
+mod support;
 
 #[test]
 fn file_receive_requires_explicit_consent_before_loading_identities() {
@@ -29,7 +31,7 @@ fn file_receive_requires_explicit_consent_before_loading_identities() {
 #[cfg(unix)]
 #[test]
 fn file_inspection_hashes_binary_content_without_an_identity() {
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let source = root.path().join("source");
     std::fs::write(&source, b"abc").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_kk"))
@@ -139,7 +141,7 @@ fn invalid_deadlines_are_syntax_errors_not_network_operations() {
 #[cfg(unix)]
 #[test]
 fn identity_cli_creates_once_and_public_show_never_needs_the_key() {
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let directory = root.path().join("identity");
     let created = Command::new(env!("CARGO_BIN_EXE_kk"))
         .args(["identity", "create"])
@@ -177,7 +179,7 @@ fn two_cli_processes_exchange_an_authenticated_message() {
         process::Stdio,
     };
 
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let a = root.path().join("a");
     let b = root.path().join("b");
     kk::Identity::create(&a).unwrap();
@@ -226,7 +228,7 @@ fn ctrl_c_exits_130_without_a_received_message() {
         process::Stdio,
     };
 
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let a = root.path().join("a");
     let b = root.path().join("b");
     kk::Identity::create(&a).unwrap();

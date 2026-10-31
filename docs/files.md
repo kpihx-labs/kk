@@ -19,9 +19,39 @@ offer -> verify retained prefix -> send remainder -> verify full SHA-256
 | Contact inbox | `kk serve --bind LOCAL_IP:45454 --accept-files --inbox PRIVATE_DIR` | `kk send alice ./report.pdf -f` |
 | Room | `kk room serve team --accept-files --inbox PRIVATE_DIR` | `kk room send team ./report.pdf -f --to PEER_DIGEST` |
 
-Use an existing owned private directory. `kk file-info PATH` calculates content
+Use an existing owned private directory. `kk inspect PATH` calculates content
 metadata without loading an identity. Limits/options are exposed by each command's
 `--help`; their authority remains `src/config.rs`.
+
+### Foreground-Owned File Jobs
+
+Synchronous sending remains the default. Opt in to admission without waiting for
+the receipt only when the existing foreground room should own the operation:
+
+```sh
+kk --profile "$PROFILE" room send team ./report.pdf --file --to "$PEER_DIGEST" --background
+kk --profile "$PROFILE" room transfers team
+kk --profile "$PROFILE" room transfer team "$JOB_ID"
+kk --profile "$PROFILE" room cancel-transfer team "$JOB_ID" --confirm
+```
+
+Take the exact opaque job ID from the admission reply's `result.id`. Admission
+success/exit zero means a local job exists, not that the peer stored its bytes.
+Source-byte counters are not receipts. Only `completed` with a verified receipt
+means durable recipient storage. Status history is bounded to its foreground
+owner; stopping/restarting retires IDs without inventing remote rollback.
+
+Cancellation distinguishes `requested`, `acknowledged` and the resulting job.
+Acknowledgement ends local work, not already handed-off bytes or remote storage.
+Post-handoff loss can remain `uncertain`; inspect before explicitly retrying the
+same stable content. A late cancellation cannot undo an already verified receipt.
+No command installs or creates an implicit background daemon.
+
+The browser's Room actions / File transfers exposes the same owner jobs and
+explicit cancellation. Closing a view stops monitoring, not the job. Received
+copies can be forwarded by opaque ID while incoming-file consent stays off;
+the destination must still consent, and unknown original sensitivity defaults
+the new forwarding operation to sensitive. [Actual GUI evidence](ui-candidate-f817-qualification.md).
 
 ## Storage Contract
 

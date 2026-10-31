@@ -6,6 +6,36 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use zeroize::Zeroizing;
 mod pipeline;
 mod process;
+mod vp8;
+#[cfg(test)]
+pub(crate) use pipeline::{decode_synthetic_packets, synthetic_packets};
+
+/// Compiled adapter support, NOT installed plugin/device availability or granted
+/// permission. Discovery is inert; `doctor` separately probes plugin presence.
+#[derive(Debug, Serialize)]
+pub struct NativeCapabilities {
+    pub platform: &'static str,
+    pub adapter: Option<&'static str>,
+    pub capture_sources: &'static [&'static str],
+    pub playback_targets: &'static [&'static str],
+}
+pub fn native_capabilities() -> NativeCapabilities {
+    let supported = cfg!(target_os = "linux");
+    NativeCapabilities {
+        platform: std::env::consts::OS,
+        adapter: supported.then_some("gstreamer-bounded-subprocess"),
+        capture_sources: if supported {
+            &["pulseaudio-device", "v4l2-device", "x11-display-window"]
+        } else {
+            &[]
+        },
+        playback_targets: if supported {
+            &["default", "pulseaudio-device", "x11-display"]
+        } else {
+            &[]
+        },
+    }
+}
 pub use process::{Exit, Pipeline};
 
 pub(crate) fn now_ms() -> Result<u64> {
@@ -30,8 +60,10 @@ pub async fn doctor() -> Result<Vec<(String, bool)>> {
         "rtpstreampay",
         "rtpstreamdepay",
         "pulsesrc",
+        "pulsesink",
         "v4l2src",
         "ximagesrc",
+        "ximagesink",
         "pipewiresrc",
     ] {
         let mut process = Pipeline::inspect(plugin)?;
@@ -97,6 +129,10 @@ pub enum Source {
     },
 }
 impl Source {
+    /// Build/validate an inert adapter plan; never opens a source or requests OS permission.
+    pub fn validate(&self) -> Result<()> {
+        pipeline::capture(self).map(|_| ())
+    }
     pub fn kind(&self) -> Kind {
         match self {
             Self::Microphone { .. } => Kind::Audio,
@@ -118,12 +154,40 @@ impl Source {
     pub fn preview(self) -> Result<Pipeline> {
         Pipeline::start(pipeline::preview(&self)?, false, false)
     }
+    /// Explicit local preview destination, with the same no-fallback validation
+    /// as received playback. Does not publish or claim room authorization.
+    pub fn preview_on(self, target: OutputTarget) -> Result<Pipeline> {
+        Pipeline::start(pipeline::preview_on(&self, &target)?, false, false)
+    }
 }
 
 pub struct Sink {
     pub codec: Codec,
 }
+/// Local output coordinates only; never transmitted as room metadata. Explicit
+/// targets do not fall back to the OS default when a device/display is missing.
+#[derive(Clone, Debug)]
+pub enum OutputTarget {
+    Default,
+    AudioDevice { device: String },
+    DisplayX11 { display: String },
+}
+impl OutputTarget {
+    /// Validate local selection before IPC, capture or playback effects.
+    pub fn validate(&self, codec: Codec) -> Result<()> {
+        pipeline::playback_on(codec, self).map(|_| ())
+    }
+}
 impl Sink {
+    pub fn playback_on(self, target: OutputTarget) -> Result<Pipeline> {
+        if !cfg!(target_os = "linux") {
+            return Err(Error::Configuration(
+                "bounded native playback on this platform is not implemented yet",
+            ));
+        }
+        Pipeline::start(pipeline::playback_on(self.codec, &target)?, true, false)
+            .map(|process| process.decoder(self.codec))
+    }
     pub fn playback(self) -> Result<Pipeline> {
         self.playback_with(false)
     }
@@ -139,6 +203,7 @@ impl Sink {
             ));
         }
         Pipeline::start(pipeline::playback(self.codec, x11), true, false)
+            .map(|process| process.decoder(self.codec))
     }
 }
 
@@ -148,6 +213,20 @@ pub struct Packet {
     bytes: Zeroizing<Vec<u8>>,
 }
 impl Packet {
+    fn payload(&self) -> &[u8] {
+        let mut header = 12 + (self.bytes[0] & 15) as usize * 4;
+        if self.bytes[0] & 16 != 0 {
+            header += 4 + u16::from_be_bytes([self.bytes[header + 2], self.bytes[header + 3]])
+                as usize
+                * 4;
+        }
+        let padding = if self.bytes[0] & 32 != 0 {
+            *self.bytes.last().unwrap() as usize
+        } else {
+            0
+        };
+        &self.bytes[header..self.bytes.len() - padding]
+    }
     pub fn timestamp(&self) -> u32 {
         u32::from_be_bytes(self.bytes[4..8].try_into().expect("validated RTP header"))
     }

@@ -48,7 +48,7 @@ class ShellBoundaryTests(unittest.TestCase):
                                 MOCK_REJECT=reject, MOCK_DOWNLOAD_FAIL=str(int(download_failure)))
         self.tool("gh", '''
 if [ "$3" = --help ]; then
-    printf '%s\\n' --repo --signer-workflow --source-ref --source-digest --deny-self-hosted-runners
+    printf '%s\\n' --repo --signer-workflow --source-ref --source-digest --deny-self-hosted-runners --bundle --custom-trusted-root
     exit 0
 fi
 printf 'VERIFY %s\\n' "$*" >> "$MOCK_LOG"
@@ -333,6 +333,163 @@ printf '%s\n\n' "${MOCK_STATUS:-200}"
                               "--trusted-root", "/USB/root.jsonl")
         self.assertIn("explicitly trusted --helper", result.stderr)
         self.assertEqual(result.returncode, 1)
+
+    def local_bootstrap(self):
+        self.bootstrap_tools()
+        for asset in list(self.fixtures.iterdir()):
+            asset.chmod(0o400)
+            (self.fixtures / (asset.name + ".jsonl")).write_bytes(b"mock signed subject bundle")
+        roots = self.directory / "public roots.jsonl"
+        roots.write_bytes(b"mock separately provisioned roots")
+        return ["--bootstrap-dir", str(self.fixtures), "--archive", "/USB/archive.zip",
+                "--bundle", "/USB/archive.jsonl", "--trusted-root", str(roots)]
+
+    def test_local_signed_bootstrap_authenticates_snapshots_without_curl(self):
+        arguments = self.local_bootstrap()
+        (self.tools / "curl").unlink()
+        result = self.request(*arguments)
+        self.assertEqual(result.returncode, 37, result.stderr)
+        events = self.log.read_text().splitlines()
+        self.assertEqual([event.split()[0] for event in events], ["VERIFY", "VERIFY", "EXEC"])
+        for event in events[:2]:
+            self.assertIn("--bundle ", event)
+            self.assertIn("--custom-trusted-root ", event)
+            self.assertIn("kk-bootstrap.", event)
+            self.assertNotIn(str(self.fixtures), event)
+        self.assertIn("--archive /USB/archive.zip", events[-1])
+        self.assertIn("--bundle /USB/archive.jsonl", events[-1])
+        self.assertIn("--trusted-root ", events[-1])
+        self.assertEqual((self.fixtures / "kk-v0.8.2-linux-x86_64-bootstrap.bin").stat().st_mode & 0o777, 0o400)
+
+    def test_macos_bootstrap_binds_native_platform_and_cpu_without_linux_tools(self):
+        self.bootstrap_tools()
+        self.host("Darwin", "arm64")
+        result = self.request()
+        self.assertEqual(result.returncode, 37, result.stderr)
+        self.assertIn("macos-aarch64-bootstrap.bin", self.log.read_text())
+        # Authenticated Linux notices are not interchangeable with Mach-O notices.
+        notices = self.fixtures / "kk-v0.8.2-macos-aarch64-bootstrap-notices.json"
+        record = json.loads(notices.read_text())
+        record["executable_format"] = "elf"
+        notices.write_text(json.dumps(record))
+        self.log.write_text("")
+        result = self.request()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("binding mismatch", result.stderr)
+        self.assertNotIn("EXEC", self.log.read_text())
+
+    def test_local_signed_bootstrap_missing_bundle_never_verifies_or_executes(self):
+        arguments = self.local_bootstrap()
+        (self.fixtures / "kk-v0.8.2-linux-x86_64-bootstrap-notices.json.jsonl").unlink()
+        result = self.request(*arguments)
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(self.log.exists())
+
+    def test_local_signed_bootstrap_rejected_provenance_never_executes(self):
+        arguments = self.local_bootstrap()
+        subject = self.fixtures / "kk-v0.8.2-linux-x86_64-bootstrap.bin"
+        subject.chmod(0o700)
+        self.environment["MOCK_REJECT"] = ".bin"
+        result = self.request(*arguments)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("provenance verification failed", result.stderr)
+        self.assertNotIn("EXEC", self.log.read_text())
+        self.assertEqual(subject.stat().st_mode & 0o777, 0o700)
+        for copied in self.directory.glob("kk-bootstrap.*/*.bin"):
+            self.assertEqual(copied.stat().st_mode & 0o111, 0)
+
+    def test_local_signed_bootstrap_still_rejects_unbound_notices(self):
+        arguments = self.local_bootstrap()
+        notices = self.fixtures / "kk-v0.8.2-linux-x86_64-bootstrap-notices.json"
+        notices.chmod(0o600)
+        record = json.loads(notices.read_text())
+        record["helper"]["sha256"] = "f" * 64
+        notices.write_text(json.dumps(record))
+        result = self.request(*arguments)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("binding mismatch", result.stderr)
+        self.assertNotIn("EXEC", self.log.read_text())
+
+    def test_local_signed_bootstrap_rejects_linked_subject_before_verification(self):
+        arguments = self.local_bootstrap()
+        subject = self.fixtures / "kk-v0.8.2-linux-x86_64-bootstrap.bin"
+        subject.unlink()
+        subject.symlink_to(self.payload)
+        result = self.request(*arguments)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ordinary files", result.stderr)
+        self.assertFalse(self.log.exists())
+
+    def test_local_signed_bootstrap_rejects_oversized_roots_before_verification(self):
+        arguments = self.local_bootstrap()
+        roots = Path(arguments[-1])
+        roots.write_bytes(b"x" * (1024 * 1024 + 1))
+        result = self.request(*arguments)
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(self.log.exists())
+
+    def test_local_signed_bootstrap_requires_offline_verifier_flags(self):
+        arguments = self.local_bootstrap()
+        self.tool("gh", 'printf "%s\\n" --repo --signer-workflow --source-ref --source-digest --deny-self-hosted-runners\n')
+        result = self.request(*arguments)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("gh lacks required policy flag: --bundle", result.stderr)
+        self.assertFalse(self.log.exists())
+
+    def test_local_signed_bootstrap_requires_complete_explicit_trust(self):
+        for extra in ([], ["--helper", "/trusted/kk"], ["--rollback"]):
+            arguments = ["--version", "0.8.2", "--commit", COMMIT, "--bootstrap-dir", str(self.directory), *extra]
+            result = self.run_shell(*arguments)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("--bootstrap-dir", result.stderr)
+
+    def test_local_signed_bootstrap_rollback_authenticates_helper_without_download(self):
+        arguments = self.local_bootstrap()
+        position = arguments.index("--archive")
+        del arguments[position:position + 2]
+        (self.tools / "curl").unlink()
+        result = self.request(*arguments, "--rollback")
+        self.assertEqual(result.returncode, 37, result.stderr)
+        events = self.log.read_text().splitlines()
+        self.assertEqual([line.split()[0] for line in events], ["VERIFY", "VERIFY", "EXEC"])
+        self.assertIn("EXEC rollback --version 0.8.2", events[-1])
+        self.assertNotIn("--archive", events[-1])
+        self.assertNotIn("--commit", events[-1])
+        self.assertIn("--bundle /USB/archive.jsonl", events[-1])
+        self.assertIn("--trusted-root ", events[-1])
+
+    def test_signed_bootstrap_verify_only_forwards_native_flag_after_both_subjects(self):
+        arguments = self.local_bootstrap()
+        (self.tools / "curl").unlink()
+        result = self.request(*arguments, "--verify-only")
+        self.assertEqual(result.returncode, 37, result.stderr)
+        events = self.log.read_text().splitlines()
+        self.assertEqual([line.split()[0] for line in events], ["VERIFY", "VERIFY", "EXEC"])
+        self.assertIn("EXEC install --version 0.8.2", events[-1])
+        self.assertIn("--verify-only", events[-1])
+        self.assertIn("--archive /USB/archive.zip", events[-1])
+
+    def test_online_verify_only_preserves_authentication_and_rejected_helper_has_no_fallback(self):
+        self.bootstrap_tools()
+        self.environment["MOCK_REJECT"] = ".bin"
+        result = self.request("--verify-only")
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn("EXEC", self.log.read_text())
+        self.environment.pop("MOCK_REJECT")
+        self.log.write_text("")
+        result = self.request("--verify-only")
+        self.assertEqual(result.returncode, 37, result.stderr)
+        events = self.log.read_text().splitlines()
+        self.assertEqual(sum(line.startswith("EXEC") for line in events), 1)
+        self.assertIn("--verify-only", events[-1])
+
+    def test_verify_only_cannot_skip_bootstrap_authentication_or_select_rollback(self):
+        self.bootstrap_tools()
+        for extra in (("--helper", str(self.payload)), ("--rollback",)):
+            result = self.request("--verify-only", *extra)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("--verify-only excludes" if "--rollback" in extra else "authenticates helper/notices", result.stderr)
+        self.assertFalse(self.log.exists())
 
 
 class EntrypointContractTests(unittest.TestCase):

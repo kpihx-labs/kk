@@ -15,19 +15,11 @@ Unsupported protection models fail closed instead of weakening storage or TLS.
 
 ## Native Foundation CI
 
-[`native.yml`](../.github/workflows/native.yml) is a nonpublishing lane for
-`windows-2022` / `x86_64-pc-windows-msvc`, `macos-15-intel` /
-`x86_64-apple-darwin`, and `macos-15` / `aarch64-apple-darwin`.
-It uses the existing checkout action pin and reads the Rust channel from
-[`rust-toolchain.toml`](../rust-toolchain.toml), rather than maintaining another
-version. The [hosted runner labels](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
-identify native hosts, not Linux cross-compilation. macOS fixtures use a resolved physical temporary root; production `NOFOLLOW` and ancestor checks remain unchanged.
+[`native.yml`](../.github/workflows/native.yml) is a nonpublishing lane for `windows-2022` / `x86_64-pc-windows-msvc`, `macos-15-intel` / `x86_64-apple-darwin`, and `macos-15` / `aarch64-apple-darwin`.
+It uses the existing checkout action pin and reads the Rust channel from [`rust-toolchain.toml`](../rust-toolchain.toml), rather than maintaining another version. The [hosted runner labels](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) identify native hosts, not Linux cross-compilation. macOS fixtures use a resolved physical temporary root; production `NOFOLLOW` and ancestor checks remain unchanged.
 
-**Execution status is source-bound.** Earlier Windows foundation passes do not
-qualify another changed tree; earlier macOS runs stopped at compile/stdio blockers.
-The `a60aab6` selected pass does not explain every historical failure. Linux cannot
-establish Windows/macOS behavior. Compiler, lint, runtime or linker failures are
-blockers, not permission to skip a step or claim product support.
+**Execution status is source-bound.** Earlier Windows foundation passes do not qualify another changed tree; earlier macOS runs stopped at compile/stdio blockers.
+The `a60aab6` selected pass does not explain every historical failure. Linux cannot establish Windows/macOS behavior. Compiler, lint, runtime or linker failures are blockers, not permission to skip a step or claim product support.
 
 | Gate | What it establishes if it passes | What it does not establish |
 | --- | --- | --- |
@@ -59,14 +51,10 @@ code. Guards below do not imply that every Unix suite is qualified on macOS:
 | `stdio_pipe`, `stdio_socket`, `stdio_worker`, `stdio_terminal` | Platform-specific source guards | Selected applicable tests on macOS; native PTY/worker outcomes are separate from compilation |
 | `cli` | Mixed: Unix-only inspection, identity, two-process message exchange and SIGINT cases; remaining cases unguarded | Not run; minimum smoke lives in the dedicated foundation target |
 | `packaging` | No platform guard | Compiled, not run; package inventory is not native product qualification |
+| `native_profile` | Linux/macOS only; explicit paths plus isolated HOME/XDG and private shared fixtures | Prepared native CLI acceptance for noncreating status, identity-preserving settings and corrupt/missing-state refusal; not selected by this workflow or yet executed on macOS/WSL2 |
 
-Library tests also mix unguarded, Unix-only and Linux-only modules. Only the
-explicit macOS filters above are executed; other applicable modules are compiled
-but not executed by this lane. Python packaging,
-documentation and lab suites, browser JavaScript suites, SDK interoperability,
-VMs and hardware tests are not run here either. The existing Linux workflow
-retains its separate product gates; this lane neither replaces nor extends their
-evidence to other operating systems.
+Library tests also mix unguarded, Unix-only and Linux-only modules. Only the explicit macOS filters above are executed; other applicable modules are compiled but not executed by this lane.
+Python packaging, documentation and lab suites, browser JavaScript suites, SDK interoperability, VMs and hardware tests are not run here either. The existing Linux workflow retains its separate product gates; this lane neither replaces nor extends their evidence to other operating systems.
 
 ### Product Blockers Behind The Foundation
 
@@ -78,12 +66,8 @@ evidence to other operating systems.
 
 ## Atomic Publication Filesystem And Durability Scope
 
-Linux and macOS share the descriptor-relative `files::Store`: a user-owned 0700
-directory, no-follow opens, owned 0600 single-link regular files, exclusive staging
-locks and content/peer-bound resume metadata. The open directory descriptor stays
-the authority if its pathname moves. Stream publication uses the same owner/consent
-and transfer-cancellation gates on both systems, never an ungated macOS commit.
-Other targets still refuse protected file reception/publication.
+Linux and macOS share the descriptor-relative `files::Store`: a user-owned 0700 directory, no-follow opens, owned 0600 single-link regular files, exclusive staging locks and content/peer-bound resume metadata. The open directory descriptor stays the authority if its pathname moves.
+Stream publication uses the same owner/consent and transfer-cancellation gates on both systems, never an ungated macOS commit. Other targets still refuse protected file reception/publication.
 
 The locked rustix 1.1.5 source exposes `renameat_with` for Apple targets and maps
 `RenameFlags::NOREPLACE` to `RENAME_EXCL`, using `renameatx_np`. Linux uses
@@ -91,20 +75,33 @@ The locked rustix 1.1.5 source exposes `renameat_with` for Apple targets and map
 syscall is used. If the Apple API is absent, rustix returns `NOSYS` for these
 flags/descriptors; K&K reports publication failure instead of overwriting.
 
-Staging and final output live in the same directory/filesystem. Qualification
-is limited to the local filesystem actually used by the hosted job; it does not
-establish equivalent locking, permission, atomicity or crash behavior on network,
-FUSE, cloud-synced or removable filesystems. The port preserves file `sync_all`,
-directory `fsync` after rename, metadata unlink only after that sync, and a final
-directory `fsync`. Errors propagate without warning suppression or fallback.
-An error after rename can leave a complete output visible even though the
-operation reports failure; it is not a rollback guarantee. A cancelled waiter
-prevents a not-yet-authorized rename, not an already-completed publication.
+Staging and final output live in the same directory/filesystem. Qualification is limited to the local filesystem actually used by the hosted job; it does not establish equivalent locking, permission, atomicity or crash behavior on network, FUSE, cloud-synced or removable filesystems.
+The port preserves file `sync_all`, directory `fsync` after rename, metadata unlink only after that sync, and a final directory `fsync`. Errors propagate without warning suppression or fallback.
+An error after rename can leave a complete output visible even though the operation reports failure; it is not a rollback guarantee. A cancelled waiter prevents a not-yet-authorized rename, not an already-completed publication.
 
 These sync calls do not claim macOS `F_FULLFSYNC`, hardware cache flushing or power-loss
 durability on arbitrary devices. Hosted tests are not power-cut tests. No format,
 encryption design or data migration changes are included. Hosted macOS jobs must pass
 before recording runtime evidence.
+
+## Identity Backend Boundaries
+
+Unix and macOS private identity IO uses retained directory descriptors and descriptor-relative exclusive creation/no-follow file opens. Opened private keys must be owned 0600 single-link regular files; identity directories must be owned 0700 without special permission bits. The certificate inside an identity is also owned, single-link and not group/world writable.
+FIFO/device/directory objects are rejected before reading; nonblocking opens prevent a FIFO substitution from waiting for a writer. Key/certificate mismatch and missing/partial state fail without regeneration.
+
+Ancestor traversal refuses user-owned aliases and writable nonsticky directories; root-owned system aliases and root-owned sticky OS temporary directories remain trusted boundaries (including macOS `/var` and `/tmp`). The resolved path is then walked through no-follow directory descriptors. After the identity descriptor is opened, replacing its pathname does not redirect reads or writes.
+This does not isolate a malicious process running as the same account or prevent a privileged administrator changing the namespace. Data and directory sync errors propagate; this is not a hardware power-loss guarantee or macOS `F_FULLFSYNC` claim.
+
+Profile JSON metadata reads, updates and publication leases use the same descriptor-bound directory resolver. It permits root-owned OS ancestor aliases on macOS while rejecting user aliases and unsafe physical ancestors. Reads remain noncreating, but no longer bypass the publication path's ancestor policy.
+A missing metadata directory/file returns defaults; malformed or unsafe existing state still fails without reset. This alias integration is implemented, not new native-host execution evidence.
+Shared Unix IPC client diagnostics distinguish absent listeners, unavailable socket paths and access-policy refusals using the stable `NODE` code. Client probes do not create profiles/sessions, remove stale sockets or loosen permissions; missing profiles retain `IO`/`NotFound` rather than being initialized.
+
+Public certificate import does not require protected private storage. Its Windows implementation checks the opened final object's reparse attributes using safe standard-library handle APIs, without claiming private storage or authenticated IPC support. Exact missing Windows interfaces are in [Windows storage](windows-storage.md).
+Changes to this backend need new native macOS/Windows execution; Linux regression tests or cross-compilation do not extend the earlier hosted qualification.
+`platform_foundation` also prepares a Windows sharing-contract test: public import must refuse exclusive readers or already-open writers, then succeed unchanged after handle closure. Adding this test is not native execution evidence.
+
+WSL2 executes the Linux backend, not Windows ACL/named-pipe implementations. Keep private profiles on the Linux filesystem with working Unix owner/mode/no-follow semantics.
+Windows-mounted, network and cloud-backed filesystems are not qualified by the Linux implementation or by a file reporting mode 0700; WSL2 interoperability and filesystem-specific protections still require an authorized native host run.
 
 ## Runtime Dependencies
 

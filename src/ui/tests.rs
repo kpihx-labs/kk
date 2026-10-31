@@ -7,15 +7,13 @@ use axum::{
 };
 use tower::ServiceExt;
 
+#[path = "files_http_tests.rs"]
+mod files_http_tests;
 #[path = "history_tests.rs"]
 mod history_tests;
 
 fn private_test_root() -> tempfile::TempDir {
-    use std::os::unix::fs::PermissionsExt;
-    tempfile::Builder::new()
-        .permissions(std::fs::Permissions::from_mode(0o700))
-        .tempdir()
-        .unwrap()
+    crate::test_support::tempdir().unwrap()
 }
 
 struct Device {
@@ -173,6 +171,27 @@ fn address() -> String {
         .local_addr()
         .unwrap()
         .to_string()
+}
+
+#[test]
+fn ui_room_phase_revision_fences_same_name_foreground_restart() {
+    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
+        .block_on(tokio::task::LocalSet::new().run_until(async {
+            let root = private_test_root();
+            let device = Device::new(root.path().join("device"), 45971).await;
+            device.action(json!({"action":"init"})).await;
+            device.action(json!({"action":"create", "name":"same", "title":"Lifecycle", "bind":address()})).await;
+            device.action(json!({"action":"serve", "name":"same", "accept_files":false})).await;
+            let first = device.until(|state| state["phases"]["same"]["state"] == "online").await;
+            let revision = first["phases"]["same"]["revision"].as_str().unwrap().parse::<u64>().unwrap();
+            device.action(json!({"action":"stop", "name":"same"})).await;
+            device.until(|state| state["phases"]["same"]["state"] == "stopped").await;
+            device.action(json!({"action":"serve", "name":"same", "accept_files":false})).await;
+            let restarted = device.until(|state| state["phases"]["same"]["state"] == "online").await;
+            let next = restarted["phases"]["same"]["revision"].as_str().unwrap().parse::<u64>().unwrap();
+            assert!(next > revision, "same-name restart must change the presentation fence");
+            device.close().await;
+        }));
 }
 
 #[test]
@@ -469,15 +488,9 @@ async fn ui_http_pairs_independent_devices_owns_foreground_rooms_and_redacts_sen
          let answered=a.until(|state|state["messages"].as_array().unwrap().iter().any(|message|message["kind"]=="reply")).await;
          let answer=answered["messages"].as_array().unwrap().iter().find(|message|message["kind"]=="reply").unwrap();
          assert_eq!(answer["text"],"actual typed reply");assert_eq!(answer["relation"]["kind"],"reply");assert_eq!(answer["sender"],peer_b);
-         b.action(json!({"action":"react","name":"team","target":target,"value":"thanks","added":true,"sensitive":false})).await;
-         let reacted=a.until(|state|!state["reactions"].as_array().unwrap().is_empty()).await;
-         assert_eq!(reacted["reactions"][0]["members"].as_array().unwrap().len(),1);
-         a.action(json!({"action":"react","name":"team","target":target,"value":"thanks","added":false,"sensitive":false})).await;
-         assert_eq!(a.state().await["reactions"][0]["members"].as_array().unwrap().len(),1,"another author cannot remove the peer's reaction");
-         b.action(json!({"action":"react","name":"team","target":target,"value":"thanks","added":false,"sensitive":false})).await;
-         a.until(|state|state["reactions"].as_array().unwrap().is_empty()).await;
-         let spoofed=a.request(Method::POST,"/api/action",Some(json!({"action":"react","name":"team","target":target,"value":"thanks","added":true,"author":peer_b})),Some(&a.app.0.origin),true).await;
-         assert_eq!(spoofed.status(),StatusCode::UNPROCESSABLE_ENTITY);
+          let retired=a.request(Method::POST,"/api/action",Some(json!({"action":"react","name":"team","target":target,"value":"thanks","added":true})),Some(&a.app.0.origin),true).await;
+          assert_eq!(retired.status(),StatusCode::UNPROCESSABLE_ENTITY);
+          assert!(a.state().await.get("reactions").is_none(), "social relation counts are not an active UI interface");
         a.action(json!({"action": "send", "name": "team", "text": "synthetic sensitive UI payload", "sensitive": true})).await;
         let received = b.until(|state| state["messages"].as_array().unwrap().iter().any(|message| message["sensitive"] == true)).await;
         assert!(!received.to_string().contains("synthetic sensitive UI payload"));
@@ -515,12 +528,12 @@ async fn ui_http_pairs_independent_devices_owns_foreground_rooms_and_redacts_sen
         let response = b.request(Method::GET, "/api/rooms/team/files", None, None, true).await;
         let inbox: Value = serde_json::from_slice(&to_bytes(response.into_body(), config::UI_JSON_BYTES).await.unwrap()).unwrap();
         let id = inbox[0]["id"].as_str().unwrap();
+        let peer_a = a.state().await["identity"].as_str().unwrap().to_owned();
         let response = b.request(Method::GET, &format!("/api/rooms/team/files/{id}"), None, None, true).await;
         assert_eq!(to_bytes(response.into_body(), config::DEFAULT_FILE_LIMIT as usize).await.unwrap().as_ref(), bytes);
         assert_eq!(b.action(json!({"action":"file-consent","name":"team","accepted":false})).await["accepted"], false);
         assert_eq!(b.state().await["rooms"][0]["status"]["files"]["accepted"], false);
         b.action(json!({"action":"file-consent","name":"team","accepted":true})).await;
-        let peer_a = a.state().await["identity"].as_str().unwrap().to_owned();
         let digest = reply["result"]["sha256"].as_str().unwrap();
         let offered = b.action(json!({"action":"copies","name":"team","command":{"operation":"share","id":id,"peers":[peer_a]}})).await;
         assert_eq!(offered["ok"], true);
@@ -540,10 +553,17 @@ async fn ui_http_pairs_independent_devices_owns_foreground_rooms_and_redacts_sen
         assert!(hints["result"]["advertised"].as_array().unwrap().is_empty());
         let unsafe_share = b.request(Method::POST, "/api/action", Some(json!({"action":"copies","name":"team","command":{"operation":"share","id":"../not-an-inbox-object.bin","peers":[peer_a]}})), Some(&b.app.0.origin), true).await;
         assert_ne!(unsafe_share.status(), StatusCode::OK);
+        // Registered received roots outlive incoming consent. Forwarding an owned
+        // object must not reopen reception; truly unregistered roots fail in core.
+        b.action(json!({"action":"file-consent","name":"team","accepted":false})).await;
         let response = b.request(Method::POST, &format!("/api/rooms/team/files/{id}/forward?to={peer_a}"), None, Some(&b.app.0.origin), true).await;
         assert_eq!(response.status(), StatusCode::OK);
         let forwarded: Value = serde_json::from_slice(&to_bytes(response.into_body(), config::UI_JSON_BYTES).await.unwrap()).unwrap();
         assert_eq!(forwarded["ok"], true);
+        assert_eq!(forwarded["result"]["sha256"], digest);
+        assert_eq!(b.state().await["rooms"][0]["status"]["files"]["accepted"], false, "forwarding must not silently enable incoming reception");
+        files_http_tests::qualify_transfer_jobs(&a, &b, id, &peer_a, &peer_b).await;
+        b.action(json!({"action":"file-consent","name":"team","accepted":true})).await;
         // Exercise destructive moderation only inside these generated profiles.
         // A controller vote changes quorum, never the participant's data grant;
         // retiring the vote precedes membership removal and does not erase files.

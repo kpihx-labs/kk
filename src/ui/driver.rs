@@ -112,13 +112,13 @@ pub(super) enum Action {
         #[serde(default)]
         sensitive: bool,
     },
-    React {
+    PendingMutation {
         name: String,
-        target: crate::rooms::conversation::Target,
-        value: crate::rooms::conversation::Reaction,
-        added: bool,
-        #[serde(default)]
-        sensitive: bool,
+    },
+    RetryPrepared {
+        name: String,
+        expected: [u8; 32],
+        confirm: bool,
     },
     Invite {
         name: String,
@@ -146,6 +146,10 @@ pub(super) enum Action {
     Remove {
         name: String,
         peer: PeerId,
+    },
+    LeaveSelf {
+        name: String,
+        confirm: bool,
     },
     Reveal {
         id: u64,
@@ -175,6 +179,9 @@ pub(super) enum HistoryAction {
         text: String,
         after_id: u64,
         limit: usize,
+    },
+    Resolve {
+        target: crate::rooms::conversation::Target,
     },
 }
 impl HistoryAction {
@@ -226,6 +233,7 @@ impl HistoryAction {
                     response_bytes: query.response_bytes,
                 }
             }
+            Self::Resolve { target } => Command::HistoryResolve { target },
             _ => {
                 return Err(Error::Configuration(
                     "history action requires explicit confirmation",
@@ -266,8 +274,20 @@ fn membership(value: &Value, room: PeerId, own: PeerId) -> Result<Membership> {
 }
 fn phase(app: &App, room: &str, state: &str, error: Option<String>) {
     if let Ok(mut data) = app.0.data.lock() {
-        data.phases
-            .insert(room.into(), json!({"state": state, "error": error}));
+        // Presentation-only lifecycle fence, not a capability or authorization.
+        // Count transitions even when the browser misses stop/start snapshots.
+        let revision = data
+            .phases
+            .get(room)
+            .and_then(|phase| phase["revision"].as_str())
+            .and_then(|revision| revision.parse::<u64>().ok())
+            .unwrap_or(0)
+            .saturating_add(1)
+            .to_string();
+        data.phases.insert(
+            room.into(),
+            json!({"state": state, "error": error, "revision": revision}),
+        );
     }
 }
 fn message(
@@ -482,6 +502,40 @@ pub(super) async fn run(app: App, mut requests: mpsc::Receiver<Request>) -> Resu
             request = requests.recv() => match request { Some(request) => request, None => break },
         };
         let action = match request.action {
+            action @ (Action::PendingMutation { .. } | Action::RetryPrepared { .. }) => {
+                if transfers.len() >= config::UI_MAX_TRANSFERS {
+                    let _ = request.reply.send(Err(Error::Node(
+                        "UI operation slots are busy; retry explicitly",
+                    )));
+                    continue;
+                }
+                let (name, command) = match action {
+                    Action::PendingMutation { name } => (name, Command::PendingMutation),
+                    Action::RetryPrepared {
+                        name,
+                        expected,
+                        confirm,
+                    } => {
+                        if !confirm {
+                            let _ = request.reply.send(Err(Error::Denied));
+                            continue;
+                        }
+                        (name, Command::RetryPrepared { expected, confirm })
+                    }
+                    _ => unreachable!("selected recovery action"),
+                };
+                let current = app.clone();
+                transfers.spawn_local(async move {
+                    let result = async {
+                        let reply = local::request(&current.0.profile, &name, &command).await?;
+                        reply.check()?;
+                        Ok(reply.result)
+                    }
+                    .await;
+                    let _ = request.reply.send(result);
+                });
+                continue;
+            }
             Action::History { name, command } => {
                 if transfers.len() >= config::UI_MAX_TRANSFERS {
                     let _ = request.reply.send(Err(Error::Node(
@@ -521,6 +575,7 @@ pub(super) async fn run(app: App, mut requests: mpsc::Receiver<Request>) -> Resu
         let result: Result<Value> = async {
             match action {
                 Action::History { .. } => unreachable!("history runs in the bounded local actor lane"),
+                Action::PendingMutation { .. } | Action::RetryPrepared { .. } => unreachable!("recovery is explicit and runs in the bounded local actor lane"),
                 Action::Transfer(_) => unreachable!("owned transfers run in their bounded task lane"),
                 Action::Copies { .. } => unreachable!("owned copy operations run in their bounded task lane"),
                 Action::Init => Ok(json!({"identity": crate::profile::identity(&app.0.profile, true)?.peer().fingerprint()})),
@@ -597,15 +652,6 @@ pub(super) async fn run(app: App, mut requests: mpsc::Receiver<Request>) -> Resu
                     let id = record_message(&app, &name, peer.fingerprint(), operation, true, Some(reference))?;
                     Ok(json!({"delivery":reply,"message":id}))
                 },
-                Action::React { name, target, value, added, sensitive } => {
-                    let reply = local::request(&app.0.profile, &name, &Command::React { target:target.clone(), value, added, sensitive }).await?;
-                    reply.check()?;
-                    let reference = serde_json::from_value(reply.result["reference"].clone()).map_err(|_| Error::Protocol)?;
-                    let peer = Peer::load(&app.0.profile.join("identity/certificate.der"))?;
-                    let operation = crate::rooms::conversation::Operation::Reaction { target, value, added, sensitive };
-                    let id = record_message(&app, &name, peer.fingerprint(), operation, true, Some(reference))?;
-                    Ok(json!({"delivery":reply,"message":id}))
-                },
                 Action::Controllers { name, peers } => {
                     let peers = peers.into_iter().collect();
                     let reply = local::request(&app.0.profile, &name, &Command::Controllers { voters: peers }).await?;
@@ -614,6 +660,11 @@ pub(super) async fn run(app: App, mut requests: mpsc::Receiver<Request>) -> Resu
                 },
                 Action::Remove { name, peer } => {
                     let reply = local::request(&app.0.profile, &name, &Command::Remove { member: peer }).await?;
+                    reply.check()?;
+                    Ok(reply.result)
+                },
+                Action::LeaveSelf { name, confirm } => {
+                    let reply = local::request(&app.0.profile, &name, &Command::LeaveSelf { confirm }).await?;
                     reply.check()?;
                     Ok(reply.result)
                 },
@@ -760,15 +811,9 @@ pub(super) async fn snapshot(app: &App) -> Result<Value> {
         .map_err(|_| Error::Node("UI event store is unavailable"))?;
     let operations: Vec<_> = data.operations.iter().map(|(id, operation)| json!({"id": id, "room": operation.room, "kind": if operation.issuing { "invite" } else { "join" }, "state": operation.state, "proposal": operation.proposal,
         "invitation_ready": operation.issuing && operation.state == "waiting" && valid.contains(id), "error": operation.error})).collect();
-    let mut reactions = crate::rooms::conversation::Reactions::default();
-    for message in &data.messages {
-        if let Some(reference) = &message.reference {
-            reactions.apply(reference, &message.operation)?;
-        }
-    }
     Ok(
-        json!({"version": crate::VERSION, "identity": identity, "settings": crate::profile::Settings::load(&app.0.profile)?, "rooms": rooms, "messages": data.messages.iter().map(Message::view).collect::<Vec<_>>(), "reactions":reactions.summaries(),
-        "operations": operations, "phases": data.phases, "history": "explicit-opt-in-local-encrypted", "files": {"max_bytes": config::DEFAULT_FILE_LIMIT}, "media": {"width": config::MEDIA_VIDEO_WIDTH, "height": config::MEDIA_VIDEO_HEIGHT, "fps": config::MEDIA_VIDEO_FPS,
+        json!({"version": crate::VERSION, "identity": identity, "settings": crate::profile::Settings::load(&app.0.profile)?, "rooms": rooms, "messages": data.messages.iter().map(Message::view).collect::<Vec<_>>(),
+        "operations": operations, "phases": data.phases, "history": "explicit-opt-in-local-encrypted", "drafts": {"max_rooms":config::UI_MAX_ROOMS,"max_text_bytes":config::MAX_MESSAGE_BYTES}, "files": {"max_bytes": config::DEFAULT_FILE_LIMIT, "preview_max_bytes":config::UI_FILE_PREVIEW_BYTES, "preview_max_pixels":config::UI_FILE_PREVIEW_PIXELS}, "media": {"width": config::MEDIA_VIDEO_WIDTH, "height": config::MEDIA_VIDEO_HEIGHT, "fps": config::MEDIA_VIDEO_FPS,
         "packet_bytes": config::MEDIA_PACKET_BYTES, "frame_bytes": config::MEDIA_ENCODED_FRAME_BYTES, "datagram_buffer_bytes": config::MEDIA_DATAGRAM_BUFFER_BYTES, "packet_age_ms": config::MEDIA_PACKET_MAX_AGE.as_millis(), "audio_bitrate": config::MEDIA_AUDIO_BITRATE,
         "max_tracks": config::MEDIA_MAX_STREAMS, "max_subscriptions": config::MEDIA_MAX_STREAMS, "max_publications": config::MEDIA_MAX_PUBLICATIONS, "source_kinds": config::MEDIA_SOURCE_KINDS, "max_users": config::MEDIA_MAX_USERS}}),
     )

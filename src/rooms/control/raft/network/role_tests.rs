@@ -4,7 +4,7 @@ use crate::rooms::{RootBundle, mls::CryptoMember};
 
 #[tokio::test]
 async fn a_pinned_nonvoter_cannot_inject_votes_leadership_or_snapshots() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_support::tempdir().unwrap();
     let a = Arc::new(Identity::create(&directory.path().join("a")).unwrap());
     let b = Arc::new(Identity::create(&directory.path().join("b")).unwrap());
     let a_id = PeerId::from_peer(&a.peer());

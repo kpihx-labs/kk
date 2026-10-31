@@ -193,6 +193,244 @@ fn call(profile: &Path, args: &[&str]) -> String {
 }
 
 #[test]
+fn file_jobs_have_real_cli_admission_inspection_cancellation_and_owner_retirement() {
+    let root = support::private_root();
+    let profile = root.path().join("profile");
+    call(&profile, &["init"]);
+    let bind = udp_address();
+    call(&profile, &["room", "create", "jobs", "--bind", &bind]);
+    let source = root.path().join("source.bin");
+    std::fs::write(&source, b"synthetic file job fixture").unwrap();
+    let mut server = Process::start(&profile, &["room", "serve", "jobs"]);
+    server.until("ROOM SERVING");
+    let peer = "f".repeat(64); // Deliberately not an admitted recipient.
+    let admitted: serde_json::Value = serde_json::from_str(&call(
+        &profile,
+        &[
+            "room",
+            "send",
+            "jobs",
+            source.to_str().unwrap(),
+            "--file",
+            "--to",
+            &peer,
+            "--background",
+            "--sensitive",
+        ],
+    ))
+    .unwrap();
+    assert_eq!(admitted["ok"], true);
+    assert!(
+        admitted["result"]["receipt"].is_null(),
+        "admission is not a storage receipt"
+    );
+    assert!(admitted["result"].get("sha256").is_none());
+    let id = admitted["result"]["id"].as_str().unwrap();
+    let listed: serde_json::Value =
+        serde_json::from_str(&call(&profile, &["room", "transfers", "jobs"])).unwrap();
+    assert!(
+        listed["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|job| job["id"] == id)
+    );
+    let observed: serde_json::Value =
+        serde_json::from_str(&call(&profile, &["room", "transfer", "jobs", id])).unwrap();
+    assert_eq!(observed["result"]["id"], id);
+    let cancelled: serde_json::Value = serde_json::from_str(&call(
+        &profile,
+        &["room", "cancel-transfer", "jobs", id, "--confirm"],
+    ))
+    .unwrap();
+    assert_eq!(cancelled["result"]["acknowledged"], true);
+    assert_ne!(cancelled["result"]["job"]["progress"]["phase"], "completed");
+    assert!(cancelled["result"]["job"]["receipt"].is_null());
+    assert_eq!(cancelled["result"]["job"]["terminal_durable"], true);
+    assert_eq!(cancelled["result"]["job"]["progress"]["handed_off"], false);
+    call(&profile, &["room", "stop", "jobs"]);
+    server.finish();
+    let mut reopened = Process::start(&profile, &["room", "serve", "jobs"]);
+    reopened.until("ROOM SERVING");
+    let retired: serde_json::Value =
+        serde_json::from_str(&call(&profile, &["room", "transfer", "jobs", id])).unwrap();
+    assert_eq!(retired["ok"], true);
+    assert_eq!(retired["result"]["id"], id);
+    assert_eq!(retired["result"]["historical"], true);
+    assert_eq!(retired["result"]["terminal_durable"], true);
+    assert_eq!(
+        retired["result"]["progress"],
+        cancelled["result"]["job"]["progress"]
+    );
+    assert!(retired["result"]["receipt"].is_null());
+    let history: serde_json::Value =
+        serde_json::from_str(&call(&profile, &["room", "transfers", "jobs"])).unwrap();
+    assert_eq!(
+        history["result"].as_array().unwrap().len(),
+        1,
+        "restart must not replay a job"
+    );
+    assert_eq!(history["result"][0]["historical"], true);
+    let no_control: serde_json::Value = serde_json::from_str(&call(
+        &profile,
+        &["room", "cancel-transfer", "jobs", id, "--confirm"],
+    ))
+    .unwrap();
+    assert_eq!(
+        no_control["result"]["requested"], false,
+        "retired owner has no active cancellation authority"
+    );
+    assert_eq!(no_control["result"]["acknowledged"], true);
+    assert_eq!(no_control["result"]["job"], retired["result"]);
+
+    let fresh: serde_json::Value = serde_json::from_str(&call(
+        &profile,
+        &[
+            "room",
+            "send",
+            "jobs",
+            source.to_str().unwrap(),
+            "--file",
+            "--to",
+            &peer,
+            "--background",
+            "--sensitive",
+        ],
+    ))
+    .unwrap();
+    let fresh_id = fresh["result"]["id"].as_str().unwrap();
+    assert_ne!(fresh_id, id);
+    assert_ne!(
+        fresh_id.split('-').next(),
+        id.split('-').next(),
+        "new owner must issue a new namespace"
+    );
+    assert_eq!(fresh["result"]["historical"], false);
+    call(&profile, &["room", "stop", "jobs"]);
+    reopened.finish();
+    assert_eq!(
+        std::fs::read(source).unwrap(),
+        b"synthetic file job fixture"
+    );
+    assert!(
+        !profile.join("rooms/jobs/inbox").exists(),
+        "inspection/cancellation must not grant incoming storage"
+    );
+}
+
+#[test]
+fn a_third_reader_receives_its_local_welcome_bridge_after_controller_reconfiguration() {
+    let root = support::private_root();
+    let a = root.path().join("a");
+    let b = root.path().join("b");
+    let c = root.path().join("c");
+    for profile in [&a, &b, &c] {
+        call(profile, &["init"]);
+    }
+    let peer_a = kk::Identity::load(&a.join("identity"))
+        .unwrap()
+        .peer()
+        .fingerprint();
+    let peer_b = kk::Identity::load(&b.join("identity"))
+        .unwrap()
+        .peer()
+        .fingerprint();
+    call(&a, &["room", "create", "bridge", "--bind", &udp_address()]);
+    let mut owner = Process::start(&a, &["room", "serve", "bridge"]);
+    owner.until("ROOM SERVING");
+    let invitation = root.path().join("participant.json");
+    let mut issue = Process::start(
+        &a,
+        &[
+            "room",
+            "invite",
+            "bridge",
+            "--bind",
+            "127.0.0.1:0",
+            "--invite-out",
+            invitation.to_str().unwrap(),
+            "--confirm",
+        ],
+    );
+    issue.until("ROOM INVITATION");
+    let mut participant = Process::start(
+        &b,
+        &[
+            "room",
+            "join",
+            "bridge",
+            "--invitation",
+            invitation.to_str().unwrap(),
+            "--bind",
+            &udp_address(),
+            "--confirm",
+        ],
+    );
+    participant.until("ROOM SERVING");
+    issue.finish();
+    call(&a, &["room", "controllers", "bridge", &peer_a, &peer_b]);
+    call(&a, &["room", "controllers", "bridge", &peer_a]);
+    let invitation = root.path().join("reader.json");
+    let mut issue = Process::start(
+        &a,
+        &[
+            "room",
+            "invite",
+            "bridge",
+            "--bind",
+            "127.0.0.1:0",
+            "--invite-out",
+            invitation.to_str().unwrap(),
+            "--role",
+            "reader",
+            "--confirm",
+        ],
+    );
+    issue.until("ROOM INVITATION");
+    let mut reader = Process::start(
+        &c,
+        &[
+            "room",
+            "join",
+            "bridge",
+            "--invitation",
+            invitation.to_str().unwrap(),
+            "--bind",
+            &udp_address(),
+            "--role",
+            "reader",
+            "--confirm",
+        ],
+    );
+    reader.until("ROOM SERVING");
+    issue.finish();
+    let status: serde_json::Value =
+        serde_json::from_str(&call(&c, &["room", "status", "bridge"])).unwrap();
+    assert_eq!(status["result"]["active"], true);
+    assert_eq!(status["result"]["members"].as_array().unwrap().len(), 3);
+    assert_eq!(status["result"]["capabilities"]["publish"], false);
+    assert_eq!(status["result"]["capabilities"]["control"], false);
+    let applied = &status["result"]["applied"];
+    assert!(applied["index"].is_string() && applied["term"].is_string());
+    let hash = applied["hash"].as_str().unwrap();
+    assert_eq!(hash.len(), 64);
+    assert!(
+        hash.bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    );
+    assert_eq!(
+        applied["meaning"],
+        "private-group-local-applied-public-record-not-fresh-quorum-or-public-head"
+    );
+    for profile in [&c, &b, &a] {
+        call(profile, &["room", "stop", "bridge"]);
+    }
+    reader.finish();
+    participant.finish();
+    owner.finish();
+}
+
+#[test]
 fn rooms_have_an_actual_cli_enrollment_broadcast_and_cold_resume() {
     let root = support::private_root();
     let alice = root.path().join("alice");
@@ -383,16 +621,16 @@ fn rooms_have_an_actual_cli_enrollment_broadcast_and_cold_resume() {
         if remove {
             arguments.push("--remove");
         }
-        let reacted: serde_json::Value = serde_json::from_str(&call(&carol, &arguments)).unwrap();
-        assert_eq!(reacted["result"]["all_acknowledged"], true);
-        let line = source.until("ROOM REACTION");
-        assert!(line.contains("thanks"));
-        assert!(line.contains(if remove {
-            "\"added\":false"
-        } else {
-            "\"added\":true"
-        }));
-        assert!(guests[0].until("ROOM REACTION").contains("thanks"));
+        let rejected = Command::new(env!("CARGO_BIN_EXE_kk"))
+            .arg("--profile")
+            .arg(&carol)
+            .args(&arguments)
+            .output()
+            .unwrap();
+        assert_eq!(rejected.status.code(), Some(2));
+        assert!(
+            String::from_utf8_lossy(&rejected.stderr).contains("unrecognized subcommand 'react'")
+        );
     }
     let mut foreign: kk::rooms::conversation::Target = message_id.parse().unwrap();
     foreign.room[0] ^= 1;

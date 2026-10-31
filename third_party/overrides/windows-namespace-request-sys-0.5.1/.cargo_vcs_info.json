@@ -1,0 +1,6 @@
+{
+  "git": {
+    "sha1": "724ffb2f439c59ffea1e4a7d3ff5a1e4ff203152"
+  },
+  "path_in_vcs": "crates/windows-namespace-request-sys"
+}

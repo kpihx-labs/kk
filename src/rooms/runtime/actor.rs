@@ -12,6 +12,8 @@ use zeroize::Zeroizing;
 
 #[derive(Clone)]
 pub struct Status {
+    /// Ephemeral public replacement fence, never authorization or persisted state.
+    pub foreground_instance: [u8; 16],
     pub owner: crate::rooms::control::raft::PeerId,
     pub room: [u8; 32],
     pub epoch: u64,
@@ -26,6 +28,7 @@ pub struct Status {
 impl Status {
     fn snapshot(room: &Room, running: bool, busy: bool) -> Self {
         Self {
+            foreground_instance: room.foreground_instance,
             owner: crate::rooms::control::raft::PeerId::from_peer(&room.identity.peer()),
             room: room.room_id(),
             epoch: room.epoch(),
@@ -107,6 +110,10 @@ enum Command {
         search: history::Search,
         reply: oneshot::Sender<Result<history::Page>>,
     },
+    HistoryResolve {
+        target: crate::rooms::conversation::Target,
+        reply: oneshot::Sender<Result<Option<crate::rooms::group::HistoryRow>>>,
+    },
     EncryptReferenced {
         text: Zeroizing<String>,
         sensitive: bool,
@@ -165,7 +172,18 @@ enum Command {
         peer: Peer,
         reply: oneshot::Sender<Result<Proposal>>,
     },
+    Prepared(oneshot::Sender<Result<Option<Proposal>>>),
+    PendingMutation(oneshot::Sender<Result<Option<super::PendingMutation>>>),
+    RetryPrepared {
+        expected: [u8; 32],
+        reply: oneshot::Sender<Result<ApplyResult>>,
+    },
     Submit(oneshot::Sender<Result<ApplyResult>>),
+    LeaveSelf(oneshot::Sender<Result<ApplyResult>>),
+    AcceptDeparture {
+        request: crate::rooms::control::departure::Request,
+        reply: oneshot::Sender<Result<ApplyResult>>,
+    },
     Welcome {
         commit: Vec<u8>,
         reply: oneshot::Sender<Result<Option<Vec<u8>>>>,
@@ -181,6 +199,7 @@ impl Command {
         match self {
             Self::History { reply, .. } => reply.is_closed(),
             Self::HistorySearch { reply, .. } => reply.is_closed(),
+            Self::HistoryResolve { reply, .. } => reply.is_closed(),
             Self::EncryptReferenced { reply, .. } => reply.is_closed(),
             Self::EncryptConversation { reply, .. } => reply.is_closed(),
             Self::AcceptReferenced { reply, .. } => reply.is_closed(),
@@ -196,7 +215,11 @@ impl Command {
             Self::Authority { reply, .. } => reply.is_closed(),
             Self::Learner { reply, .. } => reply.is_closed(),
             Self::Controllers { reply, .. } => reply.is_closed(),
-            Self::Submit(reply) => reply.is_closed(),
+            Self::Prepared(reply) => reply.is_closed(),
+            Self::PendingMutation(reply) => reply.is_closed(),
+            Self::RetryPrepared { reply, .. } => reply.is_closed(),
+            Self::Submit(reply) | Self::LeaveSelf(reply) => reply.is_closed(),
+            Self::AcceptDeparture { reply, .. } => reply.is_closed(),
             Self::Welcome { reply, .. } => reply.is_closed(),
         }
     }
@@ -298,6 +321,15 @@ impl Handle {
         self.call(deadline, |reply| Command::History { operation, reply })
             .await
     }
+    pub async fn history_resolve(
+        &self,
+        target: crate::rooms::conversation::Target,
+        deadline: Duration,
+    ) -> Result<Option<crate::rooms::group::HistoryRow>> {
+        self.call(deadline, |reply| Command::HistoryResolve { target, reply })
+            .await
+    }
+
     pub async fn history_search(
         &self,
         search: history::Search,
@@ -368,7 +400,9 @@ impl Handle {
         let command = build(reply);
         let history_work = matches!(
             &command,
-            Command::History { .. } | Command::HistorySearch { .. }
+            Command::History { .. }
+                | Command::HistorySearch { .. }
+                | Command::HistoryResolve { .. }
         );
         let sender = if history_work {
             &self.history_sender
@@ -548,6 +582,42 @@ impl Handle {
         self.call(deadline, |reply| Command::Remove { peer, reply })
             .await
     }
+    /// Read the exact durable local operation after cancellation or restart.
+    /// Presence does not prove acceptance, rejection, or recipient delivery;
+    /// retry through `submit_prepared`, never manufacture a replacement nonce.
+    pub async fn prepared_control(&self, deadline: Duration) -> Result<Option<Proposal>> {
+        self.call(deadline, Command::Prepared).await
+    }
+    /// Payload-free local metadata for an explicit recovery confirmation.
+    pub async fn pending_mutation(
+        &self,
+        deadline: Duration,
+    ) -> Result<Option<super::PendingMutation>> {
+        self.call(deadline, Command::PendingMutation).await
+    }
+    pub async fn retry_prepared(
+        &self,
+        expected: [u8; 32],
+        deadline: Duration,
+    ) -> Result<ApplyResult> {
+        self.call(deadline, |reply| Command::RetryPrepared { expected, reply })
+            .await
+    }
+    /// Explicit voluntary departure of this actor's own identity only.
+    pub async fn leave_self(&self, deadline: Duration) -> Result<ApplyResult> {
+        self.call(deadline, Command::LeaveSelf).await
+    }
+    pub(crate) async fn accept_departure_request(
+        &self,
+        request: crate::rooms::control::departure::Request,
+        deadline: Duration,
+    ) -> Result<ApplyResult> {
+        self.call(deadline, |reply| Command::AcceptDeparture {
+            request,
+            reply,
+        })
+        .await
+    }
     pub async fn submit_prepared(&self, deadline: Duration) -> Result<ApplyResult> {
         self.call(deadline, Command::Submit).await
     }
@@ -672,6 +742,10 @@ impl Actor {
             }
             Command::HistorySearch { search, reply } => {
                 let result = self.room.history_search(search, deadline).await;
+                let _ = reply.send(before_deadline(result, expires));
+            }
+            Command::HistoryResolve { target, reply } => {
+                let result = self.room.history_resolve(&target, deadline).await;
                 let _ = reply.send(before_deadline(result, expires));
             }
             Command::EncryptReferenced {
@@ -826,6 +900,24 @@ impl Actor {
             }
             Command::Remove { peer, reply } => {
                 let _ = reply.send(self.room.prepare_departure(&peer, deadline).await);
+            }
+            Command::Prepared(reply) => {
+                let _ = reply.send(before_deadline(self.room.prepared_control(), expires));
+            }
+            Command::PendingMutation(reply) => {
+                let _ = reply.send(before_deadline(self.room.pending_mutation(), expires));
+            }
+            Command::RetryPrepared { expected, reply } => {
+                let result = self.room.retry_prepared(expected, deadline).await;
+                let _ = reply.send(before_deadline(result, expires));
+            }
+            Command::LeaveSelf(reply) => {
+                let result = self.room.leave_self(deadline).await;
+                let _ = reply.send(before_deadline(result, expires));
+            }
+            Command::AcceptDeparture { request, reply } => {
+                let result = self.room.accept_departure_request(request, deadline).await;
+                let _ = reply.send(before_deadline(result, expires));
             }
             Command::Submit(reply) => {
                 let _ = reply.send(self.room.submit_prepared(deadline).await);

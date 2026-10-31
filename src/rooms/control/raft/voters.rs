@@ -94,7 +94,7 @@ mod tests {
     use crate::rooms::{Grant, Rights, RootBundle, control::Proposal, mls::CryptoMember};
     #[test]
     fn voter_authority_requires_explicit_bounded_admin_intent_and_exact_signature() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_support::tempdir().unwrap();
         let a = Identity::create(&directory.path().join("a")).unwrap();
         let b = Identity::create(&directory.path().join("b")).unwrap();
         let anchor = RootBundle::create(&a, "Controller approval fixture")

@@ -1,14 +1,14 @@
 //! Cancellable, bounded foreground output; a stalled pipe must not stall the node.
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::config;
 use crate::{Error, Result};
 #[cfg(unix)]
 use std::io::{self, Write};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use zeroize::Zeroizing;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub async fn line(value: String) -> Result<()> {
     let mut bytes = Zeroizing::new(value.into_bytes());
     if bytes.len() > config::MAX_MESSAGE_BYTES * 6 + 8192 {
@@ -19,8 +19,11 @@ pub async fn line(value: String) -> Result<()> {
 }
 
 /// Diagnostic output uses the same cancellation boundary as foreground output.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) async fn diagnostic(bytes: &[u8]) -> Result<()> {
+    if bytes.len() > config::MAX_MESSAGE_BYTES * 6 + 8193 {
+        return Err(Error::Configuration("output exceeds limit"));
+    }
     write_bytes(Zeroizing::new(bytes.to_vec()), true).await
 }
 
@@ -170,7 +173,20 @@ fn write_pipe(
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+async fn write_bytes(bytes: Zeroizing<Vec<u8>>, stderr: bool) -> Result<()> {
+    if bytes.len() > config::MAX_MESSAGE_BYTES * 6 + 8193 {
+        return Err(Error::Configuration("output exceeds limit"));
+    }
+    let worker = crate::stdio_worker::configured()?;
+    if stderr {
+        worker.write_stderr(bytes).await
+    } else {
+        worker.write(bytes).await
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 pub async fn line(_value: String) -> Result<()> {
     Err(Error::UnsupportedPlatform)
 }

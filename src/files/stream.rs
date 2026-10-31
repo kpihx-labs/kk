@@ -1,5 +1,6 @@
 //! The file wire protocol, independent of one-shot or persistent connection lifetime.
 
+use super::progress::{TransferObserver, TransferPhase};
 use super::{FileInfo, Receipt, ReceivePolicy, Store, digest};
 use crate::{Error, Peer, Result, config};
 use sha2::{Digest, Sha256};
@@ -65,9 +66,9 @@ where
 
 pub(crate) async fn receive_with_publication<F, Fut>(
     peer: &Peer,
-    mut request: quinn::RecvStream,
-    mut response: quinn::SendStream,
-    mut authorize: F,
+    request: quinn::RecvStream,
+    response: quinn::SendStream,
+    authorize: F,
     choose: impl FnOnce(&FileInfo) -> Result<ReceivePolicy>,
     publication: impl Publication,
 ) -> Result<Receipt>
@@ -75,7 +76,35 @@ where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<()>>,
 {
+    receive_with_publication_monitored(
+        peer,
+        request,
+        response,
+        authorize,
+        choose,
+        publication,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn receive_with_publication_monitored<F, Fut>(
+    peer: &Peer,
+    mut request: quinn::RecvStream,
+    mut response: quinn::SendStream,
+    mut authorize: F,
+    choose: impl FnOnce(&FileInfo) -> Result<ReceivePolicy>,
+    publication: impl Publication,
+    progress: Option<&TransferObserver>,
+) -> Result<Receipt>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
     authorize().await?;
+    if let Some(progress) = progress {
+        progress.handoff();
+    }
     let mut offer = [0; 41];
     request.read_exact(&mut offer).await?;
     if offer[0] > 1 {
@@ -85,6 +114,9 @@ where
     let bytes = u64::from_be_bytes(offer[1..9].try_into().expect("fixed header"));
     if bytes > config::MAX_FILE_BYTES {
         return Err(Error::FileTooLarge);
+    }
+    if let Some(progress) = progress {
+        progress.offered(bytes);
     }
     let expected: [u8; 32] = offer[9..].try_into().expect("fixed digest");
     let policy = choose(&FileInfo {
@@ -111,6 +143,9 @@ where
     }
     response.write_all(&offset.to_be_bytes()).await?;
     response.write_all(&prefix).await?;
+    if let Some(progress) = progress {
+        progress.resumed(offset);
+    }
     let mut remaining = bytes - offset;
     let mut since_authorization = 0usize;
     let mut buffer = Zeroizing::new(vec![0; config::FILE_CHUNK_BYTES]);
@@ -124,6 +159,9 @@ where
             return Err(Error::Protocol);
         }
         store.file.write_all(&buffer[..read]).await?;
+        if let Some(progress) = progress {
+            progress.advance(read as u64);
+        }
         since_authorization += read;
         if since_authorization >= config::FILE_CHUNK_BYTES {
             authorize().await?;
@@ -137,6 +175,9 @@ where
     if !store.complete {
         store.file.flush().await?;
     }
+    if let Some(progress) = progress {
+        progress.phase(TransferPhase::Verifying);
+    }
     store.file.sync_all().await?;
     if digest(&mut store.file, bytes).await? != expected
         || store.file.metadata().await?.len() != bytes
@@ -144,6 +185,9 @@ where
         return Err(Error::Integrity);
     }
     authorize().await?;
+    if let Some(progress) = progress {
+        progress.phase(TransferPhase::Publishing);
+    }
     store.commit_with_publication(publication).await?;
     response.write_all(&expected).await?;
     response.finish().map_err(|_| Error::Network)?;
@@ -175,15 +219,35 @@ pub(crate) async fn send_with_async<F, Fut>(
     file: &mut File,
     info: FileInfo,
     sensitive: bool,
+    request: quinn::SendStream,
+    response: quinn::RecvStream,
+    authorize: F,
+) -> Result<Receipt>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    send_with_async_monitored(file, info, sensitive, request, response, authorize, None).await
+}
+
+pub(crate) async fn send_with_async_monitored<F, Fut>(
+    file: &mut File,
+    info: FileInfo,
+    sensitive: bool,
     mut request: quinn::SendStream,
     mut response: quinn::RecvStream,
     mut authorize: F,
+    progress: Option<&TransferObserver>,
 ) -> Result<Receipt>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<()>>,
 {
     authorize().await?;
+    if let Some(progress) = progress {
+        progress.offered(info.bytes);
+        progress.handoff();
+    }
     request.write_all(&[u8::from(sensitive)]).await?;
     request.write_all(&info.bytes.to_be_bytes()).await?;
     request.write_all(&info.sha256).await?;
@@ -192,6 +256,9 @@ where
     let offset = u64::from_be_bytes(proposal[..8].try_into().expect("fixed header"));
     if offset > info.bytes || digest(file, offset).await?.as_slice() != &proposal[8..] {
         return Err(Error::Integrity);
+    }
+    if let Some(progress) = progress {
+        progress.resumed(offset);
     }
     let upload = async {
         let mut remaining = info.bytes - offset;
@@ -203,13 +270,20 @@ where
                 .await
                 .map_err(|_| Error::Integrity)?;
             request.write_all(&buffer[..count]).await?;
+            if let Some(progress) = progress {
+                progress.advance(count as u64);
+            }
             remaining -= count as u64;
         }
         if file.read(&mut [0]).await? != 0 {
             return Err(Error::Integrity);
         }
         authorize().await?;
-        request.finish().map_err(|_| Error::Network)
+        request.finish().map_err(|_| Error::Network)?;
+        if let Some(progress) = progress {
+            progress.phase(TransferPhase::AwaitingReceipt);
+        }
+        Ok::<_, Error>(())
     };
     let receipt = async {
         if response.read_to_end(32).await? != info.sha256 {

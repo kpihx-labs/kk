@@ -11,7 +11,7 @@ struct Builder {
 }
 impl Builder {
     fn new() -> Self {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_support::tempdir().unwrap();
         let identity = Identity::create(&directory.path().join("identity")).unwrap();
         let anchor = RootBundle::create(&identity, "Public storage conformance fixture")
             .unwrap()
@@ -26,7 +26,7 @@ impl Builder {
 }
 impl StoreBuilder<TypeConfig, LogStore, StateMachine, tempfile::TempDir> for Builder {
     async fn build(&self) -> Stored<(tempfile::TempDir, LogStore, StateMachine)> {
-        let directory = tempfile::tempdir()
+        let directory = crate::test_support::tempdir()
             .map_err(|_| *failure(ErrorVerb::Write, "cannot create test directory"))?;
         let store = LogStore::create(&directory.path().join("public-control")).unwrap();
         let machine = StateMachine::create(store.clone(), &self.anchor, self.public.clone())
@@ -105,7 +105,7 @@ async fn exact_retry_recovers_original_public_receipt_without_reapplying_or_prom
     use super::super::super::Proposal;
     use crate::rooms::{Grant, Rights};
     use openraft::{CommittedLeaderId, Entry, EntryPayload};
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_support::tempdir().unwrap();
     let alice = Identity::create(&directory.path().join("alice")).unwrap();
     let bob = Identity::create(&directory.path().join("bob")).unwrap();
     let anchor = RootBundle::create(&alice, "Receipt retry fixture")
@@ -133,12 +133,12 @@ async fn exact_retry_recovers_original_public_receipt_without_reapplying_or_prom
         &package,
     )
     .unwrap();
-    let entry = |index, proposal| Entry::<TypeConfig> {
+    let entry = |index, proposal: crate::rooms::control::Proposal| Entry::<TypeConfig> {
         log_id: LogId::new(
             CommittedLeaderId::new(1, PeerId::from_peer(&alice.peer())),
             index,
         ),
-        payload: EntryPayload::Normal(proposal),
+        payload: EntryPayload::Normal(proposal.with_ordered_decision(true)),
     };
     let original = machine
         .apply([entry(0, proposal.clone())])
@@ -182,7 +182,7 @@ async fn exact_retry_recovers_original_public_receipt_without_reapplying_or_prom
 async fn private_crypto_cursor_tracks_each_actual_record_not_a_historical_receipt() {
     use crate::rooms::{Grant, Rights, group::Group};
     use openraft::{CommittedLeaderId, Entry, EntryPayload};
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_support::tempdir().unwrap();
     let alice = Identity::create(&directory.path().join("alice")).unwrap();
     let bob = Identity::create(&directory.path().join("bob")).unwrap();
     let anchor = RootBundle::create(&alice, "Atomic private applied records")
@@ -232,7 +232,10 @@ async fn private_crypto_cursor_tracks_each_actual_record_not_a_historical_receip
         exact
     );
     machine
-        .apply([entry(1, EntryPayload::Normal(proposal.clone()))])
+        .apply([entry(
+            1,
+            EntryPayload::Normal(proposal.clone().with_ordered_decision(true)),
+        )])
         .await
         .unwrap();
     let add = machine.committed_after(initial).await.unwrap().remove(0);
@@ -269,15 +272,21 @@ async fn private_crypto_cursor_tracks_each_actual_record_not_a_historical_receip
     let view = machine.public_view().await.unwrap();
     let removal = group.prepare_departure(&alice, &view, &bob.peer()).unwrap();
     machine
-        .apply([entry(2, EntryPayload::Normal(removal))])
+        .apply([entry(
+            2,
+            EntryPayload::Normal(removal.with_ordered_decision(true)),
+        )])
         .await
         .unwrap();
     let mut forged = proposal.clone();
     forged.signature = vec![0; 64].into();
     machine
         .apply([
-            entry(3, EntryPayload::Normal(proposal)),
-            entry(4, EntryPayload::Normal(forged)),
+            entry(
+                3,
+                EntryPayload::Normal(proposal.with_ordered_decision(true)),
+            ),
+            entry(4, EntryPayload::Normal(forged.with_ordered_decision(true))),
             entry(5, EntryPayload::Blank),
         ])
         .await
@@ -335,7 +344,7 @@ async fn recipient_artifact_lookup_survives_genesis_eviction_but_never_invents_m
  {
     use crate::rooms::{Grant, Rights, control::Proposal};
     use openraft::{CommittedLeaderId, Entry, EntryPayload};
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_support::tempdir().unwrap();
     let alice = Identity::create(&directory.path().join("alice")).unwrap();
     let bob = Identity::create(&directory.path().join("bob")).unwrap();
     let anchor = RootBundle::create(&alice, "Bounded admission lookup")
@@ -372,7 +381,10 @@ async fn recipient_artifact_lookup_survives_genesis_eviction_but_never_invents_m
     machine
         .apply([
             entry(0, EntryPayload::Blank),
-            entry(1, EntryPayload::Normal(proposal)),
+            entry(
+                1,
+                EntryPayload::Normal(proposal.with_ordered_decision(true)),
+            ),
         ])
         .await
         .unwrap();

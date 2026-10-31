@@ -83,6 +83,34 @@ digest and reported version before continuing. Each version uses its own bundle
 and roots. Omitting both options preserves the original three-operation gate.
 Mocked coverage of this mode does not establish successful real VM execution.
 
+Prepared kits use `attestation.jsonl`, not gh's Unix-only `sha256:DIGEST.jsonl`
+download name, so the public inputs can be copied to FAT/exFAT USB media. The
+download runs in a private local temporary directory (its retained path is printed
+to stderr), never directly on that media; final verification uses the exported
+bundle and roots. Set `TMPDIR` to a local Unix filesystem when preparing a kit
+directly onto USB. Copy the whole kit, including `kit.json`, without renaming its
+members. The VM runner checks recorded member sizes and hashes again before
+uploading. This is portable data transport, not Windows/macOS installer support,
+and does not make the kit metadata an independent signature or trust anchor.
+
+Supply `--bootstrap ABSOLUTE_PATH_TO_REVIEWED_INSTALL_SH` to the VM gate to test
+the actual shell bootstrap instead of invoking the trusted helper directly. Both
+fresh install and rollback receive an explicit local helper, bundle and roots;
+installation also receives its local archive and pinned commit. Isolation and
+per-step binary checks remain unchanged. Reports distinguish the chosen
+entrypoint and record hashes of the trusted helper, verifier and optional script;
+these hashes identify test inputs, not signed/current-release qualification.
+
+Kit preparation additionally accepts `--with-bootstrap` for canonical Linux/macOS binary
+asset names. It authenticates matching raw helper, notices and `install.sh`,
+exporting portable `ASSET.jsonl` sidecars in the same kit.
+All four subjects use pinned workflow/tag/commit and explicit local bundle/roots verification. The resulting directory can be used
+as the production shell installer's `--bootstrap-dir`; see
+[signed local bootstrap](../docs/offline-install.md).
+The `bootstrap` member of `kit.json` records all six additional files. Older kit
+readers retain their original archive-only behavior; this optional preparation
+does not claim execution or eliminate independent trust in the script/verifier/roots.
+
 Generated state/reports belong to ignored `tmp/`; generated definitions to `xml/`.
 Native private profiles/logs use a physical 0700 OS temporary workspace rather than
 shared checkout ancestors; the retained report names it. [Candidate evidence](../docs/native-candidate-qualification.md).

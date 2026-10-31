@@ -67,6 +67,36 @@ pub enum Command {
     },
     /// Cached durable state, explicitly not a fresh quorum observation
     Status { name: String },
+    /// List bounded outgoing jobs owned by this running foreground room
+    Transfers { name: String },
+    /// Inspect one exact foreground-owned file job; counters are not receipts
+    Transfer { name: String, id: String },
+    /// Explicit offline public-log repair for pending enrollment only; never repairs keys
+    RecoverControl {
+        name: String,
+        /// Applied-record hash obtained independently from the verified authority
+        #[arg(long, value_parser = parse_pending_id)]
+        expected: [u8; 32],
+        #[arg(long, required = true)]
+        confirm: bool,
+    },
+    /// Request local cancellation, not deletion or rollback of remote storage
+    CancelTransfer {
+        name: String,
+        id: String,
+        #[arg(long, required = true)]
+        confirm: bool,
+    },
+    /// Inspect safe metadata for this device's exact prepared membership change
+    Pending { name: String },
+    /// Explicitly retry the inspected prepared change, not an invitation or payload
+    RetryPrepared {
+        name: String,
+        #[arg(long, value_parser = parse_pending_id)]
+        expected: [u8; 32],
+        #[arg(long, required = true)]
+        confirm: bool,
+    },
     /// Change incoming-file consent on the running room without restarting it
     Receiving {
         name: String,
@@ -77,6 +107,12 @@ pub enum Command {
     },
     /// Gracefully stop the foreground room without deleting any state
     Stop { name: String },
+    /// Voluntarily remove this profile's own room membership
+    Leave {
+        name: String,
+        #[arg(long, required = true)]
+        confirm: bool,
+    },
     /// Broadcast positional text; '-' selects stdin, '-s' hides local input
     Send {
         name: String,
@@ -87,6 +123,10 @@ pub enum Command {
         file: bool,
         #[arg(long, requires = "file")]
         to: Option<String>,
+        /// Admit a file job without waiting for its receipt; use transfers/transfer
+        /// Requires the existing foreground room, never creates a daemon
+        #[arg(long, requires = "file")]
+        background: bool,
     },
     /// Reply to an authenticated message ID; sensitive input uses stdin, never argv
     Reply {
@@ -94,17 +134,6 @@ pub enum Command {
         #[arg(long)]
         to: kk::rooms::conversation::Target,
         payload: Option<String>,
-        #[arg(short = 's', long)]
-        sensitive: bool,
-    },
-    /// Add/remove only this authenticated device's reaction to a message ID
-    React {
-        name: String,
-        #[arg(long)]
-        to: kk::rooms::conversation::Target,
-        value: kk::rooms::conversation::Reaction,
-        #[arg(long)]
-        remove: bool,
         #[arg(short = 's', long)]
         sensitive: bool,
     },
@@ -195,6 +224,28 @@ async fn approve(fingerprint: String, confirmation: String, confirm: bool) -> Re
     ))
 }
 
+/// Parse the canonical operation ID shown by `room pending`, without side effects.
+///
+/// `value` is the lowercase hexadecimal pending-operation digest. Returns its
+/// exact bytes or an argument error before profile lookup or network effects.
+/// Examples: 32 repetitions of `ab` produce `[0xab; 32]`; uppercase `AB` or a
+/// shortened ID returns an error rather than choosing another operation.
+fn parse_pending_id(value: &str) -> std::result::Result<[u8; 32], String> {
+    let mut id = [0; 32];
+    let error = || "expected the full lowercase operation ID from 'room pending'".to_owned();
+    if value.len() != id.len() * 2
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(error());
+    }
+    for (index, byte) in id.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).map_err(|_| error())?;
+    }
+    Ok(id)
+}
+
 fn report(reply: local::Reply) -> Result<()> {
     writeln!(
         io::stdout(),
@@ -271,6 +322,54 @@ pub(super) async fn run(command: Command, selected: Option<&Path>) -> Result<()>
         Command::Status { name } => {
             report(local::request(&profile, &name, &local::Command::Status).await?)
         }
+        Command::Transfers { name } => {
+            report(local::request(&profile, &name, &local::Command::FileTransfers).await?)
+        }
+        Command::Transfer { name, id } => report(
+            local::request(&profile, &name, &local::Command::FileTransferStatus { id }).await?,
+        ),
+        Command::RecoverControl {
+            name,
+            expected,
+            confirm,
+        } => {
+            if !confirm {
+                return Err(Error::Configuration(
+                    "explicit recovery confirmation is required",
+                ));
+            }
+            local::recover_pending_control(&profile, &name, expected).await?;
+            println!(
+                "{}",
+                serde_json::json!({"ok":true,"meaning":"public-control-replayed-not-private-join-authority","next":"explicitly resume the existing pending room"})
+            );
+            Ok(())
+        }
+        Command::CancelTransfer { name, id, confirm } => {
+            if !confirm {
+                return Err(Error::Configuration(
+                    "explicit cancellation confirmation is required",
+                ));
+            }
+            report(
+                local::request(&profile, &name, &local::Command::FileTransferCancel { id }).await?,
+            )
+        }
+        Command::Pending { name } => {
+            report(local::request(&profile, &name, &local::Command::PendingMutation).await?)
+        }
+        Command::RetryPrepared {
+            name,
+            expected,
+            confirm,
+        } => report(
+            local::request(
+                &profile,
+                &name,
+                &local::Command::RetryPrepared { expected, confirm },
+            )
+            .await?,
+        ),
         Command::Receiving {
             name,
             receive,
@@ -298,13 +397,22 @@ pub(super) async fn run(command: Command, selected: Option<&Path>) -> Result<()>
         Command::Stop { name } => {
             report(local::request(&profile, &name, &local::Command::Stop).await?)
         }
+        Command::Leave { name, confirm } => {
+            report(local::request(&profile, &name, &local::Command::LeaveSelf { confirm }).await?)
+        }
         Command::Send {
             name,
             payload,
             sensitive,
             file,
             to,
+            background,
         } => {
+            if background && !file {
+                return Err(Error::Configuration(
+                    "background admission is only available for files",
+                ));
+            }
             if file {
                 let source = payload.ok_or(Error::Configuration("select a file path"))?;
                 if source == "-" {
@@ -318,18 +426,21 @@ pub(super) async fn run(command: Command, selected: Option<&Path>) -> Result<()>
                 .map_err(|_| {
                     Error::Configuration("file recipient requires its full certificate digest")
                 })?;
-                return report(
-                    local::request(
-                        &profile,
-                        &name,
-                        &local::Command::File {
-                            source: std::path::absolute(source)?,
-                            target,
-                            sensitive,
-                        },
-                    )
-                    .await?,
-                );
+                let source = std::path::absolute(source)?;
+                let command = if background {
+                    local::Command::FileStart {
+                        source,
+                        target,
+                        sensitive,
+                    }
+                } else {
+                    local::Command::File {
+                        source,
+                        target,
+                        sensitive,
+                    }
+                };
+                return report(local::request(&profile, &name, &command).await?);
             }
             let text = kk::input::text(payload.as_deref(), sensitive).await?;
             report(
@@ -377,30 +488,121 @@ pub(super) async fn run(command: Command, selected: Option<&Path>) -> Result<()>
                 .await?,
             )
         }
-        Command::React {
-            name,
-            to,
-            value,
-            remove,
-            sensitive,
-        } => report(
-            local::request(
-                &profile,
-                &name,
-                &local::Command::React {
-                    target: to,
-                    value,
-                    added: !remove,
-                    sensitive,
-                },
-            )
-            .await?,
-        ),
         Command::Remove { name, member } => {
             let member = PeerId::try_from(member).map_err(|_| {
                 Error::Configuration("member requires its canonical full certificate digest")
             })?;
             report(local::request(&profile, &name, &local::Command::Remove { member }).await?)
         }
+    }
+}
+
+#[cfg(test)]
+mod pending_id_tests {
+    use super::{Command, parse_pending_id};
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct Probe {
+        #[command(subcommand)]
+        command: Command,
+    }
+
+    #[test]
+    fn pending_ids_are_exact_canonical_bytes_not_authorization() {
+        assert_eq!(parse_pending_id(&"ab".repeat(32)).unwrap(), [0xab; 32]);
+        for value in [
+            "ab".repeat(31),
+            "AB".repeat(32),
+            "é".repeat(32),
+            "gg".repeat(32),
+        ] {
+            assert!(parse_pending_id(&value).is_err());
+        }
+    }
+
+    #[test]
+    fn retry_requires_both_the_exact_id_and_explicit_confirmation() {
+        let id = "ab".repeat(32);
+        assert!(
+            Probe::try_parse_from(["room", "retry-prepared", "study", "--expected", &id]).is_err()
+        );
+        let parsed = Probe::try_parse_from([
+            "room",
+            "retry-prepared",
+            "study",
+            "--expected",
+            &id,
+            "--confirm",
+        ])
+        .unwrap();
+        assert!(
+            matches!(parsed.command, Command::RetryPrepared { expected, confirm: true, .. } if expected == [0xab; 32])
+        );
+        assert!(Probe::try_parse_from(["room", "react", "study"]).is_err());
+    }
+
+    #[test]
+    fn file_job_admission_is_opt_in_and_text_cannot_be_backgrounded() {
+        assert!(Probe::try_parse_from(["room", "send", "study", "text", "--background"]).is_err());
+        let peer = "a".repeat(64);
+        let plain =
+            Probe::try_parse_from(["room", "send", "study", "source", "--file", "--to", &peer])
+                .unwrap();
+        assert!(matches!(
+            plain.command,
+            Command::Send {
+                file: true,
+                background: false,
+                ..
+            }
+        ));
+        let asynchronous = Probe::try_parse_from([
+            "room",
+            "send",
+            "study",
+            "source",
+            "--file",
+            "--to",
+            &peer,
+            "--background",
+        ])
+        .unwrap();
+        assert!(matches!(
+            asynchronous.command,
+            Command::Send {
+                file: true,
+                background: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn transfer_inspection_and_explicit_cancellation_keep_owner_ids_opaque() {
+        assert!(matches!(
+            Probe::try_parse_from(["room", "transfers", "study"])
+                .unwrap()
+                .command,
+            Command::Transfers { .. }
+        ));
+        let parsed =
+            Probe::try_parse_from(["room", "transfer", "study", "owner-opaque-id"]).unwrap();
+        assert!(matches!(parsed.command, Command::Transfer { id, .. } if id == "owner-opaque-id"));
+        assert!(
+            Probe::try_parse_from(["room", "cancel-transfer", "study", "owner-opaque-id"]).is_err()
+        );
+        assert!(matches!(
+            Probe::try_parse_from([
+                "room",
+                "cancel-transfer",
+                "study",
+                "owner-opaque-id",
+                "--confirm"
+            ])
+            .unwrap()
+            .command,
+            Command::CancelTransfer { confirm: true, .. }
+        ));
     }
 }

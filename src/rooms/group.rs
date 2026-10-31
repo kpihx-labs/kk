@@ -123,8 +123,23 @@ impl Group {
             .use_ratchet_tree_extension(true)
             .max_past_epochs(0)
             .build();
-        let staged = StagedWelcome::new_from_welcome(&actor.provider, &config, welcome, None)
-            .map_err(|_| Error::Authentication)?;
+        let staged = if let Some(record) = record {
+            if record.room() != actor.anchor.id()
+                || record.epoch() != committed_epoch
+                || record.admitted_peer().map(|peer| peer.to_string()) != Some(actor.owner.clone())
+            {
+                return Err(Error::Authentication);
+            }
+            // Tree members' old KeyPackage lifetimes are not membership expiry.
+            // Only a locally proven committed admission may use the SDK's
+            // historical-tree path; all signatures/credentials remain checked.
+            StagedWelcome::build_from_welcome(&actor.provider, &config, welcome)
+                .and_then(|builder| builder.skip_lifetime_validation().build())
+                .map_err(|_| Error::Authentication)?
+        } else {
+            StagedWelcome::new_from_welcome(&actor.provider, &config, welcome, None)
+                .map_err(|_| Error::Authentication)?
+        };
         let inviter = staged.welcome_sender().map_err(|_| Error::Authentication)?;
         let inviter = verify_credential(
             &actor.anchor,
@@ -447,15 +462,30 @@ impl Group {
         wire: &[u8],
         expected_author: Option<[u8; 32]>,
     ) -> Result<()> {
+        self.apply_ordered_from_policy(next_epoch, wire, expected_author, false)
+    }
+
+    // Historical mode is used only by apply_committed after checking a protected
+    // accepted record. Unordered SDK input keeps the normal fresh MLS validation.
+    fn apply_ordered_from_policy(
+        &mut self,
+        next_epoch: u64,
+        wire: &[u8],
+        expected_author: Option<[u8; 32]>,
+        accepted_replay: bool,
+    ) -> Result<()> {
         self.ready()?;
         if self.pending.is_some() || self.epoch().checked_add(1) != Some(next_epoch) {
             return Err(Error::Protocol);
         }
         let message = protocol(wire, ContentType::Commit)?;
-        let processed = self
-            .state
-            .process_message(&self.actor.provider, message)
-            .map_err(|_| Error::Authentication)?;
+        let processed = if accepted_replay {
+            self.state
+                .process_message_for_replay(&self.actor.provider, message)
+        } else {
+            self.state.process_message(&self.actor.provider, message)
+        }
+        .map_err(|_| Error::Authentication)?;
         if processed.aad() != CONTROL_AAD {
             return Err(Error::Protocol);
         }

@@ -12,7 +12,7 @@ fn screen_harness(
     Vec<PeerId>,
 ) {
     assert!(count < config::ROOM_MAX_MEMBERS);
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let identity = Arc::new(Identity::create(&root.path().join("owner")).unwrap());
     let mut members = BTreeMap::from([(PeerId::from_peer(&identity.peer()), identity.peer())]);
     let mut peers = Vec::new();
@@ -317,12 +317,64 @@ async fn local_publication_reservations_cannot_consume_remote_subscription_budge
 
 #[tokio::test(flavor = "current_thread")]
 async fn three_peer_quic_full_meeting_publishes_and_receives_all_kinds_with_control_progress() {
+    three_peer_meeting(false).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "real GStreamer synthetic codecs through three-peer QUIC; no physical capture"]
+async fn native_synthetic_codecs_cross_concurrent_quic_meeting_and_decode_after_transport() {
+    three_peer_meeting(true).await;
+}
+
+async fn three_peer_meeting(native: bool) {
     use super::super::super::{LogStore, StateMachine};
     use crate::rooms::{RootBundle, mls::CryptoMember};
     use futures_util::FutureExt;
     use std::collections::BTreeSet;
 
-    let root = tempfile::tempdir().unwrap();
+    let samples = if native {
+        let audio = crate::media::synthetic_packets(crate::media::Codec::Opus).await;
+        let video = crate::media::synthetic_packets(crate::media::Codec::Vp8).await;
+        Some((audio, video))
+    } else {
+        None
+    };
+    let packets_for = |kind: Kind, sender: usize| -> Vec<Packet> {
+        if let Some((audio, video)) = &samples {
+            return if kind == Kind::Audio { audio } else { video }
+                .iter()
+                .map(|packet| {
+                    let mut bytes = packet.bytes().to_vec();
+                    // Keep encoded bytes intact but give each peer its own RTP
+                    // source identity, so a cross-peer routing mixup is visible.
+                    bytes[8..12]
+                        .copy_from_slice(&packet.ssrc().wrapping_add(sender as u32).to_be_bytes());
+                    Packet::parse(kind.codec(), bytes).unwrap()
+                })
+                .collect();
+        }
+        (1u16..=3)
+            .map(|sequence| {
+                let mut bytes = vec![0x80, kind.codec().payload_type()];
+                bytes.extend(sequence.to_be_bytes());
+                bytes.extend([0, 0, 0, 1, 1, 2, 3, 4, sender as u8]);
+                Packet::parse(kind.codec(), bytes).unwrap()
+            })
+            .collect()
+    };
+
+    // Do not depend on the invoking shell's umask: every retained ancestor of
+    // private identities must itself exclude group/other writes.
+    #[cfg(unix)]
+    let root = {
+        use std::os::unix::fs::PermissionsExt;
+        tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .unwrap()
+    };
+    #[cfg(not(unix))]
+    let root = crate::test_support::tempdir().unwrap();
     let identities: Vec<_> = (0..3)
         .map(|i| Arc::new(Identity::create(&root.path().join(format!("peer-{i}"))).unwrap()))
         .collect();
@@ -458,37 +510,37 @@ async fn three_peer_quic_full_meeting_publishes_and_receives_all_kinds_with_cont
         // A fourth publication/duplicate offer has not replaced established sources.
         // Send and consume concurrently on every endpoint, with an actual control RPC.
         let send = async {
-            for sequence in 1u16..=3 {
-                let results = futures_util::future::join_all(publications.iter_mut().map(
-                    |(i, kind, publication)| {
-                        let mut bytes = vec![0x80, kind.codec().payload_type()];
-                        bytes.extend(sequence.to_be_bytes());
-                        bytes.extend([0, 0, 0, 1, 1, 2, 3, 4, *i as u8]);
-                        let packet = Packet::parse(kind.codec(), bytes).unwrap();
-                        async move {
-                            publication.send(&packet).await.unwrap();
-                        }
-                    },
-                ))
-                .await;
-                assert_eq!(results.len(), 9);
-            }
-        };
-        let receive = async {
-            futures_util::future::join_all(subscriptions.iter_mut().map(
-                |(_, peer, kind, subscription)| {
-                    let sender = ids.iter().position(|id| id == peer).unwrap();
+            let results = futures_util::future::join_all(publications.iter_mut().map(
+                |(i, kind, publication)| {
+                    let packets = packets_for(*kind, *i);
                     async move {
-                        for sequence in 1u16..=3 {
-                            let frame = subscription.next().await.unwrap();
-                            assert_eq!(frame.packet.codec(), kind.codec());
-                            assert_eq!(&frame.packet.bytes()[2..4], &sequence.to_be_bytes());
-                            assert_eq!(frame.packet.bytes()[12], sender as u8);
+                        for packet in packets {
+                            publication.send(&packet).await.unwrap();
                         }
                     }
                 },
             ))
             .await;
+            assert_eq!(results.len(), 9);
+        };
+        let receive = async {
+            futures_util::future::join_all(subscriptions.iter_mut().map(
+                |(_, peer, kind, subscription)| {
+                    let sender = ids.iter().position(|id| id == peer).unwrap();
+                    let expected = packets_for(*kind, sender);
+                    async move {
+                        let mut received = Vec::new();
+                        for packet in expected {
+                            let frame = subscription.next().await.unwrap();
+                            assert_eq!(frame.packet.codec(), kind.codec());
+                            assert_eq!(frame.packet.bytes(), packet.bytes());
+                            received.push(frame.packet);
+                        }
+                        received
+                    }
+                },
+            ))
+            .await
         };
         let control = async {
             let response = factories[0]
@@ -499,13 +551,19 @@ async fn three_peer_quic_full_meeting_publishes_and_receives_all_kinds_with_cont
                 "control RPC must progress during media: {response:?}"
             );
         };
-        tokio::time::timeout(Duration::from_secs(1), async {
-            tokio::join!(send, receive, control);
+        let received = tokio::time::timeout(Duration::from_secs(1), async {
+            let (_, received, _) = tokio::join!(send, receive, control);
+            received
         })
         .await
         .unwrap();
         for factory in &factories {
             assert_eq!(factory.media_status().unwrap().active_tracks, 6);
+        }
+        if native {
+            for ((_, _, kind, _), packets) in subscriptions.iter().zip(received) {
+                crate::media::decode_synthetic_packets(kind.codec(), &packets).await;
+            }
         }
         for (_, _, publication) in publications {
             publication.finish().await.unwrap();
@@ -561,7 +619,7 @@ fn policy_leases_bind_epoch_direction_generation_expiry_and_explicit_withdrawal(
 
 #[tokio::test(flavor = "current_thread")]
 async fn media_datagrams_need_consent_source_kind_and_exact_connection_and_cannot_grow_the_queue() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let identity = Arc::new(Identity::create(&root.path().join("owner")).unwrap());
     let sender = Identity::create(&root.path().join("sender"))
         .unwrap()

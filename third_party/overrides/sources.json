@@ -1,6 +1,73 @@
 {
   "format": 1,
   "packages": {
+    "win-authorization-sys@0.1.0": {
+      "repository": "https://github.com/MikeGrier/windows-threadpool-sys",
+      "revision": "924292de39d768f88f64773eb60c2d83e437ec19",
+      "registry_version": "0.1.0",
+      "registry_sha256": "9f6d9568bdf6bc1498c53704b3345e912402455e43ce96523e0b6595ea5321da",
+      "path_in_vcs": "crates/win-authorization-sys",
+      "directory": "win-authorization-sys-0.1.0",
+      "sdk_dependency": "win-authorization-sys",
+      "sdk_target": "cfg(windows)",
+      "upstream_tree_sha256": "0dbab2e1a762ca1f7783ec77e883807bd50bc46a79c73b676431fcdda12332ec",
+      "reviewed_files": {
+        "Cargo.toml": "18a467496e0d899f78e02e198c54cb79eccbcce8ec88c3136a79c8f1a543c7d2",
+        "LICENSE": "024e03f0f6660e4a505ee9adeb7bfd4d58c571a31c0835728fd786da5f0422b0",
+        "src/lib.rs": "93b1bc1053b87eba5e678e89bf908d45bc8d3825bd5d72562962efdbcc10ca74",
+        "src/pipe.rs": "614ae8c1dd8a6f578f4afd60a79f03c26c1f12e1cc4c4bd245aca2ef2f3ba680",
+        "src/snapshot.rs": "dca457b232f83f11f34cda9f36180ea96964b3146a5a9f6f5881cefc779b9c3e",
+        "src/token.rs": "660f5b04432997ffd9ce0e2b15fd70def1308254c00bf17e8c55801c05d0dad4"
+      },
+      "required_notices": ["LICENSE"],
+      "license_git_blob": "4116f5bcf5de4a20ab000cf730db58d7746595a3",
+      "changes": ["Owned typed SID/owner/control/DACL/ACE snapshot from one security descriptor, without SDDL comparison", "Bounded effective thread/process token SID capture; only ERROR_NO_TOKEN permits process-token fallback", "Explicit protected owner-only creation descriptor", "Exact upstream root MIT notice copied into the package", "Scoped named-pipe client impersonation copies the connected token SID and restores the exact prior thread token; restore failure aborts"]
+    },
+    "windows-namespace-request-sys@0.5.1": {
+      "repository": "https://github.com/MikeGrier/windows-threadpool-sys",
+      "revision": "724ffb2f439c59ffea1e4a7d3ff5a1e4ff203152",
+      "registry_version": "0.5.1",
+      "registry_sha256": "be6b095320e0fac6457fb987e9c5bdb2e8e29680d5219fdd2d386a89e6960ae7",
+      "path_in_vcs": "crates/windows-namespace-request-sys",
+      "directory": "windows-namespace-request-sys-0.5.1",
+      "sdk_dependency": "windows-namespace-request-sys",
+      "sdk_target": "cfg(windows)",
+      "upstream_tree_sha256": "2e50aa95fad62e638de81c801e4b9df62b96b142f3ffea4281168911bb85e942",
+      "reviewed_files": {
+        "Cargo.toml": "7ae607c8f7906e4f3ef8a3f150701556c723120ed5ce98dd0e4d7f1f01505940",
+        "LICENSE": "024e03f0f6660e4a505ee9adeb7bfd4d58c571a31c0835728fd786da5f0422b0",
+        "src/lib.rs": "5b7e428f341d18f947c3b46cb19a93d7bfe29fd191bebb9d2a7db3c59478e627",
+        "src/create_relative.rs": "cee4b12abd1edca7d24c7c62cf01e98dadfea32086f78f70e514567632ef062a",
+        "src/private_pipe.rs": "c20d6ab769f835a07e8cbc29c57def253281aaa71dc1d8ccdbdc5cc568595b09",
+        "src/rename_relative.rs": "d180c54775720b4ff6abe92f69ded7d33e6bdcbfd9ac12ba69dd036be98be2cd"
+      },
+      "required_notices": ["LICENSE"],
+      "license_git_blob": "4116f5bcf5de4a20ab000cf730db58d7746595a3",
+      "changes": ["Exclusive NtCreateFile directory creation relative to a retained filesystem parent handle; no DOS-path bootstrap", "Creation-time owned security descriptor and reparse refusal; regular files keep no write/delete sharing while retained directory handles permit metadata sharing required for internal no-replace publication", "Owned native return handle and pending-IO status lifetime retained through completion", "Direct sibling path dependency propagates the authorization extension", "Exact upstream root MIT notice copied into the package", "Synchronous regular-file typestate; exclusive creation and existing read-only opens relative to directory handles", "No-replace NtSetInformationFile rename from retained source to retained target directory; native buffers/target retained through completion", "Opt-in Tokio private named-pipe delivery: first/sole local instance, explicit creation DACL, remote-client refusal, server/client handle security snapshots and scoped client SID authentication"]
+    },
+    "openmls@0.9.2": {
+      "repository": "https://github.com/openmls/openmls",
+      "revision": "8a8f83b4b61fc45f28facec25e914992b3465de6",
+      "registry_version": "0.9.2",
+      "path_in_vcs": "openmls",
+      "directory": "openmls-0.9.2",
+      "sdk_dependency": "openmls",
+      "upstream_tree_sha256": "727de3a6bb6dd5af17df2b76497a29cb7f472621441592c7eac3e92b8b4de8b6",
+      "reviewed_files": {
+        "src/key_packages/key_package_in.rs": "5bb894579e0822341bfe582c76097492814a30cbf328808aae835b46a5d366b8",
+        "src/framing/mls_auth_content_in.rs": "ae6b82a02f2b2e92e5b5c2892f0e6da61228c4bc2a69495bd4a89c7bfbb3db0f",
+        "src/framing/mls_content_in.rs": "4e2d853dfab0054ec49005a708358f7d1e482557953deaca5f45795cb86f1921",
+        "src/framing/validation.rs": "de7e18a6d8e8d4115eab3c4219bc9f5b08e53083c92629c30bd6ac0a9deed7a4",
+        "src/group/mls_group/processing.rs": "e207d8d90c547906dece9453665a13c82e061c0139b070cc78330a7e55cf65d7",
+        "src/group/mls_group/staged_commit.rs": "96732ad0ecdebd4d584c2ed91f2100160c94dd0c7f42203adcdddbaa2ea3f857",
+        "src/group/public_group/staged_commit.rs": "88412efa0df1a49a5c904dd5678fea3c5b20eb2bf0a719517a42edcd840bc5be",
+        "src/group/public_group/validation.rs": "2ff70e77c30c57cb9c2767ca39a8d18d183363f817907bf67b7bd606ab30bbe0",
+        "src/messages/mod.rs": "cb05725491b3361001389209d694a10ac117b45e1d7d915cec15e36af275fa60",
+        "src/messages/proposals_in.rs": "5ca32ea64f54abd77ac6f662f9a5cc09da2796eeb61577064e3455d1dec9bff3"
+      },
+      "required_notices": ["licenses/openmls-openmls-8a8f83b4b61f/LICENSE"],
+      "changes": ["Separate fresh lifetime validation from explicit committed-replay validation; all signature, protocol, extension and key checks retained", "Original fresh-validation entry point and cryptographic primitives unchanged"]
+    },
     "nix@0.31.3": {"repository": "https://github.com/nix-rust/nix", "revision": "b5933ca178802b558a667514f717a86b3a1cedcc", "registry_version": "0.31.3", "changes": ["Check positive POSIX spawn error numbers in attribute/file-action wrappers, including initialization", "Avoid dropping destroyed objects after failed reinitialization; upstream unsafe blocks unchanged"]},
     "age@0.12.1": {"repository": "https://github.com/str4d/rage", "revision": "b5b68c4f4f7ea5c368bc060f6fe0237549c3a13f", "changes": ["CLI helper feature gate"]},
     "age-core@0.12.0": {"repository": "https://github.com/str4d/rage", "revision": "b5b68c4f4f7ea5c368bc060f6fe0237549c3a13f", "changes": []},

@@ -28,7 +28,7 @@ contract/license, collected dependency notices and file/build manifests. The ver
 rejects unsafe members, changed/missing/extra files and bounded gzip/TAR overruns.
 Integrity checks alone do not authenticate an archive.
 
-Each currently supported Linux target also produces a reproducible `.zip` binary
+Each declared native target also produces a reproducible `.zip` binary
 archive alongside `.tar.gz`. Both carry the same executable, notices and manifest;
 the per-target `.sha256` file covers both archive byte streams. ZIP uses sorted
 ordinary files, explicit Unix permissions and a UTC commit timestamp clamped to
@@ -43,7 +43,7 @@ links and unsafe file types. Compressed input, expanded data, member counts and
 manifest sizes are bounded in [release.py](../scripts/release.py). ZIP directory
 metadata is bounded before parsing; encryption, multipart and ZIP64 archives are
 not supported. Offline source remains `.tar.gz` and is not a binary-manifest
-archive. A new container format does not qualify a new operating system or CPU.
+archive. [macOS implementation](macos-install.md) is not native execution evidence.
 
 Verification opens the input once with no-follow/nonblocking flags, validates the
 opened descriptor as an ordinary file, and reads a bounded immutable snapshot.
@@ -63,9 +63,9 @@ matrix uploads, provenance-artifact uploads and draft asset creation already use
 filters. Creating ZIP locally does not itself provide a CI attestation or replay
 evidence. Managed installation remains immutable and unchanged below.
 
-`bundle` additionally emits two companion assets per qualified Linux target:
-`kk-vVERSION-linux-ARCH-bootstrap.bin` and
-`kk-vVERSION-linux-ARCH-bootstrap-notices.json` (`ARCH`: `x86_64`, `aarch64`).
+`bundle` additionally emits two companion assets per declared native target:
+`kk-vVERSION-PLATFORM-ARCH-bootstrap.bin` and
+`kk-vVERSION-PLATFORM-ARCH-bootstrap-notices.json` (`PLATFORM`: `linux`/`macos`; `ARCH`: `x86_64`/`aarch64`).
 The executable is byte-identical to archived `kk`, never stripped or rebuilt here.
 The JSON retains collected upstream texts/inventory and same-version build metadata,
 explicit platform/architecture/executable format, helper filename and SHA-256.

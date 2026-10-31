@@ -18,6 +18,7 @@ pub(super) struct Manifest {
     pub target: String,
     pub commit: String,
     pub binary_glibc_required: Option<String>,
+    pub binary_macos_required: Option<String>,
     #[serde(deserialize_with = "unique_files")]
     pub files: BTreeMap<String, String>,
 }

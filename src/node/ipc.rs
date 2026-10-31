@@ -762,6 +762,26 @@ pub async fn request(
     Ok(reply)
 }
 
+fn connection_error(error: std::io::Error) -> Error {
+    use std::io::ErrorKind;
+    // Keep the NODE classification and avoid echoing arbitrary OS/custom reason
+    // strings. A failed connection is not authority to delete or recreate IPC.
+    Error::Node(match error.kind() {
+        ErrorKind::ConnectionRefused => {
+            "local session socket has no listener; restart its foreground owner and retry explicitly; no automatic network retry"
+        }
+        ErrorKind::NotFound => {
+            "local session socket path is unavailable; verify the runtime namespace and foreground owner, then retry explicitly"
+        }
+        ErrorKind::PermissionDenied => {
+            "local session access denied; verify private profile/socket ownership, permissions and OS access policy without making them public"
+        }
+        _ => {
+            "local session IPC connection failed; inspect its foreground diagnostics and retry explicitly; no automatic network retry"
+        }
+    })
+}
+
 pub(crate) async fn connect(profile: &Path) -> Result<Option<UnixStream>> {
     let profile = BoundDirectory::open(profile)?;
     let Some(directory) = endpoint(&profile, false)? else {
@@ -776,7 +796,7 @@ pub(crate) async fn connect(profile: &Path) -> Result<Option<UnixStream>> {
     };
     let stream = UnixStream::connect(directory.access_path().join("node.sock"))
         .await
-        .map_err(|_| Error::Node("stale/unavailable session; no automatic network retry"))?;
+        .map_err(connection_error)?;
     check_user(&stream)?;
     profile.check()?;
     directory.check()?;
@@ -811,11 +831,71 @@ pub(crate) async fn exchange<Q: Serialize, R: serde::de::DeserializeOwned>(
 mod path_tests {
     use super::*;
     fn fixture() -> (tempfile::TempDir, PathBuf) {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let profile = root.path().join("long profile with spaces".repeat(6));
         crate::profile::private_directory(&profile, true).unwrap();
         (root, profile)
+    }
+
+    #[test]
+    fn connection_diagnostics_are_actionable_and_keep_node_classification() {
+        use std::io::{Error as IoError, ErrorKind};
+        for (kind, expected) in [
+            (ErrorKind::ConnectionRefused, "has no listener"),
+            (ErrorKind::NotFound, "socket path is unavailable"),
+            (ErrorKind::PermissionDenied, "without making them public"),
+            (ErrorKind::Other, "inspect its foreground diagnostics"),
+        ] {
+            let error = connection_error(IoError::new(kind, "untrusted diagnostic reason"));
+            assert_eq!(error.code(), "NODE");
+            let diagnostic = error.to_string();
+            assert!(diagnostic.contains(expected));
+            assert!(!diagnostic.contains("untrusted diagnostic reason"));
+        }
+    }
+
+    #[tokio::test]
+    async fn absent_local_session_probe_creates_no_profile_entries() {
+        let (root, profile) = fixture();
+        let missing = root.path().join("absent");
+        let error = connect(&missing).await.unwrap_err();
+        assert!(matches!(error, Error::Io(error) if error.kind() == std::io::ErrorKind::NotFound));
+        assert!(!missing.exists());
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
+        assert_eq!(std::fs::read_dir(&profile).unwrap().count(), 0);
+        let result = tokio::time::timeout(Duration::from_secs(1), connect(&profile))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(result.is_none());
+        assert_eq!(std::fs::read_dir(&profile).unwrap().count(), 0);
+        assert_eq!(std::fs::metadata(&profile).unwrap().mode() & 0o7777, 0o700);
+    }
+
+    #[tokio::test]
+    async fn stale_local_socket_diagnostic_never_cleans_or_replaces_the_endpoint() {
+        let (_root, profile) = fixture();
+        let owner = Listener::bind(&profile).await.unwrap();
+        let socket = owner.path.clone();
+        drop(owner);
+        let stale = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).unwrap();
+        drop(stale); // Retain a socket name with no listening process.
+        let before = std::fs::symlink_metadata(&socket).unwrap();
+        let directory = socket.parent().unwrap();
+        let entries = std::fs::read_dir(directory).unwrap().count();
+        let error = tokio::time::timeout(Duration::from_secs(1), connect(&profile))
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(error.code(), "NODE");
+        assert!(error.to_string().contains("socket has no listener"));
+        let after = std::fs::symlink_metadata(&socket).unwrap();
+        assert_eq!(
+            (before.dev(), before.ino(), before.mode(), before.nlink()),
+            (after.dev(), after.ino(), after.mode(), after.nlink())
+        );
+        assert_eq!(std::fs::read_dir(directory).unwrap().count(), entries);
     }
 
     #[tokio::test]

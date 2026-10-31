@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -15,6 +16,152 @@ from unittest import mock
 spec = importlib.util.spec_from_file_location("kk_release", Path(__file__).resolve().parents[1] / "scripts/release.py")
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
+
+
+class OverrideProvenanceTests(unittest.TestCase):
+    @contextlib.contextmanager
+    def recorded_sdk(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = root / "third_party/overrides"
+            directory = base / "openmls-0.9.2"
+            (directory / "src").mkdir(parents=True)
+            (directory / "Cargo.toml").write_text('[package]\nname="openmls"\nversion="0.9.2"\nlicense="MIT"\nrepository="https://example.test/openmls"\n')
+            (directory / ".cargo_vcs_info.json").write_text(json.dumps({"git": {"sha1": "a" * 40}, "path_in_vcs": "openmls"}))
+            (directory / "src/replay.rs").write_bytes(b"reviewed local fixture")
+            (directory / "src/primitive.rs").write_bytes(b"unchanged upstream fixture")
+            (root / "Cargo.toml").write_text('[dependencies]\nopenmls={version="=0.9.2",path="third_party/overrides/openmls-0.9.2"}\n')
+            (root / "Cargo.lock").write_bytes(b"fixture locked graph")
+            relative = "licenses/upstream/LICENSE"
+            notice = root / "third_party" / relative
+            notice.parent.mkdir(parents=True)
+            notice.write_bytes(b"original upstream fixture notice")
+            extra = {"packages": {"openmls@0.9.2": [relative]}, "sources": {
+                relative: {"revision": "a" * 40, "sha256": release.digest(notice.read_bytes())}}}
+            (root / "third_party/notices.json").write_text(json.dumps(extra))
+            origin = {"directory": "openmls-0.9.2", "sdk_dependency": "openmls",
+                      "repository": "https://example.test/openmls", "revision": "a" * 40,
+                      "path_in_vcs": "openmls", "required_notices": [relative],
+                      "reviewed_files": {"src/replay.rs": release.digest(b"reviewed local fixture")}}
+            origin["upstream_tree_sha256"] = release.override_tree_digest(directory, origin["reviewed_files"])
+            (base / "sources.json").write_text(json.dumps({"packages": {"openmls@0.9.2": origin}, "unchanged_primitives": {}}))
+            metadata = {"resolve": {"root": "root"}, "packages": [
+                {"id": "root", "name": "root", "version": "1", "source": None},
+                {"id": "dependency", "name": "openmls", "version": "0.9.2", "source": None,
+                 "license": "MIT", "repository": origin["repository"], "manifest_path": str(directory / "Cargo.toml")}]}
+            with mock.patch.object(release, "ROOT", root), mock.patch.object(
+                    release, "command", side_effect=lambda *args: json.dumps(metadata)):
+                yield root, directory, metadata, extra
+
+    def test_current_openmls_origin_and_sdk_source_are_statically_guarded(self):
+        # Reads public source/metadata only, never invokes Cargo.
+        origins = release.check_override_sources()
+        origin = origins["openmls@0.9.2"]
+        self.assertEqual(origin["sdk_dependency"], "openmls")
+        self.assertIn("src/key_packages/key_package_in.rs", origin["reviewed_files"])
+
+    def test_recorded_local_origin_and_original_notice_survive_collection(self):
+        with self.recorded_sdk() as (_, directory, _, _):
+            (directory / ".cargo-ok").write_bytes(b"cache marker is not upstream source")
+            notices, files = release.licenses()
+            self.assertEqual(notices[0]["revision"], "a" * 40)
+            self.assertEqual(notices[0]["license"], "MIT")
+            self.assertEqual(files[notices[0]["notices"][0]][0], b"original upstream fixture notice")
+
+    def test_reviewed_and_unreviewed_source_drift_are_distinct_failures(self):
+        for name, expected in (("replay.rs", "Reviewed override"), ("primitive.rs", "Unreviewed imported")):
+            with self.subTest(name=name), self.recorded_sdk() as (_, directory, _, _):
+                (directory / "src" / name).write_bytes(b"unexpected drift")
+                with self.assertRaisesRegex(ValueError, expected):
+                    release.check_override_sources()
+
+    def test_vcs_revision_or_manifest_license_cannot_drift(self):
+        with self.recorded_sdk() as (_, directory, _, _):
+            (directory / ".cargo_vcs_info.json").write_text(json.dumps({"git": {"sha1": "b" * 40}, "path_in_vcs": "openmls"}))
+            with self.assertRaisesRegex(ValueError, "identity/revision"):
+                release.check_override_sources()
+        with self.recorded_sdk() as (_, directory, _, _):
+            path = directory / "Cargo.toml"
+            path.write_text(path.read_text().replace('license="MIT"', 'license="Apache-2.0"'))
+            with self.assertRaisesRegex(ValueError, "Unreviewed imported"):
+                release.check_override_sources()
+
+    def test_symlinks_and_extra_upstream_sources_are_not_silently_ignored(self):
+        for mutation in ("link", "extra"):
+            with self.subTest(mutation=mutation), self.recorded_sdk() as (_, directory, _, _):
+                path = directory / "src/unreviewed.rs"
+                if mutation == "link":
+                    path.symlink_to(directory / "src/primitive.rs")
+                else:
+                    path.write_bytes(b"unexpected source")
+                with self.assertRaisesRegex(ValueError, "Symlink|Unreviewed imported"):
+                    release.check_override_sources()
+    def test_sdk_inheritance_must_be_direct_path_not_root_patch_or_registry(self):
+        for declaration in ('[dependencies]\nopenmls="=0.9.2"\n',
+                            '[patch.crates-io]\nopenmls={path="third_party/overrides/openmls-0.9.2"}\n'):
+            with self.subTest(declaration=declaration), self.recorded_sdk() as (root, _, _, _):
+                (root / "Cargo.toml").write_text(declaration)
+                with self.assertRaisesRegex(ValueError, "SDK dependency must directly"):
+                    release.check_override_sources()
+
+    def test_resolved_graph_cannot_relabel_registry_or_foreign_path_as_override(self):
+        for field, value in (("source", "registry+https://example.test/index"),
+                             ("manifest_path", "/foreign/openmls/Cargo.toml"), ("license", "Apache-2.0")):
+            with self.subTest(field=field), self.recorded_sdk() as (_, _, metadata, _):
+                metadata["packages"][1][field] = value
+                with self.assertRaisesRegex(ValueError, "bypasses|license differs"):
+                    release.licenses()
+
+    def test_original_notice_must_be_included_and_bound_to_recorded_revision(self):
+        for mutation in ("missing", "revision"):
+            with self.subTest(mutation=mutation), self.recorded_sdk() as (root, _, _, extra):
+                if mutation == "missing":
+                    extra["packages"]["openmls@0.9.2"] = []
+                else:
+                    extra["sources"]["licenses/upstream/LICENSE"]["revision"] = "b" * 40
+                (root / "third_party/notices.json").write_text(json.dumps(extra))
+                with self.assertRaisesRegex(ValueError, "original override notice"):
+                    release.licenses()
+
+    def test_offline_sdk_source_requires_complete_path_dependency_and_legal_inputs(self):
+        with self.recorded_sdk() as (root, _, _, _):
+            notices, _ = release.licenses()
+            sources = {path.relative_to(root).as_posix(): (path.read_bytes(), 0o644)
+                       for path in root.rglob("*") if path.is_file()}
+            release.check_override_source_files(sources, notices)
+            for missing in ("third_party/overrides/openmls-0.9.2/src/replay.rs", "third_party/licenses/upstream/LICENSE"):
+                with self.subTest(missing=missing), self.assertRaisesRegex(ValueError, "Offline SDK source missing"):
+                    release.check_override_source_files({key: value for key, value in sources.items() if key != missing}, notices)
+            replay = root / "third_party/overrides/openmls-0.9.2/src/replay.rs"
+            replay.write_bytes(b"changed after initial notice collection")
+            sources[replay.relative_to(root).as_posix()] = (replay.read_bytes(), 0o644)
+            with self.assertRaisesRegex(ValueError, "Reviewed override file changed"):
+                release.check_override_source_files(sources, notices)
+
+    def test_target_specific_sdk_and_package_root_license_preserve_original_blob(self):
+        with self.recorded_sdk() as (root, directory, _, _):
+            ledger_path = root / "third_party/overrides/sources.json"
+            ledger = json.loads(ledger_path.read_text())
+            origin = ledger["packages"]["openmls@0.9.2"]
+            origin["sdk_target"] = "cfg(windows)"
+            (root / "Cargo.toml").write_text('[target.\'cfg(windows)\'.dependencies]\nopenmls={version="=0.9.2",path="third_party/overrides/openmls-0.9.2"}\n')
+            data = b"original upstream fixture notice"
+            (directory / "LICENSE").write_bytes(data)
+            origin["required_notices"] = ["LICENSE"]
+            origin["reviewed_files"]["LICENSE"] = release.digest(data)
+            origin["license_git_blob"] = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data, usedforsecurity=False).hexdigest()
+            origin["upstream_tree_sha256"] = release.override_tree_digest(directory, origin["reviewed_files"])
+            ledger_path.write_text(json.dumps(ledger))
+            notices, files = release.licenses()
+            self.assertIn("licenses/openmls-0.9.2/LICENSE", notices[0]["notices"])
+            self.assertEqual(files["licenses/openmls-0.9.2/LICENSE"][0], data)
+            sources = {path.relative_to(root).as_posix(): (path.read_bytes(), 0o644)
+                       for path in root.rglob("*") if path.is_file()}
+            release.check_override_source_files(sources, notices)
+            origin["license_git_blob"] = "b" * 40
+            ledger_path.write_text(json.dumps(ledger))
+            with self.assertRaisesRegex(ValueError, "upstream Git blob"):
+                release.licenses()
 
 
 class ReleaseTests(unittest.TestCase):
@@ -170,7 +317,7 @@ class ReleaseTests(unittest.TestCase):
     def test_dirty_sources_and_unqualified_targets_cannot_create_release_archives(self):
         with mock.patch.object(release, "command", return_value=" M src/owned.rs"), self.assertRaisesRegex(ValueError, "clean committed"):
             release.bundle("x86_64-unknown-linux-gnu", Path("unused"))
-        with self.assertRaisesRegex(ValueError, "qualified Linux"):
+        with self.assertRaisesRegex(ValueError, "Unsupported native"):
             release.bundle("x86_64-pc-windows-msvc", Path("unused"))
 
     def test_zip_is_reproducible_and_preserves_tar_contents_and_modes(self):
@@ -361,6 +508,7 @@ class ReleaseTests(unittest.TestCase):
                 with (
                     mock.patch.object(release, "ROOT", root),
                     mock.patch.object(release, "command", side_effect=command),
+                    mock.patch.object(release, "macos_minimum", return_value="13.0.0"),
                     mock.patch.object(release, "licenses", return_value=(
                         [{"name": "fixture", "notices": ["licenses/fixture/LICENSE"]}],
                         {"licenses/fixture/LICENSE": (b"fixture notice", 0o644)},
@@ -392,7 +540,12 @@ class ReleaseTests(unittest.TestCase):
                 record = json.loads(companion.read_bytes())
                 self.assertEqual(record["target"], target)
                 self.assertEqual(record["format"], 1)
-                self.assertEqual(record["executable_format"], "elf")
+                self.assertEqual(record["executable_format"], "macho" if target.endswith("-apple-darwin") else "elf")
+                manifest = json.loads(record["files"]["build-manifest.json"])
+                if target.endswith("-apple-darwin"):
+                    self.assertEqual(manifest["binary_macos_required"], "13.0.0")
+                    self.assertIsNone(manifest["binary_glibc_required"])
+                    self.assertIsNone(manifest["build_system_libc"])
                 self.assertEqual(record["helper"], {"asset": helper.name, "sha256": release.digest(binary.read_bytes())})
                 self.assertEqual(record["files"]["licenses/fixture/LICENSE"], "fixture notice")
                 self.assertEqual(record["files"]["LICENSE"], "fixture LICENSE")
@@ -403,6 +556,23 @@ class ReleaseTests(unittest.TestCase):
                 for line in sums:
                     checksum, name = line.split("  ")
                     self.assertEqual(checksum, release.digest((destination / name).read_bytes()))
+
+    def test_macos_deployment_metadata_uses_native_tools_not_candidate_execution(self):
+        output = "Load command 9\n      cmd LC_BUILD_VERSION\n  cmdsize 32\n platform 1\n    minos 13.0\n      sdk 14.1\n"
+        with mock.patch.object(release.platform, "system", return_value="Darwin"), \
+                mock.patch.object(release, "command", return_value=output) as command:
+            self.assertEqual(release.macos_minimum(Path("candidate")), "13.0.0")
+        self.assertEqual(command.call_args_list[0].args,
+                         ("/usr/bin/codesign", "--verify", "--strict", "candidate"))
+        self.assertEqual(command.call_args_list[1].args, ("/usr/bin/otool", "-l", "candidate"))
+        with mock.patch.object(release.platform, "system", return_value="Darwin"), \
+                mock.patch.object(release, "command", return_value=output.replace("platform 1", "platform 2")), \
+                self.assertRaisesRegex(ValueError, "not macOS"):
+            release.macos_minimum(Path("candidate"))
+        with mock.patch.object(release.platform, "system", return_value="Linux"), \
+                mock.patch.object(release, "command") as command, self.assertRaisesRegex(ValueError, "native Apple"):
+            release.macos_minimum(Path("candidate"))
+        command.assert_not_called()
 
     @contextlib.contextmanager
     def bundle_fixture(self):

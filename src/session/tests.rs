@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn authenticated_but_malformed_frames_get_no_receipt() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let a = Identity::create(&root.path().join("a")).unwrap();
     let b = Identity::create(&root.path().join("b")).unwrap();
     let frames = [
@@ -46,7 +46,7 @@ async fn authenticated_but_malformed_frames_get_no_receipt() {
 
 #[tokio::test]
 async fn a_false_receipt_cannot_report_success() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let a = Identity::create(&root.path().join("a")).unwrap();
     let b = Identity::create(&root.path().join("b")).unwrap();
     let listener = Listener::bind("127.0.0.1:0".parse().unwrap(), &b, &a.peer()).unwrap();
@@ -76,7 +76,7 @@ async fn a_false_receipt_cannot_report_success() {
 
 #[tokio::test]
 async fn a_silent_authenticated_peer_is_still_subject_to_the_deadline() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let a = Identity::create(&root.path().join("a")).unwrap();
     let b = Identity::create(&root.path().join("b")).unwrap();
     let listener = Listener::bind("127.0.0.1:0".parse().unwrap(), &b, &a.peer()).unwrap();

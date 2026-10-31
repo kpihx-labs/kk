@@ -10,7 +10,7 @@ use std::time::Duration;
 #[tokio::test(flavor = "current_thread")]
 async fn delayed_committed_scope_updates_cannot_restore_old_pins_or_rollback_media_epoch() {
     use super::super::machine::TransportScope;
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let identity = Arc::new(Identity::create(&root.path().join("owner")).unwrap());
     let old = Identity::create(&root.path().join("old")).unwrap().peer();
     let new = Identity::create(&root.path().join("new")).unwrap().peer();
@@ -98,7 +98,10 @@ async fn ordered(
     // redirects, with the EXACT signed operation inside one original deadline.
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            match nodes[&leader].client_write(proposal.clone()).await {
+            match nodes[&leader]
+                .client_write(proposal.clone().with_ordered_decision(true))
+                .await
+            {
                 Ok(response) => return (leader, response.data),
                 Err(error) => match error.forward_to_leader::<Node>() {
                     Some(forward)
@@ -118,7 +121,7 @@ async fn ordered(
 
 #[tokio::test]
 async fn mutual_tls_context_sender_binding_reuse_and_revocation_are_enforced() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_support::tempdir().unwrap();
     let alice = Arc::new(Identity::create(&directory.path().join("alice")).unwrap());
     let bob = Arc::new(Identity::create(&directory.path().join("bob")).unwrap());
     let a = PeerId::from_peer(&alice.peer());
@@ -267,7 +270,7 @@ async fn mutual_tls_context_sender_binding_reuse_and_revocation_are_enforced() {
 // executor threads; the blocking-caller quorum-read regression below proves it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_quic_quorum_orders_crypto_changes_and_survives_creator_control_loss() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_support::tempdir().unwrap();
     let identities: Vec<_> = (0..3)
         .map(|index| {
             Arc::new(Identity::create(&directory.path().join(format!("identity-{index}"))).unwrap())

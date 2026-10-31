@@ -21,6 +21,9 @@ use sha2::{Digest, Sha256};
 
 type Stored<T> = Result<T, StorageError<PeerId>>;
 
+#[cfg(unix)]
+mod recovery;
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct State {
@@ -172,6 +175,43 @@ impl StateMachine {
     }
     /// Find the actual admission in retained protected history, not a client DTO
     /// or a receipt's historical epoch. Genesis need not still be retained.
+    /// Leader admission checks current package freshness before ordered append.
+    /// Exact already-accepted bytes retain their original receipt semantics.
+    pub(crate) async fn preflight(
+        &self,
+        proposal: super::super::Proposal,
+    ) -> Internal<std::result::Result<(), ApplyResult>> {
+        let root = self.anchor.clone();
+        self.store
+            .io(ErrorVerb::Read, move |database| {
+                let state = read_state(&database.connection)?;
+                let view = checked_view(&root, &state)?;
+                let rejected = |code: &str| ApplyResult {
+                    accepted: false,
+                    epoch: view.epoch(),
+                    head: view.head(),
+                    error: Some(code.to_owned()),
+                    replayed: false,
+                    first_log: None,
+                };
+                let (Ok(id), Ok(encoded)) = (proposal.id(), proposal.encode()) else {
+                    return Ok(Err(rejected("PROTOCOL")));
+                };
+                let wire: [u8; 32] = Sha256::digest(encoded).into();
+                if let Some(prior) = state.receipts.iter().find(|receipt| receipt.id == id) {
+                    return Ok(if prior.wire == wire {
+                        Ok(())
+                    } else {
+                        Err(rejected("AUTHENTICATION"))
+                    });
+                }
+                Ok(view
+                    .validate(&proposal)
+                    .map_err(|error| rejected(error.code())))
+            })
+            .await
+    }
+
     pub async fn committed_welcome(
         &self,
         recipient: PeerId,
@@ -322,6 +362,7 @@ fn apply_proposal(
     receipts: &mut Vec<Receipt>,
     proposal: super::super::Proposal,
     log_id: LogId<PeerId>,
+    admitted: bool,
 ) -> ApplyResult {
     let rejected = |code: &str, view: &View| ApplyResult {
         accepted: false,
@@ -347,6 +388,9 @@ fn apply_proposal(
         let mut result = prior.result.clone();
         result.replayed = true;
         return result;
+    }
+    if !admitted {
+        return rejected("committed rejection preserved", view);
     }
     if receipts.len() >= config::ROOM_CONTROL_RECEIPTS {
         return rejected("LIMIT", view);
@@ -453,6 +497,10 @@ impl RaftStateMachine<TypeConfig> for StateMachine {
                                     StoredMembership::new(Some(entry.log_id), membership);
                             }
                             EntryPayload::Normal(proposal) => {
+                                let admitted = proposal.ordered_decision()
+                                    .map_err(|_| failure(ErrorVerb::Read, "unsupported ordered admission decision"))?
+                                    .ok_or_else(|| failure(ErrorVerb::Read,
+                                        "legacy admission decision absent; verified local recovery required"))?;
                                 let author = proposal.author();
                                 let commit = proposal.commit_bytes().to_vec();
                                 let operation = proposal.id().ok();
@@ -462,6 +510,7 @@ impl RaftStateMachine<TypeConfig> for StateMachine {
                                     &mut state.receipts,
                                     proposal,
                                     entry.log_id,
+                                    admitted,
                                 );
                                 if response.accepted && !response.replayed {
                                     change = Some(Change {

@@ -229,6 +229,7 @@ cases!(
     redirect_status,
     offline_bundle,
     offline_trusted_root,
+    offline_trusted_root_verify_only,
     offline_trusted_root_rollback,
     offline_root_without_bundle,
     offline_root_relative,
@@ -242,6 +243,7 @@ cases!(
     tampered_previous,
     rollback_bytes,
     crash_staging,
+    resume_interrupted_publication,
     ancestor_symlink,
     hostile_traversal,
     hostile_link,
@@ -483,6 +485,86 @@ fn transaction_child() {
             return;
         }
     }
+    if case == "offline_trusted_root_verify_only" {
+        // Actual public CLI -> install::verify; the existing gh fixture compares
+        // the frozen archive and roots. This is not genuine signature evidence.
+        let profiles = root.join("never-created-profiles");
+        for existing in [false, true] {
+            if existing {
+                fs::create_dir(&req.prefix).unwrap();
+                fs::set_permissions(&req.prefix, fs::Permissions::from_mode(0o700)).unwrap();
+                fs::write(req.prefix.join("untouched"), b"preserve unrelated bytes").unwrap();
+            }
+            let metadata = existing.then(|| fs::metadata(&req.prefix).unwrap());
+            let output = Command::new(env!("CARGO_BIN_EXE_kk"))
+                .env("XDG_DATA_HOME", &profiles)
+                .args([
+                    "install",
+                    "--verify-only",
+                    "--version",
+                    &req.version,
+                    "--commit",
+                    &req.commit,
+                    "--prefix",
+                ])
+                .arg(&req.prefix)
+                .arg("--archive")
+                .arg(req.archive.as_ref().unwrap())
+                .arg("--bundle")
+                .arg(req.bundle.as_ref().unwrap())
+                .arg("--trusted-root")
+                .arg(req.trusted_root.as_ref().unwrap())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(result["activated"], false);
+            assert_eq!(result["version"], req.version);
+            assert_eq!(result["commit"], req.commit);
+            assert_eq!(result["target"], install::host_target().unwrap());
+            assert_eq!(result["archive_sha256"], hash(&original));
+            assert!(!profiles.exists());
+            if let Some(before) = metadata {
+                let after = fs::metadata(&req.prefix).unwrap();
+                assert_eq!(after.permissions().mode(), before.permissions().mode());
+                assert_eq!(after.modified().unwrap(), before.modified().unwrap());
+                assert_eq!(
+                    fs::read(req.prefix.join("untouched")).unwrap(),
+                    b"preserve unrelated bytes"
+                );
+                assert_eq!(fs::read_dir(&req.prefix).unwrap().count(), 1);
+            } else {
+                assert!(
+                    !req.prefix.exists(),
+                    "verify-only created the selected prefix"
+                );
+            }
+            let log = fs::read_to_string(root.join("gh.log")).unwrap();
+            for selector in [
+                "--bundle",
+                "--custom-trusted-root",
+                "--signer-workflow",
+                "--source-ref",
+                "refs/tags/v0.8.2",
+                "--source-digest",
+                &req.commit,
+            ] {
+                assert!(
+                    log.lines().any(|line| line == selector),
+                    "missing authenticated selector {selector}"
+                );
+            }
+            assert!(
+                !root.join("curl.log").exists(),
+                "local verification downloaded an archive"
+            );
+        }
+        return;
+    }
     if case == "crash_staging" {
         let stage = req.prefix.join("lib/kk/.stage-interrupted");
         fs::create_dir_all(&stage).unwrap();
@@ -499,6 +581,58 @@ fn transaction_child() {
         Path::new("../lib/kk/0.8.2/kk")
     );
     let before = fs::read(&first.executable).unwrap();
+    if case == "resume_interrupted_publication" {
+        let second = bundle("0.8.3", b"second", false);
+        fs::write(&archive_path, &second).unwrap();
+        let mut next = req.clone();
+        next.version = "0.8.3".into();
+        let mut seed = next.clone();
+        seed.prefix = root.join("seed");
+        runtime.block_on(install::install(seed.clone())).unwrap();
+        let pending = req.prefix.join("lib/kk/0.8.3");
+        let seed_version = seed.prefix.join("lib/kk/0.8.3");
+        fs::set_permissions(&seed_version, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::rename(seed_version, &pending).unwrap();
+        let unrelated = req.prefix.join("lib/kk/.stage-unrelated");
+        fs::create_dir(&unrelated).unwrap();
+        fs::write(unrelated.join("keep"), b"unrelated interrupted work").unwrap();
+        runtime.block_on(install::verify(next.clone())).unwrap();
+        assert_eq!(fs::read(&first.executable).unwrap(), before);
+        assert_eq!(
+            fs::metadata(&pending).unwrap().permissions().mode() & 0o7777,
+            0o700
+        );
+        let binary = pending.join("kk");
+        let complete = fs::read(&binary).unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(&binary, b"incomplete staging").unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o555)).unwrap();
+        assert!(runtime.block_on(install::install(next.clone())).is_err());
+        assert_eq!(fs::read(&first.executable).unwrap(), before);
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(&binary, &complete).unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o555)).unwrap();
+        fs::write(&archive_path, bundle("0.8.3", b"different digest", false)).unwrap();
+        assert!(runtime.block_on(install::install(next.clone())).is_err());
+        assert_eq!(
+            fs::metadata(&pending).unwrap().permissions().mode() & 0o7777,
+            0o700
+        );
+        assert_eq!(fs::read(&first.executable).unwrap(), before);
+        fs::write(&archive_path, &second).unwrap();
+        let resumed = runtime.block_on(install::install(next)).unwrap();
+        assert_eq!(resumed.previous.as_deref(), Some("0.8.2"));
+        assert_eq!(fs::read(&resumed.executable).unwrap(), complete);
+        assert_eq!(
+            fs::metadata(&pending).unwrap().permissions().mode() & 0o7777,
+            0o500
+        );
+        assert_eq!(
+            fs::read(unrelated.join("keep")).unwrap(),
+            b"unrelated interrupted work"
+        );
+        return;
+    }
     if case == "offline_trusted_root_rollback" {
         let result = runtime
             .block_on(install::rollback_with_trust(

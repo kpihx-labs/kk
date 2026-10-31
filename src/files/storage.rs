@@ -18,7 +18,7 @@ struct CancelPublication(std::sync::Arc<std::sync::Mutex<bool>>);
 impl Drop for CancelPublication {
     fn drop(&mut self) {
         // Dropping an async waiter cannot cancel spawn_blocking. Share a gate
-        // with the rename instead, and recover poison to revoke infallibly.
+        // with the namespace mutation instead, and recover poison to revoke infallibly.
         *self
             .0
             .lock()
@@ -57,6 +57,87 @@ fn open(directory: &OwnedFd, name: &OsString, flags: OFlags) -> rustix::io::Resu
         Mode::RUSR | Mode::WUSR,
     )
     .map(StdFile::from)
+}
+
+/// Open one completed inbox object, relative to a retained private directory.
+/// The caller validates the object ID and verifies its content before exposure.
+pub(super) fn open_received(directory: &Path, name: &str) -> Result<File> {
+    received_at(&received_directory(directory)?, name)
+}
+
+pub(super) fn received_directory(directory: &Path) -> Result<OwnedFd> {
+    let directory = fs::open(
+        directory,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?;
+    let attributes = fs::fstat(&directory)?;
+    if attributes.st_uid != rustix::process::geteuid().as_raw()
+        || attributes.st_mode & 0o777 != 0o700
+    {
+        return Err(Error::Destination(
+            "inbox must be user-owned with mode 0700",
+        ));
+    }
+    Ok(directory)
+}
+
+pub(super) fn received_at(directory: &OwnedFd, name: &str) -> Result<File> {
+    let file = open(directory, &OsString::from(name), OFlags::RDONLY)?;
+    private_file(&file)?;
+    fs::flock(&file, fs::FlockOperation::NonBlockingLockShared)
+        .map_err(|_| Error::Destination("inbox object is locked or cannot be locked"))?;
+    Ok(File::from_std(file))
+}
+
+/// Keep the owner's work lease in the worker even if the async waiter leaves.
+pub(super) async fn delete_received(
+    directory: &Path,
+    name: &str,
+    lease: impl Send + 'static,
+) -> Result<bool> {
+    let directory = received_directory(directory)?;
+    let name = OsString::from(name);
+    let mut partial = name.clone();
+    partial.push(".kk-part");
+    let live = std::sync::Arc::new(std::sync::Mutex::new(true));
+    let _cancel = CancelPublication(live.clone());
+    tokio::task::spawn_blocking(move || {
+        let _lease = lease;
+        let no_staging = || -> Result<()> {
+            match fs::statat(&directory, &partial, fs::AtFlags::SYMLINK_NOFOLLOW) {
+                Err(rustix::io::Errno::NOENT) => Ok(()),
+                Ok(_) => Err(Error::Destination("received copy has staging state")),
+                Err(error) => Err(error.into()),
+            }
+        };
+        no_staging()?;
+        let file = match open(&directory, &name, OFlags::RDONLY) {
+            Ok(file) => file,
+            Err(rustix::io::Errno::NOENT) => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
+        private_file(&file)?;
+        fs::flock(&file, fs::FlockOperation::NonBlockingLockExclusive)
+            .map_err(|_| Error::Destination("received copy is in use"))?;
+        let active = live.lock().map_err(|_| Error::Protocol)?;
+        if !*active {
+            return Err(Error::Cancelled);
+        }
+        no_staging()?;
+        private_file(&file)?;
+        let opened = fs::fstat(&file)?;
+        let named = fs::statat(&directory, &name, fs::AtFlags::SYMLINK_NOFOLLOW)?;
+        if opened.st_dev != named.st_dev || opened.st_ino != named.st_ino {
+            return Err(Error::Destination("received copy changed during deletion"));
+        }
+        fs::unlinkat(&directory, &name, fs::AtFlags::empty())?;
+        drop(active);
+        fs::fsync(&directory)?;
+        Ok(true)
+    })
+    .await
+    .map_err(|_| Error::Node("received copy deletion worker failed"))?
 }
 
 impl Store {

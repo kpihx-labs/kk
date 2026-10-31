@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 #[derive(Default)]
 pub(super) struct Consent {
     configured: Option<(PathBuf, u64, u64, Arc<Inbox>)>,
+    // A read-only startup binding, independent of receive grants/accounting.
+    received_root: Option<(PathBuf, u64)>,
     pub(super) active: Option<Arc<Grant>>,
 }
 
@@ -125,6 +127,34 @@ impl Drop for Consent {
 }
 
 impl Factory {
+    /// Bind an existing profile/room-owned source inbox without creating it or
+    /// enabling reception. Never expose this server-path API through file IPC.
+    pub(crate) fn bind_received_root(&self, directory: PathBuf, max_bytes: u64) -> Result<bool> {
+        if max_bytes > config::MAX_FILE_BYTES {
+            return Err(Error::FileTooLarge);
+        }
+        match std::fs::symlink_metadata(&directory) {
+            Ok(_) => crate::profile::private_directory(&directory, false)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error.into()),
+        }
+        let mut consent = self
+            .shared
+            .room_files
+            .write()
+            .map_err(|_| Error::Protocol)?;
+        if let Some((existing, maximum)) = &consent.received_root {
+            if existing != &directory || *maximum != max_bytes {
+                return Err(Error::Configuration(
+                    "restart room service to change received source root",
+                ));
+            }
+        } else {
+            consent.received_root = Some((directory, max_bytes));
+        }
+        Ok(true)
+    }
+
     /// Pause one publication after final authorization and verification, on its
     /// blocking worker and before acquiring the revocation/rename gate.
     #[cfg(all(test, unix))]
@@ -217,6 +247,123 @@ impl Factory {
         sensitive: bool,
         deadline: Duration,
     ) -> Result<Receipt> {
+        self.room_file_with(target, node, sensitive, deadline, None, || async {
+            let mut file = files::source_file(source)?;
+            let info = files::info(&mut file).await?;
+            Ok((file, info))
+        })
+        .await
+    }
+
+    /// Forward only a completed object in the inbox already owned by this room
+    /// runtime. Withdrawing receive consent leaves existing copies available for
+    /// explicit, freshly authorized outgoing sends; it never enables reception.
+    pub(crate) async fn room_file_received(
+        &self,
+        target: PeerId,
+        node: &Node,
+        id: &str,
+        sensitive: bool,
+        deadline: Duration,
+    ) -> Result<Receipt> {
+        self.room_file_with(target, node, sensitive, deadline, None, || async {
+            let received = self.received_file(id, deadline).await?;
+            Ok(received.into_source())
+        })
+        .await
+    }
+
+    pub(crate) async fn open_room_received(
+        &self,
+        id: &str,
+        deadline: Duration,
+    ) -> Result<files::ReceivedFile> {
+        transport::validate_duration(deadline, config::DEFAULT_FILE_TIMEOUT)?;
+        let _permit = self
+            .shared
+            .file_data
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| Error::Node("room file lane is full"))?;
+        tokio::time::timeout(deadline, self.received_file(id, deadline))
+            .await
+            .map_err(|_| Error::Timeout)?
+    }
+
+    async fn received_file(&self, id: &str, deadline: Duration) -> Result<files::ReceivedFile> {
+        let (directory, maximum) = self.received_root()?;
+        files::open_received(&directory, id, maximum, deadline).await
+    }
+
+    pub(crate) async fn received_files(
+        &self,
+        deadline: Duration,
+    ) -> Result<files::ReceivedInventory> {
+        let (directory, _) = self.received_root()?;
+        files::received_inventory(&directory, deadline).await
+    }
+
+    pub(crate) async fn delete_received(
+        &self,
+        id: &str,
+        confirm: bool,
+        deadline: Duration,
+    ) -> Result<bool> {
+        if !confirm {
+            return Err(Error::Denied);
+        }
+        let (directory, _) = self.received_root()?;
+        let lease = self
+            .shared
+            .file_data
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| Error::Node("room file lane is full"))?;
+        files::delete_received(&directory, id, confirm, deadline, lease).await
+    }
+
+    fn received_root(&self) -> Result<(PathBuf, u64)> {
+        let consent = self.shared.room_files.read().map_err(|_| Error::Protocol)?;
+        if let Some((directory, maximum)) = &consent.received_root {
+            Ok((directory.clone(), *maximum))
+        } else {
+            let (directory, maximum, _, _) = consent
+                .configured
+                .as_ref()
+                .ok_or(Error::Configuration("room inbox has not been configured"))?;
+            Ok((directory.clone(), *maximum))
+        }
+    }
+
+    pub(crate) async fn room_file_source_monitored(
+        &self,
+        target: PeerId,
+        node: &Node,
+        source: files::SendSource,
+        sensitive: bool,
+        deadline: Duration,
+        observer: files::progress::TransferObserver,
+    ) -> Result<Receipt> {
+        self.room_file_with(target, node, sensitive, deadline, Some(&observer), || {
+            source.prepare()
+        })
+        .await
+    }
+
+    // One permit and one deadline cover preparation plus the verified exchange.
+    // Both selected-path sends and retained-inode forwarding use this owner.
+    async fn room_file_with<Fut>(
+        &self,
+        target: PeerId,
+        node: &Node,
+        sensitive: bool,
+        deadline: Duration,
+        progress: Option<&files::progress::TransferObserver>,
+        prepare: impl FnOnce() -> Fut,
+    ) -> Result<Receipt>
+    where
+        Fut: std::future::Future<Output = Result<(tokio::fs::File, files::FileInfo)>>,
+    {
         transport::validate_duration(deadline, config::DEFAULT_FILE_TIMEOUT)?;
         let shared = &self.shared;
         let _permit = shared
@@ -247,8 +394,11 @@ impl Factory {
             handle
                 .authorize_file(peer.clone(), false, config::DEFAULT_TIMEOUT)
                 .await?;
-            let mut file = files::source_file(source)?;
-            let info = files::info(&mut file).await?;
+            let (mut file, info) = prepare().await?;
+            if let Some(progress) = progress {
+                progress.offered(info.bytes);
+                progress.handoff();
+            }
             let connection =
                 tokio::time::timeout(config::DEFAULT_TIMEOUT, client.connection(shared))
                     .await
@@ -278,9 +428,15 @@ impl Factory {
                 }
                 _ => return Err(Error::Protocol),
             }
-            files::stream::send_with_async(&mut file, info, sensitive, send, recv, || {
-                handle.authorize_file(peer.clone(), false, config::DEFAULT_TIMEOUT)
-            })
+            files::stream::send_with_async_monitored(
+                &mut file,
+                info,
+                sensitive,
+                send,
+                recv,
+                || handle.authorize_file(peer.clone(), false, config::DEFAULT_TIMEOUT),
+                progress,
+            )
             .await
         })
         .await
@@ -336,8 +492,7 @@ pub(super) async fn receive(
         .read()
         .map_err(|_| Error::Protocol)?
         .clone();
-    let permit = shared.file_data.clone().try_acquire_owned();
-    let (Some(inbox), Some(handle), Ok(_permit)) = (inbox, handle, permit) else {
+    let (Some(inbox), Some(handle)) = (inbox, handle) else {
         send_frame(&mut send, &Response::RoomFile(DataReply::Denied)).await?;
         send.finish().map_err(|_| Error::Network)?;
         return Err(Error::Denied);
@@ -355,11 +510,17 @@ pub(super) async fn receive(
         .authorize_file(peer.clone(), true, config::DEFAULT_TIMEOUT)
         .await
         .is_err()
+        || current_inbox(shared, &inbox).is_err()
     {
         send_frame(&mut send, &Response::RoomFile(DataReply::Denied)).await?;
         send.finish().map_err(|_| Error::Network)?;
         return Err(Error::Denied);
     }
+    let Ok(_permit) = shared.file_data.clone().try_acquire_owned() else {
+        send_frame(&mut send, &Response::RoomFile(DataReply::Busy)).await?;
+        send.finish().map_err(|_| Error::Network)?;
+        return Err(Error::Node("room file lane is full"));
+    };
     #[cfg(test)]
     trace(shared, send.id(), "authorize passed");
     send_frame(
@@ -403,7 +564,7 @@ mod tests {
     #[test]
     fn consent_drop_revokes_worker_grants_even_when_the_grant_gate_is_poisoned() {
         for poison in [false, true] {
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::test_support::tempdir().unwrap();
             let mut consent = Consent::default();
             consent
                 .configure(Some(root.path().join("inbox")), 1, 1)
@@ -438,7 +599,7 @@ mod tests {
     #[tokio::test]
     async fn lifecycle_revocation_recovers_poisoned_consent_and_publication_locks() {
         for stop in 0..5 {
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::test_support::tempdir().unwrap();
             let identity = Arc::new(Identity::create(&root.path().join("identity")).unwrap());
             let (factory, server) = Factory::bind(
                 [7; 32],
@@ -498,7 +659,7 @@ mod tests {
 
     #[test]
     fn consent_toggles_preserve_byte_and_attempt_budgets() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::tempdir().unwrap();
         let identity = Identity::create(&root.path().join("identity")).unwrap();
         let peer = identity.peer();
         let directory = root.path().join("inbox");

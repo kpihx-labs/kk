@@ -9,7 +9,7 @@ fn fixture() -> (
     CryptoMember,
     View,
 ) {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_support::tempdir().unwrap();
     let identities: Vec<_> = (0..3)
         .map(|i| Identity::create(&directory.path().join(format!("control-{i}"))).unwrap())
         .collect();

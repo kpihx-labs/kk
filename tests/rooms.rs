@@ -1,4 +1,5 @@
 #![cfg(unix)]
+mod support;
 
 use kk::{
     Identity,
@@ -12,7 +13,7 @@ struct Fixture {
 }
 impl Fixture {
     fn new(count: usize) -> Self {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = support::private_root();
         let members: Vec<_> = (0..count)
             .map(|i| Identity::create(&directory.path().join(format!("member-{i}"))).unwrap())
             .collect();

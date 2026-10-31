@@ -256,6 +256,92 @@ impl ControlNode {
             .await
     }
 
+    /// Forward a received object through its verified descriptor, never a reopened path.
+    ///
+    /// `target` selects a current room peer; `id` names a completed object in this
+    /// runtime's registered inbox. `sensitive` controls local disclosure and
+    /// `deadline` bounds verification plus transfer. Returns a verified recipient
+    /// receipt, not a human read or replica-availability acknowledgement.
+    /// Examples: a listed intact object can be forwarded to a consenting peer;
+    /// a tampered object or unconfigured inbox fails without enabling reception.
+    #[cfg(unix)]
+    pub async fn send_room_received_file(
+        &self,
+        target: PeerId,
+        id: &str,
+        sensitive: bool,
+        deadline: Duration,
+    ) -> Result<crate::files::Receipt> {
+        let node = self.configured_node(target)?;
+        self.network
+            .room_file_received(target, &node, id, sensitive, deadline)
+            .await
+    }
+
+    /// Open an opaque received `id` for local forwarding within `deadline`.
+    /// Returns a verified retained source, never a pathname or a receiving grant.
+    /// A valid stored object remains readable after consent withdrawal; an unknown
+    /// or modified object fails without creating data or enabling reception.
+    #[cfg(unix)]
+    pub(crate) async fn open_room_received(
+        &self,
+        id: &str,
+        deadline: Duration,
+    ) -> Result<crate::files::ReceivedFile> {
+        self.network.open_room_received(id, deadline).await
+    }
+
+    #[cfg(unix)]
+    pub(crate) async fn received_files(
+        &self,
+        deadline: Duration,
+    ) -> Result<crate::files::ReceivedInventory> {
+        self.network.received_files(deadline).await
+    }
+
+    #[cfg(unix)]
+    pub(crate) async fn delete_received(
+        &self,
+        id: &str,
+        confirm: bool,
+        deadline: Duration,
+    ) -> Result<bool> {
+        self.network.delete_received(id, confirm, deadline).await
+    }
+
+    /// Send an owned `source` to configured `target` with explicit local monitoring.
+    /// `sensitive` controls hidden handling; `deadline` bounds work; `observer`
+    /// reports preparation/body progress, never authority or human reading.
+    /// A successful result is a verified recipient receipt; cancellation after
+    /// handoff may instead leave an uncertain outcome and must not be replayed blindly.
+    #[cfg(unix)]
+    pub(crate) async fn send_room_file_source_monitored(
+        &self,
+        target: PeerId,
+        source: crate::files::SendSource,
+        sensitive: bool,
+        deadline: Duration,
+        observer: crate::files::progress::TransferObserver,
+    ) -> Result<crate::files::Receipt> {
+        let node = self.configured_node(target)?;
+        self.network
+            .room_file_source_monitored(target, &node, source, sensitive, deadline, observer)
+            .await
+    }
+
+    /// Bind the trusted room's existing saved-copy `directory` with a `max_bytes` cap.
+    /// Returns true for an existing safe root and false if absent; unsafe roots fail.
+    /// For example, saved files remain usable with reception off; a missing root
+    /// remains missing. Neither case enables receiving or allocates an incoming budget.
+    #[cfg(unix)]
+    pub(crate) fn bind_received_root(
+        &self,
+        directory: std::path::PathBuf,
+        max_bytes: u64,
+    ) -> Result<bool> {
+        self.network.bind_received_root(directory, max_bytes)
+    }
+
     fn configured_node(&self, target: PeerId) -> Result<Node> {
         self.raft
             .metrics()
@@ -513,6 +599,60 @@ impl ControlNode {
         .await
         .map_err(|_| Error::Timeout)?
     }
+    /// Forward only this device's signed departure to one other backend. Never
+    /// try another executor automatically after an uncertain outcome.
+    pub(crate) async fn request_departure(
+        &self,
+        request: crate::rooms::control::departure::Request,
+        deadline: Duration,
+    ) -> Result<ApplyResult> {
+        crate::transport::validate_duration(deadline, config::MAX_FILE_TIMEOUT)?;
+        if request.member() != self.id {
+            return Err(Error::Denied);
+        }
+        tokio::time::timeout(deadline, async {
+            self.fresh_local(deadline).await?;
+            let view = self.public_view().await?;
+            request.verify(self.room_id(), &view)?;
+            let remaining_admin = view.peers().iter().any(|peer| {
+                PeerId::from_peer(peer) != self.id
+                    && view
+                        .member_rights(&peer.fingerprint_bytes())
+                        .is_some_and(|rights| rights.can_control())
+            });
+            let configuration = self.control_membership();
+            if (view
+                .member_rights(&self.id.0)
+                .is_some_and(|rights| rights.can_control())
+                && !remaining_admin)
+                || (configuration
+                    .membership()
+                    .voter_ids()
+                    .any(|id| id == self.id)
+                    && configuration.membership().voter_ids().count() <= 1)
+            {
+                return Err(Error::Denied);
+            }
+            let executor = view
+                .peers()
+                .into_iter()
+                .find(|peer| {
+                    PeerId::from_peer(peer) != self.id
+                        && view
+                            .member_rights(&peer.fingerprint_bytes())
+                            .is_some_and(|rights| rights.can_remove())
+                })
+                .ok_or(Error::Denied)?;
+            let target = PeerId::from_peer(&executor);
+            let node = self.configured_node(target)?;
+            self.network
+                .departure(target, &node, request, deadline)
+                .await
+        })
+        .await
+        .map_err(|_| Error::Timeout)?
+    }
+
     /// Retain the exact signed proposal/nonce across redirects. Timeout is an
     /// uncertain outcome, never final rejection or permission to discard crypto.
     pub async fn submit_public(
@@ -680,7 +820,7 @@ impl ControlNode {
                 }
                 Operation::Submit(proposal) => self
                     .network
-                    .submit_direct(&self.raft, proposal.as_ref().clone())
+                    .submit_direct(&self.raft, &self.machine, proposal.as_ref().clone())
                     .await
                     .map(Output::Submitted),
                 Operation::ReadBarrier => network::barrier_local(&self.raft)

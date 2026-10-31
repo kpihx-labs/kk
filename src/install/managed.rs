@@ -1,4 +1,4 @@
-//! Descriptor-relative Linux filesystem transaction. No path-based extraction.
+//! Descriptor-relative Unix filesystem transaction. No path-based extraction.
 use super::{
     Error, Outcome, Result,
     archive::{MAX_BYTES, Verified, path},
@@ -74,7 +74,13 @@ impl Dir {
         file.sync_all()?;
         Ok(())
     }
-    fn read(&self, name: &str, limit: usize, mode: u32, cancel: &super::Cancel) -> Result<Vec<u8>> {
+    fn read(
+        &self,
+        name: &str,
+        limit: usize,
+        mode: fs::RawMode,
+        cancel: &super::Cancel,
+    ) -> Result<Vec<u8>> {
         cancel.check()?;
         let descriptor = fs::openat(
             &self.0,
@@ -127,6 +133,10 @@ impl Dir {
         Ok(names)
     }
     fn freeze(&self, cancel: &super::Cancel) -> Result<()> {
+        self.freeze_descendants(cancel)?;
+        self.freeze_root(cancel)
+    }
+    fn freeze_descendants(&self, cancel: &super::Cancel) -> Result<()> {
         cancel.check()?;
         for name in self.names()? {
             let stat = fs::statat(&self.0, &name, AtFlags::SYMLINK_NOFOLLOW)?;
@@ -134,6 +144,11 @@ impl Dir {
                 self.open(&name)?.freeze(cancel)?;
             }
         }
+        fs::fsync(&self.0)?;
+        Ok(())
+    }
+    fn freeze_root(&self, cancel: &super::Cancel) -> Result<()> {
+        cancel.check()?;
         fs::fchmod(&self.0, Mode::from_raw_mode(0o500))?;
         fs::fsync(&self.0)?;
         Ok(())
@@ -261,6 +276,9 @@ impl Managed {
     // Ownership/corruption consistency only, NOT origin authentication. Requested
     // versions must additionally match a freshly gh-authenticated original archive.
     fn check(&self, version: &str, target: &str) -> Result<Receipt> {
+        self.check_root_mode(version, target, 0o500)
+    }
+    fn check_root_mode(&self, version: &str, target: &str, mode: fs::RawMode) -> Result<Receipt> {
         let dir = self.versions.open(version)?;
         let bytes = dir.read(".kk-receipt.json", 4 * 1024 * 1024, 0o444, &self.cancel)?;
         let receipt: Receipt = serde_json::from_slice(&bytes)
@@ -285,7 +303,14 @@ impl Managed {
                 allowed.insert(parts[..count].join("/"));
             }
         }
-        walk(&dir, "", &mut actual, &mut 0usize, &allowed, &self.cancel)?;
+        walk(
+            &dir,
+            ("", mode),
+            &mut actual,
+            &mut 0usize,
+            &allowed,
+            &self.cancel,
+        )?;
         actual.remove(".kk-receipt.json");
         if actual.remove(".kk-archive").as_deref() != Some(&receipt.archive_sha256) {
             return refuse("retained original archive changed");
@@ -315,6 +340,9 @@ impl Managed {
     }
     fn activate(&self, version: &str, previous: Option<&str>) -> Result<()> {
         self.cancel.check()?;
+        // Frozen mode alone does not prove that an interrupted finalization's
+        // directory sync succeeded. Retry this barrier for install and rollback.
+        fs::fsync(&self.versions.open(version)?.0)?;
         let transaction = nonce()?;
         let record = serde_json::to_vec(&serde_json::json!({"format":1, "state":"prepared", "previous":previous, "requested":version}))
             .map_err(|_| Error::Refused("cannot encode activation record"))?;
@@ -350,7 +378,7 @@ struct Receipt {
 
 fn walk(
     dir: &Dir,
-    prefix: &str,
+    (prefix, mode): (&str, fs::RawMode),
     files: &mut BTreeMap<String, String>,
     total: &mut usize,
     allowed: &BTreeSet<String>,
@@ -359,7 +387,7 @@ fn walk(
     cancel.check()?;
     let stat = fs::fstat(&dir.0)?;
     owner(&stat)?;
-    if stat.st_mode & 0o7777 != 0o500 {
+    if stat.st_mode & 0o7777 != mode {
         return refuse("managed directory mode changed");
     }
     for name in dir.names()? {
@@ -372,7 +400,7 @@ fn walk(
         if FileType::from_raw_mode(stat.st_mode) == FileType::Directory {
             walk(
                 &dir.open(&name)?,
-                &(relative + "/"),
+                (&(relative + "/"), 0o500),
                 files,
                 total,
                 allowed,
@@ -413,7 +441,15 @@ pub(super) fn install(
     let version = &archive.manifest.version;
     match fs::statat(&managed.versions.0, version, AtFlags::SYMLINK_NOFOLLOW) {
         Ok(_) => {
-            let receipt = managed.check(version, &archive.manifest.target)?;
+            let existing = managed.versions.open(version)?;
+            let pending = fs::fstat(&existing.0)?.st_mode & 0o7777 == 0o700;
+            // Only an explicit install retry with freshly authenticated inputs may
+            // finalize a post-rename interruption. All descendants remain strict.
+            let receipt = managed.check_root_mode(
+                version,
+                &archive.manifest.target,
+                if pending { 0o700 } else { 0o500 },
+            )?;
             let fresh: BTreeMap<_, _> = archive
                 .files
                 .iter()
@@ -424,6 +460,17 @@ pub(super) fn install(
                 || receipt.files != fresh
             {
                 return refuse("same version already exists with different archive bytes");
+            }
+            if pending {
+                // No mutation until the retained archive, full tree, receipt and
+                // manifest all match the fresh authenticated digest and bytes.
+                existing.freeze_root(&managed.cancel)?;
+            }
+            // An earlier retry may already have frozen the root but failed the
+            // publication-directory sync. Re-establish that barrier explicitly.
+            fs::fsync(&managed.versions.0)?;
+            if pending {
+                managed.check(version, &archive.manifest.target)?;
             }
         }
         Err(rustix::io::Errno::NOENT) => {
@@ -464,8 +511,11 @@ pub(super) fn install(
                 false,
                 &managed.cancel,
             )?;
-            stage.freeze(&managed.cancel)?;
-            // Publish complete immutable tree without replacing any prior version.
+            // Darwin can refuse renaming a write-disabled directory. Descendants
+            // are immutable, but keep the private stage root 0700 until published.
+            stage.freeze_descendants(&managed.cancel)?;
+            // Publish the complete tree without replacing any prior version;
+            // final root immutability is required before validation/activation.
             managed.cancel.check()?;
             fs::renameat_with(
                 &managed.versions.0,
@@ -474,6 +524,9 @@ pub(super) fn install(
                 version,
                 fs::RenameFlags::NOREPLACE,
             )?;
+            // Failure here leaves a visible, unactivated version: not "unchanged"
+            // and not grounds for automatic rollback or overwriting that version.
+            stage.freeze_root(&managed.cancel)?;
             fs::fsync(&managed.versions.0)?;
             managed.check(version, &archive.manifest.target)?;
         }
@@ -545,3 +598,7 @@ pub(super) fn rollback_input(
         receipt.commit,
     ))
 }
+
+#[cfg(test)]
+#[path = "managed_publication_tests.rs"]
+mod publication_tests;

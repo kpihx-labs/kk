@@ -16,6 +16,7 @@ impl Group {
         operation: &conversation::Operation,
         now: u64,
     ) -> Result<(Vec<u8>, StableReference)> {
+        operation.validate_publication()?;
         self.transactional_with_tx(|group, tx| {
             group.application_ready()?;
             let plaintext = operation.encode(group.room_id(), group.state.epoch().as_u64())?;

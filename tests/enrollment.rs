@@ -1,4 +1,5 @@
 #![cfg(target_os = "linux")]
+mod support;
 
 use kk::{
     Error, Identity, config,
@@ -22,7 +23,7 @@ use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, time::Duration};
 #[tokio::test]
 async fn backend_enrollment_orchestrators_preserve_reader_rights_and_no_global_contacts() {
     use kk::rooms::enrollment::{self, CandidateOptions};
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::private_root();
     let a = Arc::new(Identity::create(&directory.path().join("a")).unwrap());
     let b = Arc::new(Identity::create(&directory.path().join("b")).unwrap());
     let anchor = RootBundle::create(&a, "Backend enrollment flow")
@@ -227,7 +228,7 @@ struct Enrollment {
 
 #[tokio::test]
 async fn proven_session_delivers_authority_and_key_package_then_learner_joins_without_a_vote() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::private_root();
     let a = Arc::new(Identity::create(&directory.path().join("a")).unwrap());
     let b = Arc::new(Identity::create(&directory.path().join("b")).unwrap());
     let a_id = PeerId::from_peer(&a.peer());

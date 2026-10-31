@@ -30,7 +30,7 @@ fn restore(root: &Path, profiles: &[Profile], anchor: &Anchor, index: usize) -> 
 }
 impl Pair {
     fn new() -> Self {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_support::tempdir().unwrap();
         let root = directory.path();
         let profiles: Vec<_> = (0..2)
             .map(|i| Profile::create(&root.join(format!("profile-{i}"))).unwrap())
@@ -200,6 +200,58 @@ fn conversation_legacy_rejection_author_mismatch_and_sensitive_capture_remain_fa
 }
 
 #[test]
+fn conversation_unknown_version_and_malformed_authenticated_frames_survive_restart_without_capture()
+{
+    use crate::rooms::conversation::{AAD, Operation, VERSION};
+    let mut pair = Pair::new();
+    let key = enable(&mut pair.bob, store::Policy::default());
+    for payload in [
+        vec![VERSION + 1, 0, 0],
+        vec![VERSION, 99, 0],
+        vec![VERSION, 0, 2],
+        vec![VERSION],
+    ] {
+        let wire = pair
+            .alice
+            .transactional(|group| group.encrypt_application_bytes(AAD, &payload))
+            .unwrap();
+        assert!(matches!(
+            pair.bob.decrypt_conversation_referenced(&wire, None, TIME),
+            Err(Error::Protocol)
+        ));
+        assert_eq!(rows(&mut pair.bob), 0);
+        // Failed decoding cannot commit the receiving ratchet, even across a
+        // cold reopen. Repeating the exact wire must reach the same decoder.
+        drop(pair.bob);
+        pair.bob = restore(pair.directory.path(), &pair.profiles, &pair.anchor, 1);
+        pair.bob.history_use_identity(key.clone(), TIME).unwrap();
+        assert!(matches!(
+            pair.bob.decrypt_conversation_referenced(&wire, None, TIME),
+            Err(Error::Protocol)
+        ));
+        assert_eq!(rows(&mut pair.bob), 0);
+    }
+    let legacy = send(&mut pair.alice, "legacy after unsupported frames", false);
+    assert_eq!(
+        receive(&mut pair.bob, &legacy).content.text(),
+        "legacy after unsupported frames"
+    );
+    let operation = Operation::Text(
+        ReceivedText::from_bytes(b"typed after unsupported frames", false).unwrap(),
+    );
+    let (wire, _) = pair
+        .alice
+        .encrypt_conversation_referenced(&operation, TIME)
+        .unwrap();
+    let (received, _) = pair
+        .bob
+        .decrypt_conversation_referenced(&wire, None, TIME)
+        .unwrap();
+    assert_eq!(received.operation.body(), "typed after unsupported frames");
+    assert_eq!(rows(&mut pair.bob), 2);
+}
+
+#[test]
 fn conversation_capture_failure_retries_exact_wire_without_releasing_dirty_ratchets() {
     use crate::rooms::conversation::Operation;
     let mut pair = Pair::new();
@@ -250,7 +302,7 @@ fn conversation_capture_failure_retries_exact_wire_without_releasing_dirty_ratch
 }
 
 #[test]
-fn conversation_reaction_add_remove_remain_typed_and_authored_by_mls_identity() {
+fn legacy_reactions_decode_and_capture_but_new_publication_is_denied() {
     use crate::rooms::conversation::{Operation, Reaction, Relation, Target};
     let mut pair = Pair::new();
     enable(&mut pair.bob, store::Policy::default());
@@ -266,9 +318,20 @@ fn conversation_reaction_add_remove_remain_typed_and_authored_by_mls_identity() 
             added,
             sensitive: false,
         };
-        let (wire, _) = pair
+        assert!(matches!(
+            pair.alice.encrypt_conversation_referenced(&operation, TIME),
+            Err(Error::Configuration(
+                "reaction publication is no longer supported"
+            ))
+        ));
+        // Simulate ciphertext from an older peer via the compatibility codec,
+        // not the active publication API. Keep wire version/AAD unchanged.
+        let wire = pair
             .alice
-            .encrypt_conversation_referenced(&operation, TIME)
+            .transactional(|group| {
+                let payload = operation.encode(group.room_id(), group.epoch())?;
+                group.encrypt_application_bytes(crate::rooms::conversation::AAD, &payload)
+            })
             .unwrap();
         let (received, _) = pair
             .bob
@@ -686,7 +749,7 @@ fn retained_pending_key_blocks_normal_enable_without_enrollment_or_regeneration(
     for length in [0, 17, usize::MAX] {
         let mut pair = Pair::new();
         let path = pair.directory.path().join("state-0");
-        let source = tempfile::tempdir().unwrap();
+        let source = crate::test_support::tempdir().unwrap();
         fs::set_permissions(source.path(), fs::Permissions::from_mode(0o700)).unwrap();
         HistoryKeyAnchor::open(
             source.path(),

@@ -26,6 +26,7 @@ test("mobile drawer Escape closes backdrop and returns focus", async () => {
     workspace: {querySelector:()=>main}, dialog:{open:false},
     menu: {setAttribute(key,value){this[key]=value;}, focus(){this.focused=true;}},
     "dialog-close": {},
+    messages:{addEventListener(){}},
   };
   const context = {document, $:id=>elements[id], matchMedia:()=>({matches:true,addEventListener:(_type,fn)=>{listeners.resize=fn;}}), addEventListener:(type,fn)=>{listeners[type]=fn;}, current:{settings:{sidebar_mode:"expanded"}}};
   vm.createContext(context);
@@ -54,9 +55,9 @@ test("action refresh retains focus across unrelated updates and never dismisses 
   const operations = node("aside", "", ""); operations.replaceChildren = function(...items){this.children=[]; this.append(...items);};
   operations.contains = function(item){while(item){if(item === this) return true; item=item.parent;} return false;};
   const summary = node("summary", "", ""), elements = {operations, "action-count":{}, "action-center":{querySelector:()=>summary}};
-  const context = {document, $:id=>elements[id], el:node, current:{operations:[{id:1,room:"room",state:"confirm",proposal:{confirmation:"123",fingerprint:"abc"}}]}, joinDrafts:new Map(), dismissedOperations:new Set(), operationView:"", act:async()=>{}, toast(){}, render(){}};
+  const context = {document, $:id=>elements[id], el:node, token:"synthetic",localAvailable:true,current:{identity:"synthetic",operations:[{id:1,room:"room",state:"waiting",proposal:{confirmation:"123",fingerprint:"abc"}}]}, joinDrafts:new Map(), dismissedOperations:new Set(), operationView:"", act:async()=>{}, toast(){}, render(){}};
   vm.createContext(context);
-  vm.runInContext(js.slice(js.indexOf("function renderOperations()"), js.indexOf("async function refresh()")), context);
+  vm.runInContext(js.slice(js.indexOf("function invitationAvailable("),js.indexOf("async function saveInvitation("))+js.slice(js.indexOf("function renderOperations()"), js.indexOf("async function refresh()")), context);
   context.renderOperations();
   const approve = operations.querySelectorAll("button").find(button=>button.dataset.action === "approve");
   assert.ok(approve); assert.equal(operations.querySelectorAll("button").some(button=>button.dataset.action === "dismiss"), false);
@@ -70,7 +71,8 @@ test("source defines viewport containment and preserves pending operation action
   assert.match(css, /height:100dvh/);
   assert.match(css, /#operations\{position:fixed/);
   assert.match(css, /data-sidebar=auto/);
-  assert.match(js, /!operation\.proposal && !operation\.invitation_ready/);
+  assert.match(js, /operation\.state === "waiting" && operation\.proposal/);
+  assert.match(js, /terminalStates\.includes\(operation\.state\)/);
   assert.match(js, /event\.key === "Escape"/);
   assert.match(js, /sidebar_mode:mode/);
 });
@@ -111,4 +113,14 @@ test("live message scrolling never depends on a smooth animation completing befo
   assert.ok(rules.length);
   const behavior = rules.flatMap(rule => [...rule[1].matchAll(/scroll-behavior:([^;}]*)/g)]).at(-1);
   assert.equal(behavior?.[1], "auto");
+});
+
+test("desktop sidebar reserves main column even when auto expansion leaves the grid flow",()=>{
+  const desktop=css.slice(css.indexOf("@media(min-width:701px)"),css.indexOf("@media(max-width:700px){",css.indexOf("@media(min-width:701px)")));
+  assert.match(desktop,/\.workspace>\.main\{grid-column:2;grid-row:1\}/);
+  assert.match(desktop,/\.workspace>\.sidebar\{grid-column:1;grid-row:1;min-width:0\}/);
+  assert.match(desktop,/grid-template-columns:68px minmax\(0,1fr\)/);
+  assert.match(desktop,/\.sidebar:focus-within\{position:absolute;left:0;top:0;z-index:20;width:244px/);
+  assert.match(desktop,/\.brand\{font-size:21px;letter-spacing:-1px;gap:0;justify-content:center\}/);
+  assert.doesNotMatch(desktop,/position:fixed/);
 });

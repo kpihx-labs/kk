@@ -80,6 +80,14 @@ jobs:
       - name: Execute macOS file transfer and envelope storage regressions
         if: runner.os == 'macOS'
         run: cargo test --locked --offline --target $env:TARGET --test files --test envelope -- --nocapture
+      - name: Execute macOS protected identity and profile metadata regressions
+        if: runner.os == 'macOS'
+        run: |
+          cargo test --locked --offline --target $env:TARGET --test identity --test native_profile -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --offline --target $env:TARGET --lib identity::unix::tests -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --offline --target $env:TARGET --lib profile::storage::tests -- --nocapture
       - name: Execute macOS private shared IPC ownership and recovery regressions
         if: runner.os == 'macOS'
         run: cargo test --locked --offline --target $env:TARGET --lib node::ipc::path_tests -- --nocapture
@@ -103,7 +111,10 @@ jobs:
         run: cargo test --locked --offline --target $env:TARGET --test history_keys -- --nocapture
       - name: Execute macOS pipe/socket stdio and supervised worker regressions
         if: runner.os == 'macOS'
-        run: cargo test --locked --offline --target $env:TARGET --test stdio_pipe --test stdio_socket --test stdio_worker --test stdio_terminal -- --nocapture
+        run: |
+          cargo test --locked --offline --target $env:TARGET --test stdio_pipe --test stdio_socket --test stdio_worker --test stdio_terminal -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --offline --target $env:TARGET --lib stdio_worker::ownership_tests -- --nocapture
       - name: Execute macOS private staging and atomic publication unit regressions
         if: runner.os == 'macOS'
         run: |

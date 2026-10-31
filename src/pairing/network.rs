@@ -639,7 +639,7 @@ mod tests {
     #[tokio::test]
     async fn a_code_holder_cannot_register_a_certificate_without_its_private_key() {
         for scope in [Scope::Contact, Scope::Room([17; 32])] {
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::test_support::tempdir().unwrap();
             let a = Identity::create(&root.path().join("a")).unwrap();
             let attacker = Identity::create(&root.path().join("attacker")).unwrap();
             let victim = Identity::create(&root.path().join("victim")).unwrap();

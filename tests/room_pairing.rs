@@ -1,4 +1,5 @@
 #![cfg(target_os = "linux")]
+mod support;
 
 use kk::{
     Identity,
@@ -12,7 +13,7 @@ use std::{
 
 #[tokio::test]
 async fn real_scoped_pake_and_tls_dispatch_only_room_approval_not_global_contacts() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::private_root();
     let a = Identity::create(&directory.path().join("a")).unwrap();
     let b = Identity::create(&directory.path().join("b")).unwrap();
     let ra = Registry::open(directory.path().join("profile-a")).unwrap();
@@ -77,7 +78,7 @@ async fn real_scoped_pake_and_tls_dispatch_only_room_approval_not_global_contact
 
 #[tokio::test]
 async fn room_a_code_cannot_create_a_room_b_or_contact_approval() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::private_root();
     let a = Identity::create(&directory.path().join("a")).unwrap();
     let b = Identity::create(&directory.path().join("b")).unwrap();
     for intended in [Scope::Room([2; 32]), Scope::Contact] {
@@ -153,7 +154,7 @@ async fn room_a_code_cannot_create_a_room_b_or_contact_approval() {
 
 #[tokio::test]
 async fn contact_code_cannot_create_a_room_approval_and_wrong_server_api_fails_closed() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::private_root();
     let a = Identity::create(&directory.path().join("a")).unwrap();
     let b = Identity::create(&directory.path().join("b")).unwrap();
     let server = PairServer::bind("127.0.0.1:0".parse().unwrap(), Duration::from_secs(5))
@@ -236,7 +237,7 @@ async fn contact_code_cannot_create_a_room_approval_and_wrong_server_api_fails_c
 
 #[tokio::test]
 async fn room_denial_and_scoped_store_failure_never_report_success() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::private_root();
     let a = Identity::create(&directory.path().join("a")).unwrap();
     let b = Identity::create(&directory.path().join("b")).unwrap();
     for deny in [true, false] {

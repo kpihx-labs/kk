@@ -52,6 +52,41 @@ The targeted advisory inspection used RustSec revision
 `99670cfc0bc574433034b75876a4b791ccaa2efb`; it found no named advisory directory for
 the candidates, not proof of soundness or a full resolved-transitive audit.
 
+## Modular Native Boundary
+
+Private identity creation/load and private profile storage remain unavailable on
+Windows. Public certificate import is separate: `Peer::load` uses the safe Rust
+standard library's `OpenOptionsExt`, requests `FILE_FLAG_OPEN_REPARSE_POINT` with
+read-only sharing, inspects the opened handle's regular-file/reparse attributes,
+and enforces the certificate byte limit before DER parsing. It neither reads nor
+creates a private key, validates an ACL, authenticates a peer's origin, nor proves
+an ancestor namespace immutable. Fingerprint verification remains mandatory.
+Its Windows branch requires native execution; Linux tests are not that evidence.
+
+The Windows-only `platform_foundation` sharing test requires `ERROR_SHARING_VIOLATION` (32) while an exclusive reader or a shared writable handle is retained, then unchanged public import after closure. It needs no symlink privilege, does not test DACL protection and has not been executed on Windows for this source.
+
+The next binding must expose the following complete safe public interfaces,
+not just similarly named Win32 operations:
+
+| Required binding | Why the inspected alternative is insufficient |
+| --- | --- |
+| Parent-handle-relative directory/file creation with owned creation-time security descriptor and no reparse traversal | `winsafe::HFILE::CreateFile` supplies a safe owned guard, but `CreateDirectory` remains path-only. Its attributes require `&'a mut winsafe::SECURITY_DESCRIPTOR`; the owned descriptor/raw pointer from `win-authorization-sys::from_sddl` has no proven safe interoperability chain. `fs_at` removes `OBJ_DONT_REPARSE` and permits delete sharing |
+| Handle-bound owner/DACL capture with typed SID/ACE/control parsing, absent versus NULL ACL distinction and unknown-ACE refusal | `get_security_info` supplies one owned descriptor snapshot but not the complete typed owner/ACE policy path; `windows_acl` handle enumeration is a separate snapshot, not an established single-snapshot validation chain |
+| Source-handle `FileRenameInfo`, pinned target directory and no replacement | No inspected safe public dependency establishes this publication contract; path-based rename cannot substitute |
+| Named-pipe client security-token identity bound to the connected client, without PID-reuse ambiguity | `get_named_pipe_client_process_id` supplies a PID, not an authenticated SID; token/impersonation binding is unresolved |
+
+Retained real-access ancestor handles without DELETE sharing can exclude filesystem
+rename/delete, but do not yet prove DOS-device/volume-name mapping is pinned.
+`DefineDosDevice` shadowing remains unresolved: a canonical path is not a binding
+to the namespace used by a later path-only creation call.
+
+Dependencies may contain reviewed internal unsafe code behind a sound safe API.
+A new local unsafe shim, an unsafe side crate owned by K&K, a permissive DACL or
+path-check fallback is not an authorized substitute. No dependency is requested
+merely to turn an unavailable capability into a successful empty operation.
+The acceptance cases above remain mandatory once a complete binding is available;
+the current non-Unix refusal tests assert no state is created, not native support.
+
 ## Primary Sources
 
 - [Microsoft file security and inheritance](https://learn.microsoft.com/en-us/windows/win32/fileio/file-security-and-access-rights)
@@ -60,3 +95,9 @@ the candidates, not proof of soundness or a full resolved-transitive audit.
 - [Owned file creation implementation](https://docs.rs/windows-namespace-request-sys/0.5.1/src/windows_namespace_request_sys/open.rs.html)
 - [Handle descriptor capture](https://docs.rs/win-authorization-sys/0.1.0/src/win_authorization_sys/security/query.rs.html)
 - [tempfile Windows implementation](https://docs.rs/crate/tempfile/3.27.0/source/src/file/imp/windows.rs)
+- [winsafe CreateDirectory](https://docs.rs/winsafe/latest/winsafe/fn.CreateDirectory.html)
+- [Owned authorization descriptors](https://docs.rs/win-authorization-sys/latest/win_authorization_sys/)
+- [fs_at backend source](https://docs.rs/fs_at/latest/src/fs_at/lib.rs.html)
+- [Named-pipe client PID API](https://docs.rs/win-pipes-sys/latest/win_pipes_sys/fn.get_named_pipe_client_process_id.html)
+- [Rust Windows OpenOptionsExt](https://doc.rust-lang.org/std/os/windows/fs/trait.OpenOptionsExt.html)
+- [Microsoft CreateFile flags and sharing](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)

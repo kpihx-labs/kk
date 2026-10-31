@@ -44,7 +44,7 @@ fn advisory_capabilities_preserve_verified_role_and_delegation_boundaries() {
 // private-state caller performs synchronous crypto and durable storage work.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn three_private_rooms_use_quorum_order_durable_nonce_and_local_veto_without_global_trust() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = crate::test_support::tempdir().unwrap();
     let identities: Vec<_> = (0..3)
         .map(|index| {
             Arc::new(Identity::create(&directory.path().join(format!("identity-{index}"))).unwrap())

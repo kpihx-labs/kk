@@ -1,11 +1,12 @@
 //! Explicitly opted-in, one-operation stdio workers. See docs/stdio.md.
 
-use crate::{Error, Result, config};
 #[cfg(any(target_vendor = "apple", test))]
-use std::{
-    fs::File,
-    io::{Read, Write},
-};
+use crate::config;
+use crate::{Error, Result};
+#[cfg(any(target_vendor = "apple", test))]
+use std::fs::File;
+#[cfg(test)]
+use std::io::{Read, Write};
 use std::{io, path::PathBuf, process::ExitCode};
 #[cfg(target_vendor = "apple")]
 use std::{sync::OnceLock, time::Duration};
@@ -13,15 +14,14 @@ use std::{sync::OnceLock, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use zeroize::Zeroizing;
 
+#[path = "stdio_worker/protocol.rs"]
+mod protocol;
+#[cfg(any(target_vendor = "apple", test))]
+use protocol::{MAGIC, STARTED};
+use protocol::{OUTPUT_LIMIT, READ, WRITE};
+
 #[cfg(target_vendor = "apple")]
 const ARGUMENT: &str = "--kk-internal-stdio-worker-v1";
-#[cfg(any(target_vendor = "apple", test))]
-const MAGIC: &[u8] = b"KK-STDIO-1\n";
-#[cfg(any(target_vendor = "apple", test))]
-const STARTED: u8 = 127;
-const READ: u8 = 1;
-const WRITE: u8 = 2;
-const OUTPUT_LIMIT: usize = config::MAX_MESSAGE_BYTES * 6 + 8193;
 #[cfg(target_vendor = "apple")]
 static EXECUTABLE: OnceLock<PathBuf> = OnceLock::new();
 #[cfg(target_vendor = "apple")]
@@ -321,88 +321,10 @@ pub fn dispatch() -> Option<ExitCode> {
 
 #[cfg(any(target_vendor = "apple", test))]
 fn serve() -> Result<()> {
-    // File IO avoids global stdio locks: process::exit on supervisor EOF must
-    // never wait for a stdout lock held by a blocked result writer.
-    let mut control = File::from(rustix::io::fcntl_dupfd_cloexec(io::stdin(), 0)?);
-    let mut response = File::from(rustix::io::fcntl_dupfd_cloexec(io::stdout(), 0)?);
-    let mut data = File::from(rustix::io::fcntl_dupfd_cloexec(io::stderr(), 0)?);
-    response.write_all(MAGIC)?;
-    let mut header = [0; 5];
-    control.read_exact(&mut header)?;
-    let size = u32::from_be_bytes(header[1..].try_into().expect("fixed header")) as usize;
-    let operation = header[0];
-    if !matches!((operation, size), (READ, n) if n == config::MAX_MESSAGE_BYTES)
-        && !(operation == WRITE && size <= OUTPUT_LIMIT)
-    {
-        return Err(Error::Configuration("invalid stdio worker request"));
-    }
-    let mut bytes = Zeroizing::new(vec![0; if operation == WRITE { size } else { 0 }]);
-    control.read_exact(&mut bytes)?;
-    std::thread::scope(|scope| {
-        // Process-contained supervisor, not a detached parent thread. On EOF or
-        // malformed trailing traffic the ENTIRE worker exits, even if data IO
-        // or response IO is blocked. Normal completion also exits the process.
-        let _supervisor = std::thread::Builder::new()
-            .name("kk-stdio-watch".into())
-            .spawn_scoped(scope, move || {
-                let mut byte = [0];
-                loop {
-                    match control.read(&mut byte) {
-                        Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                        _ => std::process::exit(125),
-                    }
-                }
-            })?;
-        if response.write_all(&[STARTED]).is_err() {
-            drop(bytes);
-            std::process::exit(1);
-        }
-        let result = if operation == READ {
-            read_bounded(&mut data)
-        } else {
-            data.write_all(&bytes)
-                .map(|()| Zeroizing::new(Vec::new()))
-                .map_err(Error::Io)
-        };
-        let (code, number) = match &result {
-            Ok(bytes) => (0, bytes.len() as u32),
-            Err(Error::MessageTooLarge) => (1, 0),
-            Err(Error::Io(error)) => (2, error.raw_os_error().unwrap_or(5) as u32),
-            Err(_) => (3, 0),
-        };
-        let sent = (|| -> io::Result<()> {
-            response.write_all(&[code])?;
-            response.write_all(&number.to_be_bytes())?;
-            if let Ok(bytes) = &result {
-                response.write_all(bytes)?;
-            }
-            response.flush()
-        })();
-        // Exit kills the supervisor too; no scope join can hang on control.
-        // Wipe sensitive data before exit, which does not run destructors.
-        drop(bytes);
-        drop(result);
-        std::process::exit(if sent.is_ok() { 0 } else { 1 });
-    })
-}
-
-#[cfg(any(target_vendor = "apple", test))]
-fn read_bounded(data: &mut File) -> Result<Zeroizing<Vec<u8>>> {
-    let mut bytes = Zeroizing::new(Vec::new());
-    let mut chunk = Zeroizing::new([0; 1024]);
-    loop {
-        let count = match data.read(chunk.as_mut()) {
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            result => result?,
-        };
-        if count == 0 {
-            return Ok(bytes);
-        }
-        if bytes.len() + count > config::MAX_MESSAGE_BYTES {
-            return Err(Error::MessageTooLarge);
-        }
-        bytes.extend_from_slice(&chunk[..count]);
-    }
+    let control = File::from(rustix::io::fcntl_dupfd_cloexec(io::stdin(), 0)?);
+    let response = File::from(rustix::io::fcntl_dupfd_cloexec(io::stdout(), 0)?);
+    let data = File::from(rustix::io::fcntl_dupfd_cloexec(io::stderr(), 0)?);
+    protocol::serve(control, response, data)
 }
 
 #[cfg(test)]

@@ -3,6 +3,7 @@
 //! briefly inherits every parent file description until exec (even CLOEXEC).
 //! Keeping this in its own test process avoids mistaking inherited leases for
 //! a live competing room actor. Production lock checks remain strict.
+mod support;
 use kk::{
     Identity, Peer,
     rooms::{Anchor, Grant, Rights, RootBundle, group::Group, mls::CryptoMember, store::Provider},
@@ -94,7 +95,7 @@ fn real_process_kill_recovers_committed_ratchets_and_uncommitted_sql() {
             std::thread::park();
         }
     }
-    let directory = tempfile::tempdir().unwrap();
+    let directory = support::private_root();
     let (ids, anchor, mut alice, bob) = fixture(directory.path());
     let request = alice.encrypt_text("crash fixture request", true).unwrap();
     fs::write(directory.path().join("request.bin"), &request).unwrap();

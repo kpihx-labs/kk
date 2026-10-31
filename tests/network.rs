@@ -1,11 +1,12 @@
 #![cfg(unix)]
+mod support;
 
 use std::time::Duration;
 
 use kk::{Error, Identity, Listener, config, send};
 
 fn identities() -> (tempfile::TempDir, Identity, Identity) {
-    let root = tempfile::tempdir().unwrap();
+    let root = support::private_root();
     let a = Identity::create(&root.path().join("a")).unwrap();
     let b = Identity::create(&root.path().join("b")).unwrap();
     (root, a, b)

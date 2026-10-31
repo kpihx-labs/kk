@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn selection_rechecks_removed_entry_in_locked_snapshot() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let base = root.path().join("profile");
     let base = base.as_path();
     let target = base.join("target");
@@ -42,7 +42,7 @@ fn selection_rechecks_removed_entry_in_locked_snapshot() {
 
 #[test]
 fn selection_checks_directory_before_changing_active_profile() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let base = root.path().join("profile");
     let base = base.as_path();
     super::super::storage::update(base, "profiles.json", |catalog: &mut Catalog| {
@@ -63,7 +63,7 @@ fn selection_checks_directory_before_changing_active_profile() {
 
 #[test]
 fn summary_distinguishes_absent_identity_from_broken_certificate() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::tempdir().unwrap();
     let directory = root.path().join("profile");
     let absent = summary("test".into(), directory.clone(), false).unwrap();
     assert!(!absent.initialized);
