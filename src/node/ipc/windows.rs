@@ -5,7 +5,7 @@ use crate::{
     profile::windows::{ProtectedDirectory, owner_attributes, validate_security},
 };
 use serde::{Serialize, de::DeserializeOwned};
-use std::{ffi::OsStr, io, time::Duration};
+use std::{ffi::OsStr, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::windows::named_pipe::{NamedPipeClient, NamedPipeServer},

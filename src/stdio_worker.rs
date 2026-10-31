@@ -5,7 +5,7 @@ use crate::config;
 use crate::{Error, Result};
 #[cfg(any(target_vendor = "apple", test))]
 use std::fs::File;
-#[cfg(test)]
+#[cfg(all(test, not(target_vendor = "apple")))]
 use std::io::{Read, Write};
 use std::{io, path::PathBuf, process::ExitCode};
 #[cfg(target_vendor = "apple")]

@@ -93,6 +93,9 @@
       "licenses/zbraniecki-pluralrules-d0715d5b7cca/intl_pluralrules/LICENSE-APACHE",
       "licenses/zbraniecki-pluralrules-d0715d5b7cca/intl_pluralrules/LICENSE-MIT"
     ],
+    "io-buffers@0.1.0": [
+      "licenses/MikeGrier-windows-threadpool-sys-4c24dd573145/LICENSE"
+    ],
     "io_tee@0.1.1": [
       "licenses/TheOnlyMrCat-io_tee-8a7adecebf34/README.md",
       "licenses/spdx-license-list-data-31ba1a50e539/Apache-2.0.txt"
@@ -316,6 +319,15 @@
     ],
     "refinery@0.9.2": [
       "licenses/rust-db-refinery-e028287bea12/LICENSE"
+    ],
+    "win-error-codes@0.0.2": [
+      "licenses/MikeGrier-windows-threadpool-sys-e378dcbeaa99/LICENSE"
+    ],
+    "win-shared-os-owned-handle@0.1.0": [
+      "licenses/MikeGrier-windows-threadpool-sys-622d44f20477/LICENSE"
+    ],
+    "wtf-string@0.1.0": [
+      "licenses/MikeGrier-windows-threadpool-sys-329972496de0/LICENSE"
     ]
   },
   "selections": {
@@ -431,6 +443,30 @@
       "repository": "2dav/crabgrind",
       "revision": "ea38389bdf0731866d812352c11a921c6c657d5d",
       "sha256": "1c133c302d38ebfda8a0c12b3ab6f011e3cb747d3de85a4c9c253a9e217de9c5"
+    },
+    "licenses/MikeGrier-windows-threadpool-sys-329972496de0/LICENSE": {
+      "blob": "4116f5bcf5de4a20ab000cf730db58d7746595a3",
+      "repository": "MikeGrier/windows-threadpool-sys",
+      "revision": "329972496de015ca3dfb73b5f8547b2db1250e89",
+      "sha256": "024e03f0f6660e4a505ee9adeb7bfd4d58c571a31c0835728fd786da5f0422b0"
+    },
+    "licenses/MikeGrier-windows-threadpool-sys-4c24dd573145/LICENSE": {
+      "blob": "4116f5bcf5de4a20ab000cf730db58d7746595a3",
+      "repository": "MikeGrier/windows-threadpool-sys",
+      "revision": "4c24dd5731450888e7fb89da4e02761ce404a826",
+      "sha256": "024e03f0f6660e4a505ee9adeb7bfd4d58c571a31c0835728fd786da5f0422b0"
+    },
+    "licenses/MikeGrier-windows-threadpool-sys-622d44f20477/LICENSE": {
+      "blob": "4116f5bcf5de4a20ab000cf730db58d7746595a3",
+      "repository": "MikeGrier/windows-threadpool-sys",
+      "revision": "622d44f2047799f2f9affe6efffec91709fbcea0",
+      "sha256": "024e03f0f6660e4a505ee9adeb7bfd4d58c571a31c0835728fd786da5f0422b0"
+    },
+    "licenses/MikeGrier-windows-threadpool-sys-e378dcbeaa99/LICENSE": {
+      "blob": "4116f5bcf5de4a20ab000cf730db58d7746595a3",
+      "repository": "MikeGrier/windows-threadpool-sys",
+      "revision": "e378dcbeaa9943731c39d309247a0b26215b8fdc",
+      "sha256": "024e03f0f6660e4a505ee9adeb7bfd4d58c571a31c0835728fd786da5f0422b0"
     },
     "licenses/TheOnlyMrCat-io_tee-8a7adecebf34/README.md": {
       "blob": "4434eb39e66b30090dab13a8587e734b94a07b29",

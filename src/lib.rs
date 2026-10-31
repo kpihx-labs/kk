@@ -23,7 +23,7 @@ pub mod stdio_worker;
 #[cfg(windows)]
 #[path = "stdio_worker/windows.rs"]
 pub mod stdio_worker;
-#[cfg(all(test, unix))]
+#[cfg(test)]
 pub(crate) mod test_support;
 mod transport;
 #[cfg(unix)]

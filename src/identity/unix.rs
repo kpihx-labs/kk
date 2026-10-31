@@ -1,6 +1,6 @@
 //! Descriptor-relative private identity IO, shared by Unix and macOS.
 use crate::{Error, Result, config};
-use rustix::fs::{self, Mode, OFlags};
+use rustix::fs::{self, Mode, OFlags, RawMode};
 use std::{
     fs::File,
     io::{Read, Write},
@@ -122,7 +122,7 @@ impl Directory {
         Ok(directory)
     }
 
-    pub(super) fn write(&self, name: &str, bytes: &[u8], mode: u32) -> Result<()> {
+    pub(super) fn write(&self, name: &str, bytes: &[u8], mode: RawMode) -> Result<()> {
         let mut file = File::from(fs::openat(
             &self.0,
             name,

@@ -7,7 +7,7 @@ use zeroize::Zeroizing;
 mod pipeline;
 mod process;
 mod vp8;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) use pipeline::{decode_synthetic_packets, synthetic_packets};
 
 /// Compiled adapter support, NOT installed plugin/device availability or granted
