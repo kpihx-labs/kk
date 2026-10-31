@@ -19,7 +19,7 @@ offer -> verify retained prefix -> send remainder -> verify full SHA-256
 | Contact inbox | `kk serve --bind LOCAL_IP:45454 --accept-files --inbox PRIVATE_DIR` | `kk send alice ./report.pdf -f` |
 | Room | `kk room serve team --accept-files --inbox PRIVATE_DIR` | `kk room send team ./report.pdf -f --to PEER_DIGEST` |
 
-Use an existing owned private directory. `kk inspect PATH` calculates content
+Use an existing owned private directory. `kk file-info PATH` calculates content
 metadata without loading an identity. Limits/options are exposed by each command's
 `--help`; their authority remains `src/config.rs`.
 
@@ -38,8 +38,9 @@ kk --profile "$PROFILE" room cancel-transfer team "$JOB_ID" --confirm
 Take the exact opaque job ID from the admission reply's `result.id`. Admission
 success/exit zero means a local job exists, not that the peer stored its bytes.
 Source-byte counters are not receipts. Only `completed` with a verified receipt
-means durable recipient storage. Status history is bounded to its foreground
-owner; stopping/restarting retires IDs without inventing remote rollback.
+means durable recipient storage. Active work belongs to the foreground owner;
+durable terminal inspection does not mean active work resumes after restart or
+that remote effects were rolled back.
 
 Cancellation distinguishes `requested`, `acknowledged` and the resulting job.
 Acknowledgement ends local work, not already handed-off bytes or remote storage.
@@ -51,7 +52,7 @@ The browser's Room actions / File transfers exposes the same owner jobs and
 explicit cancellation. Closing a view stops monitoring, not the job. Received
 copies can be forwarded by opaque ID while incoming-file consent stays off;
 the destination must still consent, and unknown original sensitivity defaults
-the new forwarding operation to sensitive. [Actual GUI evidence](ui-candidate-f817-qualification.md).
+the new forwarding operation to sensitive. [Current evidence](progress.md).
 
 ## Storage Contract
 
@@ -77,8 +78,8 @@ stable bytes explicitly instead of deleting state or generating new ciphertext.
 The sender observes the bounded receipt while uploading, so response EOF/refusal
 can cancel a flow-control-blocked body. Success still requires the entire
 authorized upload and the exact receipt, never an early receipt alone.
-[Duplex regression evidence](file-duplex-qualification.md) distinguishes this
-correction from the still-unexplained native manual-peer timing failure.
+Production and wire-peer regression histories are retained in Git; final
+source/artifact qualification is in the [verification record](progress.md).
 
 The receipt proves the honest receiver's verified durable publication, not future
 availability or honesty of a compromised peer. For retained ciphertext, see

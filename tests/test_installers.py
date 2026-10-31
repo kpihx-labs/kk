@@ -492,15 +492,138 @@ printf '%s\n\n' "${MOCK_STATUS:-200}"
         self.assertFalse(self.log.exists())
 
 
+class SimpleInstallerTests(unittest.TestCase):
+    tool = ShellBoundaryTests.tool
+    host = ShellBoundaryTests.host
+    run_shell = ShellBoundaryTests.run_shell
+
+    def setUp(self):
+        ShellBoundaryTests.setUp(self)
+        for name in ("mkdir", "ln"):
+            (self.tools / name).symlink_to(shutil.which(name))
+        for name in ("gh", "jq", "timeout"):
+            (self.tools / name).unlink()
+        self.fixtures = self.directory / "fixtures"
+        self.fixtures.mkdir()
+        self.stem = "kk-v1.0.0-linux-x86_64"
+        self.binary = self.fixtures / (self.stem + "-bootstrap.bin")
+        self.binary.write_bytes(b"must never execute this fixture binary")
+        self.notices = self.fixtures / (self.stem + "-bootstrap-notices.json")
+        self.notices.write_bytes(b'{"files":{"LICENSE":"fixture author license"}}')
+        self.sums = self.fixtures / (self.stem + ".sha256")
+        self.sums.write_text("".join(f"{release.digest(path.read_bytes())}  {path.name}\n"
+                                     for path in (self.binary, self.notices)))
+        self.environment.update(MOCK_FIXTURES=str(self.fixtures), MOCK_REDIRECT="", MOCK_STATUS="200")
+        self.tool("curl", '''
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = --output ]; then output=$2; shift; fi
+    url=$1; shift
+done
+if [ -n "$MOCK_REDIRECT" ]; then printf '302\n%s\n' "$MOCK_REDIRECT"; exit 0; fi
+cp "$MOCK_FIXTURES/${url##*/}" "$output" || exit 22
+printf '%s\n\n' "$MOCK_STATUS"
+''')
+
+    def test_default_stable_install_without_gh_preserves_notices_and_never_runs_binary(self):
+        result = self.run_shell()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        link = self.directory / ".local/bin/kk"
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.read_bytes(), self.binary.read_bytes())
+        self.assertEqual((link.resolve().parent / "notices.json").read_bytes(), self.notices.read_bytes())
+        self.assertIn("no Sigstore", result.stderr)
+        self.assertEqual(self.run_shell().returncode, 1)  # No implicit replacement.
+
+    def test_piped_entrypoint_installs_to_explicit_prefix(self):
+        prefix = self.directory / "custom user prefix"
+        result = subprocess.run(["/bin/sh", "-s", "--", "--prefix", str(prefix)],
+                                input=SHELL.read_text(), env=self.environment,
+                                capture_output=True, text=True, timeout=10, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((prefix / "bin/kk").read_bytes(), self.binary.read_bytes())
+        self.assertFalse((self.directory / ".local").exists())
+
+    def test_arm64_selects_only_arm_assets(self):
+        stem = self.stem.replace("x86_64", "aarch64")
+        paths = []
+        for source in (self.binary, self.notices):
+            target = self.fixtures / source.name.replace(self.stem, stem)
+            target.write_bytes(source.read_bytes())
+            paths.append(target)
+        (self.fixtures / (stem + ".sha256")).write_text("".join(
+            f"{release.digest(path.read_bytes())}  {path.name}\n" for path in paths))
+        self.host("Linux", "arm64")
+        self.assertEqual(self.run_shell().returncode, 0)
+
+    def test_failed_notice_staging_never_activates_partial_version(self):
+        self.environment["REAL_CP"] = shutil.which("cp")
+        (self.tools / "cp").unlink()
+        self.tool("cp", '''
+case "$2" in */notices.json) exit 9;; esac
+exec "$REAL_CP" "$@"
+''')
+        result = self.run_shell()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        link = self.directory / ".local/bin/kk"
+        self.assertFalse(link.exists() or link.is_symlink())
+        self.assertIn("version directory already exists", self.run_shell().stderr)
+
+    def test_checksums_missing_duplicate_malformed_and_mismatched_fail_before_installation(self):
+        original = self.sums.read_text()
+        for data in ("", original + original, original.replace(original[:64], "g" * 64),
+                     original.replace(original[:64], "0" * 64)):
+            with self.subTest(data=data[:64]):
+                self.sums.write_text(data)
+                result = self.run_shell()
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertFalse((self.directory / ".local").exists())
+
+    def test_notices_mismatch_and_download_failure_never_activate(self):
+        self.notices.write_bytes(b"changed author license")
+        self.assertEqual(self.run_shell().returncode, 1)
+        self.assertFalse((self.directory / ".local").exists())
+        self.tool("curl", "exit 22\n")
+        self.assertEqual(self.run_shell().returncode, 1)
+        self.assertFalse((self.directory / ".local").exists())
+
+    def test_simple_bad_redirect_status_or_host_is_refused(self):
+        for url in ("http://github.com/a", "https://evil.example/a", "https://github.com@evil.example/a"):
+            self.environment["MOCK_REDIRECT"] = url
+            self.assertEqual(self.run_shell().returncode, 1)
+        self.environment["MOCK_REDIRECT"] = ""
+        self.environment["MOCK_STATUS"] = "206"
+        self.assertEqual(self.run_shell().returncode, 1)
+        self.host("Darwin", "arm64")
+        self.assertIn("Linux only", self.run_shell().stderr)
+        self.assertFalse((self.directory / ".local").exists())
+
+    def test_prefix_symlink_and_existing_command_are_preserved(self):
+        prefix = self.directory / "linked"
+        prefix.symlink_to(self.fixtures, target_is_directory=True)
+        self.assertEqual(self.run_shell("--prefix", str(prefix)).returncode, 1)
+        prefix.unlink()
+        (prefix / "bin").mkdir(parents=True)
+        command = prefix / "bin/kk"
+        command.write_bytes(b"unrelated executable")
+        self.assertEqual(self.run_shell("--prefix", str(prefix)).returncode, 1)
+        self.assertEqual(command.read_bytes(), b"unrelated executable")
+
+    def test_advanced_commit_never_falls_back_without_gh(self):
+        result = self.run_shell("--commit", COMMIT)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("install gh", result.stderr)
+        self.assertFalse((self.directory / ".local").exists())
+
+
 class EntrypointContractTests(unittest.TestCase):
     def test_shell_syntax(self):
         subprocess.run(["/bin/sh", "-n", str(SHELL)], check=True, timeout=10)
 
-    def test_no_extraction_or_activation_commands(self):
+    def test_no_extraction_or_downloaded_code_execution_commands(self):
         for path in (SHELL, POWERSHELL):
             text = path.read_text()
             for forbidden in ("Expand-Archive", "ExtractToDirectory", "Invoke-Expression",
-                              "Start-Process", "tar -x", "unzip ", "ln -s", "Move-Item",
+                              "Start-Process", "tar -x", "unzip ", "Move-Item",
                               "Remove-Item"):
                 self.assertNotIn(forbidden, text)
 

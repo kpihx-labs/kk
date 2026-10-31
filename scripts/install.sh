@@ -1,10 +1,15 @@
 #!/bin/sh
-# Verified raw-helper bootstrap, never an archive extractor.
+# Linux HTTPS/checksum install, with an explicit advanced Sigstore bootstrap.
 set -eu
 
 fail() { printf '%s\n' "kk installer: $*" >&2; exit 1; }
 usage() {
     printf '%s\n' \
+        'Simple Linux: curl --proto "=https" --tlsv1.2 -fsS https://github.com/kpihx-labs/kk/releases/download/v1.0.0/install.sh | sh' \
+        'No arguments installs stable 1.0.0; --version VERSION and --prefix PATH are optional.' \
+        'Simple mode needs curl and sha256sum, not gh/jq; it verifies HTTPS release checksums,' \
+        'not Sigstore provenance. No sudo, services, profile changes or downloaded-code execution.' \
+        'Supplying --commit selects advanced verification (no automatic fallback):' \
         'Usage: sh install.sh --version VERSION --commit COMMIT [--prefix ABSOLUTE_PATH]' \
         '                     [--archive ABSOLUTE_PATH [--bundle ABSOLUTE_PATH]]' \
         '                     [--trusted-root ABSOLUTE_PATH (requires --bundle and --helper or --bootstrap-dir)]' \
@@ -19,7 +24,7 @@ usage() {
         'Local archives must pass the same provenance/content gates. Profiles are untouched.'
 }
 
-version='' commit='' archive='' bundle='' trusted_root='' helper='' bootstrap_dir='' rollback='' verify_only='' prefix=${HOME:?HOME must be set}/.local
+version='1.0.0' commit='' archive='' bundle='' trusted_root='' helper='' bootstrap_dir='' rollback='' verify_only='' prefix=${HOME:?HOME must be set}/.local
 seen=' '
 while [ "$#" -gt 0 ]; do
     key=$1
@@ -53,6 +58,91 @@ while [ "$#" -gt 0 ]; do
         *) fail "unknown argument: $key" ;;
     esac
 done
+
+# The simple path deliberately never invokes the downloaded helper: its native
+# installer requires Sigstore. HTTPS release checksums are a weaker, explicit
+# trust tier, not a fallback when an advanced verifier fails.
+simple_install() {
+    [ "$(uname -s)" = Linux ] || fail 'simple installation supports Linux only; use the advanced path for macOS'
+    case "$(uname -m)" in
+        x86_64) simple_target=linux-x86_64 ;;
+        aarch64|arm64) simple_target=linux-aarch64 ;;
+        *) fail 'unsupported Linux architecture' ;;
+    esac
+    for tool in curl sha256sum mktemp wc cp chmod mkdir ln; do
+        command -v "$tool" >/dev/null 2>&1 || fail "install $tool separately"
+    done
+    case "$prefix" in /*) ;; *) fail 'paths must be absolute' ;; esac
+    case "$prefix/" in *'/../'*|*'/./'*|*'//'*) fail 'prefix must be a canonical absolute path' ;; esac
+    # Never traverse a symlink into an unrelated installation tree.
+    probe=$prefix/lib/kk-simple/$version
+    while [ "$probe" != / ]; do
+        [ ! -L "$probe" ] || fail 'installation paths must not contain symlinks'
+        probe=${probe%/*}; [ -n "$probe" ] || probe=/
+    done
+    [ ! -L "$prefix/bin" ] || fail 'bin must not be a symlink'
+    [ ! -e "$prefix/bin/kk" ] && [ ! -L "$prefix/bin/kk" ] || fail 'refusing to replace an existing kk command'
+    [ ! -e "$prefix/lib/kk-simple/$version" ] || fail 'version directory already exists; inspect it before retrying'
+    umask 077
+    work=$(mktemp -d "${TMPDIR:-/tmp}/kk-simple.XXXXXXXXXX") || fail 'cannot create private download directory'
+    printf '%s\n' "HTTPS/checksum trust only (no Sigstore). Downloads retained at: $work" >&2
+    simple_download() {
+        url="https://github.com/kpihx-labs/kk/releases/download/v$version/$1"
+        hops=0
+        while :; do
+            case "$url" in
+                https://github.com/*|https://release-assets.githubusercontent.com/*|https://objects.githubusercontent.com/*) ;;
+                *) fail 'refused download redirect authority' ;;
+            esac
+            [ "${#url}" -le 8192 ] || fail 'oversized redirect'
+            case "$url" in *[!\ -~]*) fail 'invalid redirect' ;; esac
+            (ulimit -f "$3"; curl --disable --silent --show-error --proto '=https' --proto-redir '=https' \
+                --tlsv1.2 --max-redirs 0 --connect-timeout 15 --max-time 120 --max-filesize "$2" \
+                --output "$work/$1" --write-out '%{http_code}\n%{redirect_url}\n' "$url" > "$work/response") || fail 'download failed'
+            [ "$(wc -c < "$work/response")" -le 8192 ] || fail 'oversized response metadata'
+            {
+                IFS= read -r status || fail 'missing response status'
+                IFS= read -r next_url || fail 'missing response redirect'
+                if IFS= read -r extra || [ -n "$extra" ]; then fail 'extra response metadata'; fi
+            } < "$work/response"
+            case "$status" in
+                200) [ -z "$next_url" ] || fail 'unexpected redirect'; break ;;
+                301|302|303|307|308) [ "$hops" -lt 5 ] || fail 'too many redirects'
+                    url=$next_url; hops=$((hops + 1)) ;;
+                *) fail 'unexpected download HTTP status' ;;
+            esac
+        done
+        size=$(wc -c < "$work/$1")
+        [ "$size" -gt 0 ] && [ "$size" -le "$2" ] || fail 'empty or oversized download'
+    }
+    stem="kk-v$version-$simple_target"
+    simple_download "$stem.sha256" 65536 128
+    for asset in "$stem-bootstrap.bin" "$stem-bootstrap-notices.json"; do
+        expected='' matches=0
+        while IFS=' ' read -r checksum name; do
+            if [ "$name" = "$asset" ]; then expected=$checksum; matches=$((matches + 1)); fi
+        done < "$work/$stem.sha256"
+        [ "$matches" -eq 1 ] || fail 'missing or duplicate release checksum'
+        case "$expected" in *[!0-9a-f]*|'') fail 'invalid SHA-256' ;; esac
+        [ "${#expected}" -eq 64 ] || fail 'invalid SHA-256 length'
+        simple_download "$asset" 134217728 262144
+        actual=$(sha256sum < "$work/$asset") || fail 'cannot hash download'
+        [ "${actual%% *}" = "$expected" ] || fail 'release checksum mismatch'
+    done
+    # Only now create installation state. Exclusive directory/link creation refuses
+    # collisions; failure may retain a partial version, never activates that version.
+    directory=$prefix/lib/kk-simple/$version
+    mkdir -p "$prefix/lib/kk-simple" "$prefix/bin" || fail 'cannot create user installation parents'
+    mkdir "$directory" || fail 'cannot exclusively create version directory'
+    cp "$work/$stem-bootstrap.bin" "$directory/kk" || fail 'cannot stage binary'
+    cp "$work/$stem-bootstrap-notices.json" "$directory/notices.json" || fail 'cannot preserve licenses'
+    cp "$work/$stem.sha256" "$directory/release.sha256" || fail 'cannot preserve checksums'
+    chmod 500 "$directory/kk" || fail 'cannot enable binary'
+    ln -s "$directory/kk" "$prefix/bin/kk" || fail 'cannot activate without replacing an existing command'
+    printf '%s\n' "Installed K&K $version at $prefix/bin/kk" \
+        "Keep $directory/notices.json with the binary (project and upstream licenses)." \
+        "Add $prefix/bin to PATH if necessary, then run: kk ui"
+}
 if [ -n "$verify_only" ]; then
     [ -z "$rollback" ] || fail '--verify-only excludes --rollback'
     [ -z "$helper" ] || fail '--verify-only authenticates helper/notices; use online bootstrap or --bootstrap-dir, not --helper'
@@ -74,6 +164,10 @@ IFS=$old_ifs
 for component do
     case "$component" in ''|0[0-9]*) fail 'version components must be canonical decimal numbers' ;; esac
 done
+if [ -z "$commit$archive$bundle$trusted_root$helper$bootstrap_dir$rollback$verify_only" ]; then
+    simple_install
+    exit 0
+fi
 if [ -z "$rollback" ] || [ -n "$bootstrap_dir" ]; then
     case "$commit" in ''|*[!0-9a-f]*) fail 'commit must be a full lowercase 40-character SHA' ;; esac
     [ "${#commit}" -eq 40 ] || fail 'commit must be a full lowercase 40-character SHA'

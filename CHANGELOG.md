@@ -2,6 +2,10 @@
 
 This records changes, not live delivery status. See [TODO.md](TODO.md) for the current state and Git history for detailed implementation checkpoints.
 
+## 1.0.0 - Unreleased
+
+- Deliver the first community release: progressive first-use journeys, one-line Linux installation, standalone six-file archives with deduplicated notices, current reference guides and a clean rebuild from source. Historical prerelease assets remain immutable.
+
 ## 0.9.0-dev.2 - Unreleased Verification Checkpoint
 
 - Add bounded typed room replies and authored reaction add/remove under a distinct MLS context, exact-audience capability negotiation, transactional encrypted history relations and CLI/UI controls; preserve legacy text, sensitive exclusion and per-recipient outcome semantics. Keep buffered reaction counts distinct from durable history restoration.
@@ -16,20 +20,15 @@ This records changes, not live delivery status. See [TODO.md](TODO.md) for the c
 - Supervise file upload and bounded receipt concurrently; reject early EOF under flow control while requiring both complete authorized upload and exact receipt for success.
 - Accept explicitly provisioned local trust roots with attestation bundles for installation and rollback; seal/bound both inputs before gh verification and require an already trusted helper for the shell's explicit-root path. Extend the isolated guest gate with optional two-kit update/rollback, independently bound version bytes at every step and retained network isolation on failure; mocked coverage is not real inter-version evidence.
 - Default branch delivery to GitHub under operator direction, retaining an explicit validated two-remote synchronization path for GitLab without changing its remote or CI.
-- Authorize every native archive redirect before connecting, using the same exact
-  HTTPS authorities as bootstrap. Preserve the original total deadline, archive
-  byte bounds and provenance-before-parsing policy; reject foreign hosts and loops.
+- Authorize every native archive redirect before connecting, using the same exact HTTPS authorities as bootstrap. Preserve the original total deadline, archive byte bounds and provenance-before-parsing policy; reject foreign hosts and loops.
 - Keep the failed development tag immutable and use the next prerelease for corrected verification wiring.
-- Run the compound two-device HTTP workflow once in a mandatory phase after the
-  concurrent Rust batch, without changing its assertions or production deadlines.
-  Ordinary Cargo test discovery still includes the case.
+- Run the compound two-device HTTP workflow once in a mandatory phase after the concurrent Rust batch, without changing assertions or production deadlines; ordinary Cargo discovery still includes it.
 - Share that phase through `make rust-test` in local/GitHub and GitLab checks, with regressions guarding exact case selection and release-gate dependency.
 - Do not treat this source checkpoint as authenticated artifact delivery or a completed release; origin verification and exact-byte replay remain required.
 
 ## 0.9.0-dev.1 - Unreleased Development Checkpoint
 
-- Add explicit local profile catalogs, locked settings updates, CLI management
-  and public-only offline/live status without identity regeneration.
+- Add explicit local profile catalogs, locked settings updates, CLI management and public-only offline/live status without identity regeneration.
 - Resolve local room nicknames by exact member identity, with explicit provenance;
   local aliases are not authenticated remote profile announcements.
 - Make file consent revocable while online, preserving lifetime budgets and

@@ -1,10 +1,14 @@
 # History Authorization And Outcomes
 
-This is the runtime contract, not a universal cancellation or latency guarantee.
-Storage: [history store](history-store.md). Commands: [history CLI](history-cli.md).
+Runtime contract, not a latency guarantee. [CLI](history-cli.md) / [UI](history-ui.md).
+
+```text
+authenticated MLS -> capture + checkpoint COMMIT -> current authorization -> output
+                               |                          |
+                         durable fact               may withhold
+```
 
 ## Durable Facts Versus Disclosure
-
 MLS processing, eligible capture and the private checkpoint commit together.
 The runtime checks current policy, membership, epoch and quorum before processing
 and again before releasing its result. Incoming history authors are also checked
@@ -50,7 +54,6 @@ Sensitive live content remains memory-only; references do not permit hydration,
 create a companion history row, or bypass private-session authentication.
 
 ## Scheduling And Bounds
-
 The dedicated history queue bounds waiting requests; the actor executes one
 selected operation at a time. Priority control admission wins between operations,
 not during synchronous crypto or filesystem work. Cached status reads public
@@ -69,15 +72,48 @@ count describes only that prefix, and `has_more` preserves the deferred authoriz
 row for the next request. If no advancing prefix fits, the operation returns a
 size error instead of an empty nonadvancing success.
 
-## Qualification Gates
+## Store, Record And Key Ownership
 
-Runtime tests cover queue-before-decrypt, policy veto races, absent quorum,
-authorization-filtered paging, sensitivity, restart-stable live references and
-shorter-page behavior at the final escaped-JSON budget. A paused synchronous-work
-regression establishes that a priority control request can time out while active
-history work still owns the actor. Cached reads on another executor worker do not
-prove responsiveness on a blocked single-thread executor. These are bounded-work
-and ordering tests, not a maximum production latency measurement or a preemptible
-filesystem/crypto guarantee. Key/file assumptions and upstream AGE internal-buffer limits
-remain in their respective contracts; these tests do not prove physical power-loss
-durability or protection against compromise of the local account.
+`rooms::store::Provider` owns one connection, lease and transaction. History
+enable/status/disable/clear/record/prune/search use a transaction from that same
+provider. Commit before exposing reads as well as mutations; successful method
+return is not durability. Commit failure retains the poisoned-handle/reopen rule.
+Only explicit enable migrates V1 to V2; opening does not enroll or backfill.
+Old V1-only binaries refuse V2. Disable retains records; clear retains key,
+policy and monotonic IDs. Missing/wrong keys mean locked state, not empty history.
+
+Each encrypted typed row binds expected profile, room, recipient, SQL ID, event,
+epoch and exact-wire hash. Caller context supplies expected bindings, not copied
+database fields. Bodies/previews/plaintext search indexes never enter SQLite;
+policy, counters, clock, bindings, IDs and ciphertext lengths remain visible.
+The stored clock floor rejects backwards observations; callers supply trustworthy
+time. Search decrypts/validates the bounded retained set, even beyond the returned
+page. Pruning between transactions means pagination is not a snapshot.
+
+`envelope::record` uses ordinary binary AGE v1 with bounded X25519 recipient/header/
+STREAM work, not custom cryptography. Opening returns zeroizing plaintext only
+after full authentication and exact EOF; armor, excess/trailing data and foreign
+stanza types are refused. Limits live in [config](../src/config.rs).
+AGE integrity is not author authentication or database anti-rollback protection.
+Owned plaintext buffers are wiped, but dependency-internal/caller copies, swap,
+backups and physical storage are not promised erased.
+
+`HistoryKeyAnchor` explicitly creates/loads `history.agekey` in the retained
+room-private directory; SDK callers may supply a typed identity instead. Loading
+does not prove SQL enrollment: verify the stored recipient/binding. Descriptor-
+relative no-follow opens, owned private single-link files, no-replace staged
+publication and an independent initialization lease preserve existing state.
+The logical lease explicitly unlocks despite duplicated descriptors. Any existing
+key or pending artifact blocks blind initialization. Sync/publication errors can
+leave private pending or published bytes; never delete, regenerate or adopt them
+implicitly. Orphan recovery requires the expected public recipient and explicit
+confirmation. Key rotation is not implemented.
+
+## Verification Scope
+
+Store/codec/key/runtime tests cover binding substitution, corruption, migration,
+rollback, concurrent initialization, preserved artifacts, queue admission, policy
+veto races, quorum, paging and restart-stable references. These are bounded-work
+tests, not preemptible crypto/filesystem or maximum-latency guarantees. Native
+execution, physical power loss and local-account compromise remain distinct.
+Current bindings: [verification record](progress.md).

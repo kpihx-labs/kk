@@ -3,6 +3,12 @@
 Profiles contain independent device identities. Display names are human labels,
 not certificates or invitation tokens. Changing a name never changes a key.
 
+```text
+choose profile -> start CLI / UI -> same identity for this process
+       |
+ change saved selection -> NEXT launch only
+```
+
 ```sh
 kk profile list
 kk profile create work --name "My work profile"
@@ -78,3 +84,7 @@ reported separately without making the basic room status offline. Disabling stop
 future disclosure, not other people's memory: previously shared names cannot be
 erased, cached observations may remain until refresh, and local nicknames remain
 until explicitly cleared. See the cache bounds in `src/config.rs`.
+
+Next: [local notifications](notifications.md) for opt-in alerts, or
+[profile publication boundaries](profile-publication.md) for the deeper concurrency
+and trust model.

@@ -374,6 +374,40 @@ def licenses():
     return notices, files
 
 
+def compact_notice_assets(notices, files):
+    """Consolidate exact upstream notice bytes for a human-facing archive."""
+    groups = {}
+    compact = []
+    for package in notices:
+        record = dict(package)
+        record["notices"] = []
+        for source in package["notices"]:
+            data = files[source][0]
+            checksum = digest(data)
+            record["notices"].append({"source": source, "sha256": checksum})
+            group = groups.setdefault(checksum, {"data": data, "sources": set(), "packages": set()})
+            group["sources"].add(source)
+            identity = package["name"]
+            if package.get("version"):
+                identity += "@" + package["version"]
+            group["packages"].add(f"{identity} ({package.get('license', 'license recorded in source inventory')})")
+        compact.append(record)
+    sections = [
+        "K&K third-party notices",
+        "",
+        "Exact notice texts are grouped by SHA-256; package associations and original source paths are retained.",
+    ]
+    for checksum, group in sorted(groups.items()):
+        sections.extend(["", "=" * 78, f"SHA-256: {checksum}", "Packages:"])
+        sections.extend(f"- {name}" for name in sorted(group["packages"]))
+        sections.append("Original notice paths:")
+        sections.extend(f"- {name}" for name in sorted(group["sources"]))
+        sections.extend(["-" * 78, group["data"].decode("utf-8").rstrip()])
+    inventory = {"format": 1, "notice_file": "THIRD-PARTY-NOTICES.txt", "packages": compact}
+    return ((json.dumps(inventory, ensure_ascii=True, indent=2) + "\n").encode(),
+            ("\n".join(sections) + "\n").encode())
+
+
 def publish_assets(assets, destination):
     """Exclusive complete-file publication with retained stages and matching-byte recovery.
 
@@ -468,6 +502,90 @@ def macos_minimum(binary):
     return versions[0]
 
 
+def user_readme(version, target):
+    """Standalone release help, not the contributor repository landing page."""
+    return f"""# K&K {version}
+
+```text
+Need to exchange something -> ./kk ui -> Create / join a room -> Talk + send
+```
+
+This ready-to-run download is for **{target}**. It contains the browser workspace;
+no Node, Python, cloud account or background service is required.
+
+## Start here
+
+Extract the whole archive into a folder you own, open a terminal there, then:
+
+```sh
+./kk ui
+```
+
+```text
+Device initialized? -- NO --> Initialize this device --+
+       | YES                                         |
+       +---------------------------------------------+
+       v
+Create a room -> Create and start -> ONLINE = local success
+       |
+Invite -> Send the single-use JSON privately -> Compare CONFIRM -> Both approve
+       |
+Send a message <-> Receive a reply = shared success
+```
+
+Keep the terminal open. Ctrl-C stops the backend; closing only the browser tab
+does not. Never share private launch links or profile keys.
+
+Need terminal help?
+
+```sh
+./kk --help
+./kk status
+```
+
+## Optional Linux install
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsS https://github.com/kpihx-labs/kk/releases/download/v{version}/install.sh | sh
+```
+
+```text
+Quick path  -> HTTPS + release SHA-256 -> ~/.local -> kk ui
+Strict path -> download install.sh -> --help -> version + commit + Sigstore/gh
+```
+
+The quick path needs `curl` and `sha256sum`, never sudo, and refuses an existing
+`kk`. It does **not** independently prove publisher provenance. Download the
+script first if piping a network response to `sh` is not appropriate for you.
+
+## If it does not start
+
+```text
+Wrong OS / CPU?       -> Download the matching archive
+Missing Linux glibc loader? -> Check build-manifest.json; use a compatible system
+Text works, media not? -> Install GStreamer tools/base/good with Opus/VP8
+No camera/mic needed? -> Grant no device permission
+```
+
+## What to keep
+
+```text
+kk                         executable
+README.md                  this path from zero to first exchange
+LICENSE                    K&K terms
+THIRD-PARTY.json + notices imported-code terms
+build-manifest.json        SHA-256 inventory, not a signature
+```
+
+Profiles live outside this folder. Removing a download or managed binary does not
+erase them; back up private profile data and keys separately. Keep all supplied
+notices when redistributing K&K.
+
+Next useful path: https://github.com/kpihx-labs/kk/blob/v{version}/docs/getting-started.md
+Release proofs: https://github.com/kpihx-labs/kk/releases/tag/v{version}
+""".encode()
+
+
 def bundle(target, destination):
     if target not in TARGETS:
         raise ValueError("Unsupported native release target")
@@ -483,14 +601,23 @@ def bundle(target, destination):
     binary = ROOT / "target" / target / "release/kk"
     if not binary.is_file() or binary.is_symlink():
         raise ValueError("Build the exact release target first")
-    notices, files = licenses()
+    notices, notice_files = licenses()
     missing = [item["name"] for item in notices if not item["notices"]]
     if missing:
         raise ValueError("Collect and review missing upstream notices before release: " + ", ".join(missing))
-    files["kk"] = (binary.read_bytes(), 0o755)
-    for name in ["LICENSE", "README.md", "CONTRACT.md", "Cargo.lock"]:
-        files[name] = ((ROOT / name).read_bytes(), 0o644)
-    files["THIRD-PARTY.json"] = ((json.dumps(notices, indent=2) + "\n").encode(), 0o644)
+    helper_files = dict(notice_files)
+    helper_files["kk"] = (binary.read_bytes(), 0o755)
+    helper_files["LICENSE"] = ((ROOT / "LICENSE").read_bytes(), 0o644)
+    helper_files["README.md"] = (user_readme(version, target), 0o644)
+    helper_files["THIRD-PARTY.json"] = ((json.dumps(notices, indent=2) + "\n").encode(), 0o644)
+    compact_inventory, compact_text = compact_notice_assets(notices, notice_files)
+    files = {
+        "kk": helper_files["kk"],
+        "README.md": helper_files["README.md"],
+        "LICENSE": helper_files["LICENSE"],
+        "THIRD-PARTY.json": (compact_inventory, 0o644),
+        "THIRD-PARTY-NOTICES.txt": (compact_text, 0o644),
+    }
     apple = target.endswith("-apple-darwin")
     minimum_os = macos_minimum(binary) if apple else None
     required = set() if apple else set(re.findall(r"GLIBC_(\d+\.\d+(?:\.\d+)?)", command("readelf", "--version-info", str(binary))))
@@ -504,6 +631,7 @@ def bundle(target, destination):
         manifest["binary_macos_required"] = minimum_os
         manifest["runtime_dependencies"] = ["Apple system libraries in Mach-O load commands", "GStreamer tools/base/good with Opus/VP8 for native media"]
     files["build-manifest.json"] = ((json.dumps(manifest, indent=2) + "\n").encode(), 0o644)
+    helper_files["build-manifest.json"] = files["build-manifest.json"]
     destination.mkdir(parents=True, exist_ok=True)
     # Regenerate the complete expected set privately, including source/checksums.
     # Never create exclusive archives directly in a partially published release:
@@ -519,7 +647,7 @@ def bundle(target, destination):
     manifest_path = stage / (stem + ".build.json")
     with manifest_path.open("xb") as record:
         record.write(files["build-manifest.json"][0])
-    helper_path, notices_path = bootstrap_assets(target, version, commit, files, stage)
+    helper_path, notices_path = bootstrap_assets(target, version, commit, helper_files, stage)
     entrypoints = publish_assets({name: (ROOT / "scripts" / name).read_bytes()
                                   for name in ("install.sh", "install.ps1")}, stage)
     # Vendor every locked target dependency so source can rebuild without a registry.

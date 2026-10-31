@@ -1,22 +1,25 @@
 # Portable Prebuilt Installer Boundary
 
 ## Status
+For an ordinary Linux install, start with the one-line path in the
+[README](../README.md#install-100). It uses HTTPS release checksums and deliberately
+does not claim independent provenance. This page begins where that convenience
+path ends: provide an explicit full commit when you need Sigstore-bound origin.
 The same-package native helper lives in `src/install.rs` and submodules with CLI wiring.
 `scripts/install.sh` bootstraps Linux/macOS with authenticated raw helper and notices
-assets; `--helper` instead accepts an explicitly already-trusted native `kk`.
+assets in the advanced path; `--helper` instead accepts an explicitly already-trusted native `kk`.
 PowerShell on Linux supports only explicit `-Helper`; without it it exits 3.
 Help exits 0; input/tool failures exit nonzero. No profile/PATH/service/identity changes occur.
 This is not release or native-platform qualification.
-
 The format/platform authority remains [release.py](../scripts/release.py), not a second registry.
 Host OS/CPU selects a candidate; its authenticated manifest must match.
 Linux/macOS transaction paths exist; Windows is refused (ZIP is not Windows support).
 Provision capable `gh`, plus bootstrap curl/jq, timeout or gtimeout, sha256sum or shasum.
 Native ABI tools: Linux ldconfig; macOS codesign/sw_vers. No end-user compiler is needed.
-
 ## Inspect Before Running
-After release gates, retrieve its entrypoint with separately trusted tooling,
-authenticate and inspect it, then invoke it. Never pipe network content into a shell.
+For the advanced path, retrieve its entrypoint with separately trusted tooling,
+authenticate and inspect it, then invoke it. Do not use the one-line convenience
+path when independent provenance is your requirement.
 Replace the example selectors with the reviewed release tag and full source commit.
 This is not published-asset evidence; publication requires all existing release/exact-byte replay gates.
 
@@ -28,13 +31,11 @@ gh attestation verify FRESH_DIRECTORY/install.sh --repo kpihx-labs/kk \
 less FRESH_DIRECTORY/install.sh
 sh FRESH_DIRECTORY/install.sh --version VERSION --commit FULL_COMMIT_SHA
 ```
-
 Use fresh destinations and retain inspected bytes. For PowerShell retrieve and authenticate
 `install.ps1` with the same pinned policy, inspect it with `Get-Content`, then
 run `pwsh -NoProfile -File ./install.ps1 -Version VERSION -Commit FULL_COMMIT_SHA
 -Helper /absolute/trusted/kk` on Linux.
 Do not bypass execution policy. Neither bootstrap auto-installs dependencies.
-
 ## Native Helper And Bootstrap Trust
 Shell archive tools do not provide the native verifier's bounded immutable-snapshot guarantees.
 Never execute a helper extracted from an unverified archive to verify itself.
@@ -55,7 +56,6 @@ kk install --version VERSION --commit FULL_SHA --prefix ABSOLUTE
   [--archive ABSOLUTE [--bundle ABSOLUTE [--trusted-root ABSOLUTE]]]
 kk rollback --prefix ABSOLUTE --version VERSION [--bundle ABSOLUTE [--trusted-root ABSOLUTE]]
 ```
-
 The helper owns the complete transaction, including these gates:
 1. Public GitHub Releases only, repository `kpihx-labs/kk`. No moving latest
    selector or alternate URL. Explicit version and full commit bind the reviewed
@@ -109,12 +109,12 @@ The helper owns the complete transaction, including these gates:
    Uncoordinated same-UID replacement/root/account compromise is excluded. No profiles.
 
 ## Evidence And Remaining Gates
-
 `uv run --no-project tests/test_installers.py` tests quoting, dispatch and failed
 helper/notice verification with MOCKED gh/curl. `cargo test --test install` exercises actual
 TAR/ZIP parsing, hostile archives and managed filesystem/rollback transactions with
 explicitly MOCKED gh/curl. It is not real GitHub provenance or download evidence.
 PowerShell execution tests run only if `pwsh` is already available; skips are explicit.
-Native [evidence](install-qualification.md) is not raw bootstrap replay; that and offline trust remain gates.
+Signed-byte results: [verification record](progress.md). Mocks are not bootstrap replay.
 Release pairs are NOT atomic: private stages are retained; retry identical companion inputs to fill
-partial publication. Existing differing bytes/links fail closed. See [distribution](distribution.md).
+partial publication. Existing differing bytes/links fail closed. See the
+[installation evidence boundary](install-qualification.md) and [distribution](distribution.md).

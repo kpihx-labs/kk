@@ -42,4 +42,5 @@ membership. Silent or partitioned peers are not automatically declared departed.
 An uninformed partition cannot receive instantaneous revocation knowledge.
 
 Create/join commands: [CLI](cli.md#rooms). Ordering and storage:
-[room runtime](room-runtime.md). Threat boundaries: [contract](../CONTRACT.md).
+[room runtime](room-runtime.md). Changing roles, votes or membership:
+[administrative actions](moderation.md). Threat boundaries: [contract](../CONTRACT.md).

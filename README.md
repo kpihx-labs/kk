@@ -1,91 +1,114 @@
 # K&K
 
-Encrypted communication between devices, without a permanent host or mandatory
-cloud service. A Rust core serves both the CLI and a bundled browser workspace.
-
 ```text
-                  one shared core
-                 /               \
-             terminal          browser
-                 \               /
-            identities + permissions
-                        |
-                  encrypted peers
-                  A -------- B
-                   \        /
-                    \-- C --/
+Send someone a document -> Open a room -> Exchange text + files -> Talk or show
+                          your devices, no mandatory cloud account or host
 ```
 
-## What Works
+## Install 1.0.0
 
-| Need | Available behavior |
+**Linux x86_64 / aarch64**, with `curl` and `sha256sum` available:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsS https://github.com/kpihx-labs/kk/releases/download/v1.0.0/install.sh | sh
+"$HOME/.local/bin/kk" ui
+```
+
+Installs for your user without sudo, services or PATH changes; refuses to replace an existing `kk`. This simple path checks HTTPS release checksums, not Sigstore provenance; explicit version/commit verification is a separate [advanced installation path](https://github.com/kpihx-labs/kk/blob/main/docs/installers.md).
+
+**Already have the binary archive?** Open a terminal in its extracted directory:
+
+```sh
+./kk ui
+```
+
+Use `kk ui` if it is on PATH. The browser interface is bundled; no Node, Python or separate web server is needed.
+
+## Choose the path that feels natural
+```text
+Browser -> kk ui                  -> guided controls and visible room state
+Terminal -> kk init / kk room ... -> the same protected core
+```
+Both use the same profile. Start visually or follow the [complete CLI path](https://github.com/kpihx-labs/kk/blob/main/docs/cli.md);
+switching interface does not create another identity.
+
+## First minute: a room running on your device
+
+```text
+kk ui -> Initialize device -> Create room -> local name + title
+                                             |
+                     alone -> loopback ------+
+              another PC -> reachable IP:port
+                                             v
+                           Create and start -> ONLINE
+```
+A local room starts no file reception, history or media capture.
+
+## First shared success: a message and a reply
+
+Start on the same LAN, with K&K running on both devices. Replace these example IPs with your own; the browser address and `127.0.0.1` are local only, and `0.0.0.0` is not an address to share.
+
+```text
+CREATOR A                                   DEVICE B
+Room on 192.168.1.10:45462                  Open K&K; initialize
+Invite participant on :45463                |
+Download invitation JSON ----------------> Import JSON; own address :45462
+             Compare CONFIRM -> both approve
+Send message ----------------------------> Reply
+Read reply <------------------------------- FIRST SHARED SUCCESS
+```
+
+Joining fails? Check both reachable addresses, network access and the separate pairing port; replace an expired or consumed invitation, not your profile. A LAN address alone does not provide internet reachability.
+
+### The same first room from the CLI
+
+```text
+A: kk init; kk room create team --title "Our room" --bind 192.168.1.10:45462
+A: kk room serve team                    # keep this terminal open
+A: kk room invite team --bind 192.168.1.10:45463 --invite-out PRIVATE_DIR/invitation.json
+B: kk init; kk room join team --invitation PRIVATE_DIR/invitation.json --bind 192.168.1.11:45462
+Both: compare CONFIRM, approve, then kk room send team "hello"
+```
+`PRIVATE_DIR` is an existing private directory. Keep `room serve` open while
+using another terminal. The [CLI walkthrough](https://github.com/kpihx-labs/kk/blob/main/docs/cli.md#rooms) continues into status,
+files, contacts, history and media.
+
+## Send the document, then choose what comes next
+
+```text
+RECEIVER: Consent to incoming files -> SENDER: File -> Select document
+                                                        |
+Room actions / File transfers <-------------------------+
+  completed + verified receipt -> Stored in receiver's Private inbox
+  uncertain / interrupted      -> Inspect before explicitly retrying
+```
+
+## Grow only when the need appears
+| Your next need | Continue with |
 | --- | --- |
-| Pair devices | Single-use code/invitation, confirmation on both devices |
-| Keep communicating | Foreground contact inboxes or multi-member rooms |
-| Exchange text | Encrypted delivery reports; optional hidden input/output |
-| Send files | Explicit receiving consent, verified content, resumable transfer |
-| Keep a copy available | Exact-audience offers, lookup and verified retrieval |
-| Share media | Consented native/browser sources and selected-source playback |
-| Use a workspace | Private loopback UI with neutral light/dark themes |
+| Use the browser or terminal every day | [Browser workspace](https://github.com/kpihx-labs/kk/blob/main/docs/ui.md) / [CLI](https://github.com/kpihx-labs/kk/blob/main/docs/cli.md) |
+| Identities, contacts or delivery | [Profiles](https://github.com/kpihx-labs/kk/blob/main/docs/profiles.md) / [pairing](https://github.com/kpihx-labs/kk/blob/main/docs/pairing.md) / [sessions](https://github.com/kpihx-labs/kk/blob/main/docs/sessions.md) |
+| Add members, reply or change access | [Rooms](https://github.com/kpihx-labs/kk/blob/main/docs/rooms.md) / [replies](https://github.com/kpihx-labs/kk/blob/main/docs/conversation.md) / [roles](https://github.com/kpihx-labs/kk/blob/main/docs/moderation.md) |
+| Files, copies or future text | [Transfers](https://github.com/kpihx-labs/kk/blob/main/docs/files.md) / [copies](https://github.com/kpihx-labs/kk/blob/main/docs/replicas.md) / [history](https://github.com/kpihx-labs/kk/blob/main/docs/history-ui.md) |
+| Talk, show a window or choose a device | [Media](https://github.com/kpihx-labs/kk/blob/main/docs/media.md) / [browser capture](https://github.com/kpihx-labs/kk/blob/main/docs/browser-capture.md) |
+| Install offline or verify provenance | [Installers](https://github.com/kpihx-labs/kk/blob/main/docs/installers.md) / [offline USB](https://github.com/kpihx-labs/kk/blob/main/docs/offline-install.md) |
+| Understand guarantees or contribute | [Security boundaries](https://github.com/kpihx-labs/kk/blob/main/docs/security-review.md) / [full documentation map](https://github.com/kpihx-labs/kk/blob/main/docs/index.md) |
 
-**Delivery status:** [TODO.md](TODO.md). A tag or signed draft is not a published
-release. **Supported environments:** [platforms](docs/platforms.md).
+## Stop now, return later
+```text
+ONLINE -- Stop --> ROOM OFFLINE -- Start room --> ONLINE (same room + identity)
+Ctrl-C -> backend stops -> kk ui -> select existing room -> Start
+Close browser tab -> backend keeps running
+```
 
-## Start
+Live messages are not an automatic archive, and delivery is not a human read receipt. This README works offline in a binary archive; web guides follow current source, so use the build manifest's source commit and `./kk COMMAND --help` for an older binary.
 
-Use an installed binary, or build from the checkout:
-
+## Working from source
 ```sh
 cargo fetch --locked
 make build
-./target/release/kk --help
 ./target/release/kk ui
 ```
-
-`kk ui` stays in the foreground. Each device owns its private profile; remote
-devices join a room through its reachable address, not the loopback UI address.
-
-Prefer the terminal? [Create and join a room](docs/cli.md#rooms), or
-[pair two contacts](docs/pairing.md) for direct sends.
-
-## Find The Right Page
-
-| Question | Read |
-| --- | --- |
-| Which commands should I run? | [CLI](docs/cli.md), [UI](docs/ui.md) |
-| Who can join, vote or receive data? | [Rooms](docs/rooms.md), [contract](CONTRACT.md) |
-| What happens to files or copies? | [Files](docs/files.md), [replicas](docs/replicas.md) |
-| Optional encrypted history in the development source? | [History UI](docs/history-ui.md), [history CLI](docs/history-cli.md) |
-| Which media/platform paths are verified? | [Media](docs/media.md), [platforms](docs/platforms.md) |
-| How is the backend organized? | [Owners](docs/backend-map.md), [room runtime](docs/room-runtime.md) |
-| What has actually passed? | [Verification record](docs/progress.md), [lab](docs/lab.md) |
-| How do I verify or install a release? | [Distribution](docs/distribution.md) |
-| What are the security boundaries? | [Review](docs/security-review.md), [dependency overrides](docs/dependency-overrides.md) |
-
-## Develop
-
-Validation needs the pinned Rust toolchain, Node, UV/Python and Ruff. CI supplies its
-pinned Ruff through `RUFF`; the installed application needs none of these tools.
-
-```sh
-make help           # Actual targets and their purpose
-make check          # Product format, lint, tests, docs and packaging checks
-make rust-test      # Concurrent Rust batch, then the mandatory two-device workflow
-make ui-workflow-check # Run that exact workflow once with its original bounds
-make python-check   # Python release/fixture lint, also included in make check
-make docs-check     # Links, tables, wire names and obsolete command examples
-make sdk-check      # Upstream vectors and independent OPAQUE interoperability
-make lab-check      # Lab tooling checks; does not change VMs
-```
-
-`make rust-test` runs the concurrent Rust batch, then the exact compound
-two-device UI workflow once outside unrelated crypto/fsync load. The workflow is
-not ignored in ordinary Cargo runs; its assertions and production deadlines are
-unchanged. `make check` and GitLab's Rust lane both require the shared target.
-This separates verification workloads, not a guarantee against operational
-timeouts under arbitrary host load. It does not replace guest or artifact replay.
-
-K&K's original code uses [BUSL-1.1](LICENSE), transitioning to AGPL-3.0-only under
-the terms and date in that file. Imported code retains its own licenses and
-[attribution](third_party/README.md). Earlier checkpoints are in [CHANGELOG.md](CHANGELOG.md)
-and Git history, not mixed into the current usage guides.
+Use `make help`; contributors continue with [distribution](https://github.com/kpihx-labs/kk/blob/main/docs/distribution.md).
+Guarantees: [contract](CONTRACT.md). License: [BUSL-1.1](LICENSE), then AGPL-3.0-only
+on its stated terms. Imported code keeps its [attribution](https://github.com/kpihx-labs/kk/blob/main/third_party/README.md).

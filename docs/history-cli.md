@@ -12,7 +12,7 @@ kk --profile ./alice room history team search remember --limit 1
 
 Enrollment captures only future non-sensitive room text. It does not import old
 messages, record files/media, promise delivery, or prove that a human read text.
-Each profile opts in independently. UI parity is future work.
+Each profile opts in independently. Equivalent controls: [history UI](history-ui.md).
 
 ## Commands
 
@@ -45,9 +45,9 @@ kk --profile ./alice room history team search remember --after-id 12 --limit 1
 adapter reserves additional space for the bounded IPC envelope. A small budget
 may be unable to fit a row. Withheld rows are not authorized for disclosure;
 they do not imply missing network delivery. Send results additionally expose the
-runtime's stable `reference`, without changing existing receipt fields. Incoming
-live events do not yet expose that reference; display text is never used to
-invent one.
+runtime's stable `reference`, without changing existing receipt fields. Authenticated
+incoming live events carry the same reference as stored rows; display text is
+never used to invent one. See [history runtime](history-runtime.md#live-references).
 
 ## Keys, restart and recovery
 

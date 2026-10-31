@@ -8,6 +8,7 @@ kk --profile PRIVATE_DIR ui
 kk --profile-name work ui
 ```
 
+Choose another task in the [documentation guide](index.md).
 The bundled interface and its backend stay in the foreground. No Node/Python
 runtime or installed web service is required to use the binary.
 
@@ -31,7 +32,8 @@ local browser -> authenticated loopback API -> same room/core owners as CLI
 | Change controllers | Current backend administrative authority, separate from data membership |
 
 Admission is not a vote. Room identities do not become global contacts. Untrusted
-message text is not rendered as HTML, and the workspace is not durable chat history.
+message text is not rendered as HTML. Live chat is memory-only unless you explicitly
+enable [local encrypted history](history-ui.md).
 
 Action availability comes from this device's verified private membership cache.
 Unknown or inactive capabilities disable publishing and administrative controls;
@@ -74,13 +76,11 @@ Current delivery: [TODO.md](../TODO.md). Evidence: [progress.md](progress.md).
 ## Sharing A Display Name
 
 Settings includes **Share this display name with room members**, off by default.
-Your own name remains visible locally when it is off. Remote names appear only
-after explicit opt-in and a background metadata refresh. Member cards distinguish
-self-announced names from local nicknames; neither verifies a human identity.
-Fingerprints remain available, and every action still uses the exact member ID.
+Your own name stays visible locally. Remote names and local nicknames never grant
+trust or route an action; turning sharing off cannot erase prior knowledge.
+Disclosure, cache behavior and CLI controls have one guide:
+[profiles](profiles.md#explicit-name-sharing).
 
-Turning sharing off cannot erase names already learned by another member and does
-not clear their local nicknames. Settings updates change only submitted fields
-atomically. Optional name-cache errors are shown separately; they do not stop the
-room or make its basic status offline. The UI status path never waits for remote
-name requests. See [profiles](profiles.md#explicit-name-sharing) for CLI controls.
+Continue with the task in front of you: [files](files.md), [room copies](replicas.md),
+[media](media.md), [roles and removal](moderation.md), [notifications](notifications.md),
+or the [complete documentation map](index.md).

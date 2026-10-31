@@ -42,4 +42,6 @@ guests stopped, the dedicated network inactive and any temporary QoS restored.
 
 One host shares scheduling/disk resources between guests. There is no physical
 radio, hardware-codec, energy or production-confinement claim. Current results
-and exact report paths: [verification record](progress.md).
+and exact report paths: [verification record](progress.md). Interpret cross-guest
+contention through [native candidate qualification](native-candidate-qualification.md)
+and exact installer replay through [installation qualification](install-qualification.md).

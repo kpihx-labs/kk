@@ -42,14 +42,7 @@ conflicts, real CLI enable/disable/profile isolation, and authenticated HTTP
 settings. Browser tests cover explicit permissions, sensitive/private-field
 exclusion, no backfill/replay, bounded lifetime and stale callbacks/dialogs.
 
-Real Edge (`default`) exercised the unchanged Alex/Morgan profiles in foreground
-panes `%122`/`%125`, on `127.0.0.1:45466`/`:45468`: default-off display, explicit
-enable refused while permission remained default, no backend opt-in after refusal,
-successful ordinary messages in both directions, then authenticated shutdown.
-The profiles retain their identities; the QA pages are blank afterwards.
-
-Actual OS notification acceptance/display remains **unqualified**: the native
-permission prompt did not resolve, and desktop activation returned AT-SPI focus
-refused. No permission API override, browser-policy change, blind click or capture
-of the operator's desktop was used. This is a bounded open gate, not completion
-of the notification feature or the full product; independent work continues.
+Real Edge checks establish default-off display, refusal without browser permission
+and no backend opt-in after refusal. Actual OS notification acceptance/display
+remains **unqualified**; mocks and refusal tests do not establish it. No permission
+override is implied. Final product evidence: [verification record](progress.md).

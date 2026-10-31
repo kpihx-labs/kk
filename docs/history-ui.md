@@ -75,5 +75,5 @@ refusal without confirmation, wrong-recipient refusal and existing-key unlock.
 paging and stale/error handling with mocks. Neither is a configured-browser GUI
 qualification; that remains a separate operator-owned gate.
 
-Backend details: [CLI](history-cli.md), [runtime](history-runtime.md),
-[key lifecycle](history-keys.md), [store](history-store.md).
+Backend details, record/storage guarantees and key lifecycle:
+[history runtime](history-runtime.md). Terminal controls: [CLI](history-cli.md).

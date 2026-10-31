@@ -55,13 +55,12 @@ and is not an audio option. See each subcommand's `--help` for source selectors.
 [Central media limits](../src/config.rs) are authoritative. The budget is per
 room, per local endpoint, not a hardware-independent participant claim:
 
-| Budget | Equation | Current value |
-| --- | --- | --- |
-| Remote members | `ROOM_MAX_MEMBERS - 1` | 7 |
-| Source kinds per peer | `MEDIA_SOURCE_KINDS` (audio, camera, screen) | 3 |
-| Incoming tracks and subscriptions | `MEDIA_MAX_STREAMS = (ROOM_MAX_MEMBERS - 1) * MEDIA_SOURCE_KINDS` | 21 each |
-| Local publications | `MEDIA_MAX_PUBLICATIONS = MEDIA_SOURCE_KINDS` | 3 |
-| Combined session reservations | `MEDIA_MAX_USERS = MEDIA_MAX_STREAMS + MEDIA_MAX_PUBLICATIONS` | 24 |
+| Budget | Code authority |
+| --- | --- |
+| Incoming tracks/subscriptions | `MEDIA_MAX_STREAMS`, derived from remote members and source kinds |
+| Local publications | `MEDIA_MAX_PUBLICATIONS`, separate from incoming reservations |
+| Combined sessions | `MEDIA_MAX_USERS` |
+| Queued RTP payload | `MEDIA_MAX_STREAMS * MEDIA_PACKET_QUEUE * MEDIA_PACKET_BYTES` |
 
 Local publication reservations cannot consume the incoming reservation budget,
 or vice versa. Each receiver explicitly subscribes to an exact peer and kind;
@@ -70,21 +69,14 @@ offer, including the same track ID on a different connection, is rejected before
 it can replace an established source. Colliding IDs and RTP SSRCs from different
 peers remain isolated. Capacity does not grant consent or start capture.
 
-The hub's aggregate queued RTP payload bound is
-`MEDIA_MAX_STREAMS * MEDIA_PACKET_QUEUE * MEDIA_PACKET_BYTES`:
-`21 * 8 * 1024 = 172032 bytes` (168 KiB, 168 packets) per endpoint per room.
-Across a full eight-endpoint room this is at most 1376256 bytes (1344 KiB,
-1344 packets) of hub-queued RTP payload. These calculations exclude queue/track
-metadata, allocator overhead, transport buffers, encoded-frame assembly and
-native/browser decoder resources; they are not total process memory limits.
-The independent QUIC buffer remains `MEDIA_DATAGRAM_BUFFER_BYTES` (66560 bytes
-per configured send/receive buffer), not a multiplied or unbounded queue.
-Packets remain capped at 1024 RTP bytes, encoded frames at 256 KiB and queue
-age at 250 ms. Full queues drop packets without waiting on a consumer; policy
-refresh, consent expiry, source idle timeout and bounded session lifetime remain.
+Queued-payload bounds exclude track metadata, allocator overhead, independent
+QUIC buffers, encoded-frame assembly and decoder resources; they are not total
+process-memory limits. Packet/frame sizes and queue age remain code-owned. Full
+queues drop packets rather than waiting; consent expiry, policy refresh, idle
+timeout and bounded session lifetime still apply.
 
-Deterministic hub regressions fill all seven real remote peers' three kind slots
-and all queues, reserve three local publications, and verify excess/duplicate
+Deterministic hub regressions fill remote kind slots and queues, reserve local
+publications, and verify excess/duplicate
 rejection and source isolation. A separate actual three-peer loopback QUIC test
 publishes all three synthetic kinds from every peer, receives six tracks at each
 peer concurrently and completes a control RPC during media traffic. Its policy

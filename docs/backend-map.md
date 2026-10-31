@@ -54,7 +54,7 @@ An unavailable platform capability is explicit, not a successful empty operation
 | Messages/history | Exact authenticated room/author/epoch/wire references and typed relations belong to the MLS/transaction owner; no UI-authored identities, text-equality identity, magic JSON or direct database reads |
 | Delivery | Preparation, committed membership/control, per-recipient queue acknowledgement, durable storage, playback, completed shutdown and human reading are distinct outcomes; partial results remain explicit |
 | File/replica operations | Exact peer/content/audience binding, explicit live consent, cancellation barrier and no-replace publication remain at the backend owner |
-| Transfer jobs | HTTP upload/forward opt into the existing foreground-owned start commands; GET list/status and POST cancel are guarded by the same session/origin policy. The UI polls only its exact owner ID, fences retired views and never equates source counters, admission or cancellation requests with a storage receipt. Closing a view does not cancel work; restart retires job IDs |
+| Transfer jobs | HTTP upload/forward use foreground-owned commands and guarded status/cancel routes. Fence retired views and exact owner IDs; counters/admission/cancel requests are not receipts. Closing a view does not cancel work; durable terminal inspection does not restart active work |
 | Invitation clipboard | Copy/Paste happen only through explicit UI controls; stale operation/profile/dialog/input responses cannot copy or replace edits. Native clipboard permissions remain browser-owned. Clipboard data never enters diagnostics, and pending permission or pasted JSON is not pairing approval |
 | Media | Source selection stays local; publication/subscription leases bind room, epoch, peer and kind; adapters cannot silently start or replace capture |
 | Async UI/media | Bound concurrent work and invalidate retired room/dialog/permission generations; late callbacks cannot revive capture, consent or a closed workflow |
@@ -65,3 +65,16 @@ An unavailable platform capability is explicit, not a successful empty operation
 Cross-owner changes start with the requested signature or schema delta and its
 failure/cancellation meaning. Owners retain their module knowledge across layers;
 the coordinator reviews the changed boundary rather than rediscovering the tree.
+
+## Contribution And Test Isolation
+
+Module handoffs: [ownership](workstreams.md). Build/package gates:
+[distribution](distribution.md). History transactions and key/record ownership:
+[history runtime](history-runtime.md). Do not copy a backend index into an adapter.
+
+Physical socket/file-lock release fixtures must distinguish a logical owner from
+inherited descriptions: `CLOEXEC` closes at exec, not fork. Where unrelated
+concurrent child fixtures can retain descriptions, create the resource in an exact
+post-exec child case. Keep the mandatory parent wrapper, original assertions and
+outer kill/reap deadline; do not replace failures with retries or wider deadlines.
+This test-isolation pattern is not a new production resource-release guarantee.

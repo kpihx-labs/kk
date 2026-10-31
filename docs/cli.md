@@ -3,6 +3,7 @@
 Use `kk COMMAND --help` for every supported flag. These examples use one private
 profile per device; add global `--profile PRIVATE_DIR` for an explicit path or
 `--profile-name ID` for a registered profile. These options are mutually exclusive.
+For the browser or a different task, use the [documentation guide](index.md).
 
 Examples use placeholders: replace `LOCAL_IP`/`OTHER_IP` with each device's actual
 LAN IP, and `PRIVATE_DIR` with an existing owned directory of mode 0700. Peer
@@ -113,3 +114,7 @@ transport is already encrypted. There is no `--message` or `listen` command.
 
 Delivery reports distinguish per-peer success, refusal and uncertainty. Do not
 blindly retry an uncertain send. See the [contract](../CONTRACT.md).
+
+Continue by need: [room roles](moderation.md), [local history](history-cli.md),
+[room copies](replicas.md), [media](media.md), [notifications](notifications.md),
+or return to the [complete documentation map](index.md).

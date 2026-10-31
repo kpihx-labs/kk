@@ -546,7 +546,8 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(Path(report["zip_archive"]).name, stem + ".zip")
                 tar_entries = release.archive_entries(Path(report["archive"]))
                 self.assertEqual(tar_entries, release.archive_entries(Path(report["zip_archive"])))
-                self.assertIn(stem + "/licenses/fixture/LICENSE", tar_entries[0])
+                self.assertIn(stem + "/THIRD-PARTY-NOTICES.txt", tar_entries[0])
+                self.assertNotIn(stem + "/licenses/fixture/LICENSE", tar_entries[0])
                 sums = (destination / (stem + ".sha256")).read_text().splitlines()
                 self.assertEqual(len(sums), 8)
                 self.assertEqual([Path(path).name for path in report["bootstrap_entrypoints"]],
@@ -571,9 +572,11 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(record["files"]["licenses/fixture/LICENSE"], "fixture notice")
                 self.assertEqual(record["files"]["LICENSE"], "fixture LICENSE")
                 self.assertEqual(json.loads(record["files"]["THIRD-PARTY.json"])[0]["name"], "fixture")
-                self.assertEqual({name: text.encode("utf-8") for name, text in record["files"].items()},
-                                 {name.removeprefix(stem + "/"): data for name, data in tar_entries[0].items()
-                                  if name != stem + "/kk"})
+                archive_files = {name.removeprefix(stem + "/"): data for name, data in tar_entries[0].items()}
+                for name in ("LICENSE", "README.md", "build-manifest.json"):
+                    self.assertEqual(record["files"][name].encode(), archive_files[name])
+                self.assertIn(b"fixture notice", archive_files["THIRD-PARTY-NOTICES.txt"])
+                self.assertNotIn("licenses/fixture/LICENSE", archive_files)
                 for line in sums:
                     checksum, name = line.split("  ")
                     self.assertEqual(checksum, release.digest((destination / name).read_bytes()))
@@ -674,10 +677,37 @@ class ReleaseTests(unittest.TestCase):
                 record = json.loads(Path(report["bootstrap_notices"]).read_bytes())
                 self.assertEqual(record["helper"]["sha256"], sums[Path(report["bootstrap_helper"]).name])
                 entries, prefix = release.archive_entries(Path(report["archive"]))
-                self.assertEqual({name: text.encode("utf-8") for name, text in record["files"].items()},
-                                 {name.removeprefix(prefix + "/"): data for name, data in entries.items()
-                                  if name != prefix + "/kk"})
+                archive_files = {name.removeprefix(prefix + "/"): data for name, data in entries.items()}
                 self.assertEqual(record["files"]["licenses/fixture/LICENSE"], "Exact upstream author notice\n")
+                self.assertIn(b"Exact upstream author notice", archive_files["THIRD-PARTY-NOTICES.txt"])
+                self.assertNotIn("licenses/fixture/LICENSE", archive_files)
+
+    def test_user_archive_is_standalone_and_excludes_developer_files(self):
+        with self.bundle_fixture() as (target, destination, _):
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                release.bundle(target, destination)
+            report = json.loads(output.getvalue())
+            for key in ("archive", "zip_archive"):
+                entries, prefix = release.archive_entries(Path(report[key]))
+                files = {name.removeprefix(prefix + "/"): data for name, data in entries.items()}
+                self.assertEqual(set(files), {"kk", "README.md", "LICENSE", "THIRD-PARTY.json",
+                                              "THIRD-PARTY-NOTICES.txt", "build-manifest.json"})
+                inventory = json.loads(files["THIRD-PARTY.json"])
+                self.assertEqual(inventory["notice_file"], "THIRD-PARTY-NOTICES.txt")
+                self.assertEqual(inventory["packages"][0]["notices"], [{
+                    "source": "licenses/fixture/LICENSE",
+                    "sha256": release.digest(b"Exact upstream author notice\n"),
+                }])
+                self.assertIn(b"Exact upstream author notice", files["THIRD-PARTY-NOTICES.txt"])
+                readme = files["README.md"].decode()
+                for instruction in ("./kk ui", "Ctrl-C", "./kk --help", "glibc", "Sigstore", "Profiles"):
+                    self.assertIn(instruction, readme)
+                self.assertNotEqual(files["README.md"], b"fixture README.md")
+                manifest = json.loads(files["build-manifest.json"])
+                self.assertEqual(manifest["files"], {name: release.digest(data) for name, data in files.items()
+                                                     if name != "build-manifest.json"})
+                self.assertEqual(json.loads(Path(report["archive"]).with_name(
+                    Path(report["archive"]).name.removesuffix(".tar.gz") + ".build.json").read_bytes()), manifest)
 
     def test_public_bundle_retry_after_private_bootstrap_failure(self):
         for failure in ("write", "link"):
