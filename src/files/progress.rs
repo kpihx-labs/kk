@@ -1,7 +1,10 @@
 //! One transfer's bounded observation and owner-acknowledged cancellation.
 //! No task registry, file paths, identities, retries or budget authority live here.
+#[cfg(unix)]
 use super::Receipt;
+#[cfg(unix)]
 use crate::{Error, Result};
+#[cfg(unix)]
 use std::{future::Future, pin::Pin};
 use tokio::sync::watch;
 
@@ -43,11 +46,13 @@ pub(crate) struct TransferProgress {
 }
 
 #[derive(Clone)]
+#[cfg(unix)]
 pub(crate) struct TransferControl {
     cancel: watch::Sender<bool>,
     progress: watch::Receiver<TransferProgress>,
 }
 
+#[cfg(unix)]
 impl TransferControl {
     /// Idempotent request only. Await a terminal snapshot for acknowledgement.
     pub fn cancel(&self) {
@@ -61,6 +66,7 @@ impl TransferControl {
 
 /// Only the owning future decides the terminal outcome; stream hooks can publish
 /// nonterminal observations but cannot manufacture a verified receipt.
+#[cfg(unix)]
 pub(crate) struct TransferContext {
     cancel: watch::Receiver<bool>,
     observer: TransferObserver,
@@ -69,6 +75,7 @@ pub(crate) struct TransferContext {
 #[derive(Clone)]
 pub(crate) struct TransferObserver(watch::Sender<TransferProgress>);
 
+#[cfg(unix)]
 pub(crate) enum TransferOutcome {
     Completed(Receipt),
     Cancelled,
@@ -76,6 +83,7 @@ pub(crate) enum TransferOutcome {
     Failed(Error),
 }
 
+#[cfg(unix)]
 impl TransferOutcome {
     pub fn into_result(self) -> Result<Receipt> {
         match self {
@@ -86,6 +94,7 @@ impl TransferOutcome {
     }
 }
 
+#[cfg(unix)]
 pub(crate) fn transfer_control() -> (TransferControl, TransferContext) {
     let (progress, receiver) = watch::channel(TransferProgress {
         phase: TransferPhase::Preparing,
@@ -160,6 +169,7 @@ impl TransferObserver {
         self.update(|progress| progress.phase = phase);
     }
 
+    #[cfg(unix)]
     fn finish(&self, error: Option<&Error>) {
         self.update(|progress| {
             progress.error = error.map(Error::code);
@@ -175,16 +185,19 @@ impl TransferObserver {
 
 // Fields drop in declaration order: the owned transfer (including stream/store
 // cancellation guards) is dropped before a terminal cancellation is observable.
+#[cfg(unix)]
 struct Running<F> {
     future: Pin<Box<F>>,
     guard: RunGuard,
 }
 
+#[cfg(unix)]
 struct RunGuard {
     observer: TransferObserver,
     armed: bool,
 }
 
+#[cfg(unix)]
 impl Drop for RunGuard {
     fn drop(&mut self) {
         if self.armed {
@@ -193,6 +206,7 @@ impl Drop for RunGuard {
     }
 }
 
+#[cfg(unix)]
 impl TransferContext {
     pub fn observer(&self) -> TransferObserver {
         self.observer.clone()
@@ -234,6 +248,7 @@ impl TransferContext {
     }
 }
 
+#[cfg(unix)]
 async fn cancelled(requested: &mut watch::Receiver<bool>) {
     loop {
         if *requested.borrow_and_update() {
@@ -246,7 +261,7 @@ async fn cancelled(requested: &mut watch::Receiver<bool>) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use crate::files::FileInfo;

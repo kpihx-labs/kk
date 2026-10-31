@@ -23,10 +23,13 @@ use storage::Store;
 pub(crate) const ALPN: &[u8] = b"kk-file/2";
 mod inbox;
 pub(crate) mod progress;
+#[cfg(unix)]
 mod received;
+#[cfg(unix)]
 mod source;
 pub(crate) mod stream;
 pub(crate) use inbox::Inbox;
+#[cfg(unix)]
 pub(crate) use received::{ReceivedInventory, delete_received, open_received, received_inventory};
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -38,6 +41,7 @@ pub struct FileInfo {
 
 /// A content-verified, read-only inbox descriptor. Stream this handle rather
 /// than reopening its pathname and discarding the verified inode binding.
+#[cfg(unix)]
 pub(crate) struct ReceivedFile {
     pub info: FileInfo,
     file: File,
@@ -45,6 +49,7 @@ pub(crate) struct ReceivedFile {
 
 /// Owned descriptor for a foreground send. Received sources keep their verified
 /// expected hash; selected-path sources are inspected on this descriptor later.
+#[cfg(unix)]
 pub(crate) struct SendSource {
     file: File,
     expected: Option<FileInfo>,

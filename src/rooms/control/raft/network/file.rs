@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 pub(super) struct Consent {
     configured: Option<(PathBuf, u64, u64, Arc<Inbox>)>,
     // A read-only startup binding, independent of receive grants/accounting.
+    #[cfg(unix)]
     received_root: Option<(PathBuf, u64)>,
     pub(super) active: Option<Arc<Grant>>,
 }
@@ -129,6 +130,7 @@ impl Drop for Consent {
 impl Factory {
     /// Bind an existing profile/room-owned source inbox without creating it or
     /// enabling reception. Never expose this server-path API through file IPC.
+    #[cfg(unix)]
     pub(crate) fn bind_received_root(&self, directory: PathBuf, max_bytes: u64) -> Result<bool> {
         if max_bytes > config::MAX_FILE_BYTES {
             return Err(Error::FileTooLarge);
@@ -258,6 +260,7 @@ impl Factory {
     /// Forward only a completed object in the inbox already owned by this room
     /// runtime. Withdrawing receive consent leaves existing copies available for
     /// explicit, freshly authorized outgoing sends; it never enables reception.
+    #[cfg(unix)]
     pub(crate) async fn room_file_received(
         &self,
         target: PeerId,
@@ -273,6 +276,7 @@ impl Factory {
         .await
     }
 
+    #[cfg(unix)]
     pub(crate) async fn open_room_received(
         &self,
         id: &str,
@@ -290,11 +294,13 @@ impl Factory {
             .map_err(|_| Error::Timeout)?
     }
 
+    #[cfg(unix)]
     async fn received_file(&self, id: &str, deadline: Duration) -> Result<files::ReceivedFile> {
         let (directory, maximum) = self.received_root()?;
         files::open_received(&directory, id, maximum, deadline).await
     }
 
+    #[cfg(unix)]
     pub(crate) async fn received_files(
         &self,
         deadline: Duration,
@@ -303,6 +309,7 @@ impl Factory {
         files::received_inventory(&directory, deadline).await
     }
 
+    #[cfg(unix)]
     pub(crate) async fn delete_received(
         &self,
         id: &str,
@@ -322,6 +329,7 @@ impl Factory {
         files::delete_received(&directory, id, confirm, deadline, lease).await
     }
 
+    #[cfg(unix)]
     fn received_root(&self) -> Result<(PathBuf, u64)> {
         let consent = self.shared.room_files.read().map_err(|_| Error::Protocol)?;
         if let Some((directory, maximum)) = &consent.received_root {
@@ -335,6 +343,7 @@ impl Factory {
         }
     }
 
+    #[cfg(unix)]
     pub(crate) async fn room_file_source_monitored(
         &self,
         target: PeerId,

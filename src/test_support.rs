@@ -2,13 +2,17 @@
 //! Never changes process-global umask or production path validation.
 
 pub(crate) fn tempdir() -> std::io::Result<tempfile::TempDir> {
-    let mut builder = tempfile::Builder::new();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
+        let mut builder = tempfile::Builder::new();
         builder.permissions(std::fs::Permissions::from_mode(0o700));
+        builder.tempdir()
     }
-    builder.tempdir()
+    #[cfg(not(unix))]
+    {
+        tempfile::Builder::new().tempdir()
+    }
 }
 
 #[cfg(unix)]

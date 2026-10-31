@@ -232,11 +232,11 @@ impl Drop for Cancel {
             .child
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(mut child) = owned.take() {
-            if !matches!(child.try_wait(), Ok(Some(_))) {
-                let _ = child.kill(); // Owned process handle, never a recycled PID.
-                let _ = child.wait();
-            }
+        if let Some(mut child) = owned.take()
+            && !matches!(child.try_wait(), Ok(Some(_)))
+        {
+            let _ = child.kill(); // Owned process handle, never a recycled PID.
+            let _ = child.wait();
         }
     }
 }

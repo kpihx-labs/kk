@@ -279,7 +279,7 @@ pub(crate) async fn synthetic_packets(codec: Codec) -> Vec<Packet> {
     packets
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) async fn decode_synthetic_packets(codec: Codec, packets: &[Packet]) {
     let mut args = playback(codec, false);
     args.pop();
