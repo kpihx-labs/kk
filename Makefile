@@ -102,8 +102,8 @@ install: build ## Immutable per-version user binary; refuse unrelated kk executa
 tag-release: ## Annotate the package version at clean HEAD; existing tags are never moved
 	uv run --no-project scripts/release.py tag
 
-publish-tag: ## Publish only this version tag to both required SSH remotes
-	uv run --no-project scripts/release.py push-tag
+publish-tag: ## Publish only this version tag to the selected SSH remotes
+	uv run --no-project scripts/release.py push-tag --remotes $(PUSH_REMOTES)
 
 ui-check: ## Offline browser-adapter syntax and standard RTP unit tests
 	node --check src/ui/assets/app.js

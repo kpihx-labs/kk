@@ -605,18 +605,20 @@ def install_binary(binary, prefix, version):
     return link
 
 
-def release_tag(push=False):
+def release_tag(push=False, remotes=("github", "gitlab")):
     version = tomllib.loads((ROOT / "Cargo.toml").read_text())["package"]["version"]
     tag = "v" + version
+    if push and (not remotes or any(remote not in {"github", "gitlab"} for remote in remotes)):
+        raise ValueError("Release publication requires selected authorized remotes")
     if command("git", "status", "--porcelain"):
         raise ValueError("Release tags require a clean committed tree")
     if push:
         if command("git", "rev-list", "-n", "1", tag) != command("git", "rev-parse", "HEAD"):
             raise ValueError("Release tag does not identify this exact committed source")
-        for remote in ["github", "gitlab"]:
+        for remote in remotes:
             if not command("git", "remote", "get-url", remote).startswith("git@"):
-                raise ValueError("Release publication requires both SSH remotes")
-        for remote in ["github", "gitlab"]:
+                raise ValueError("Release publication requires SSH remotes")
+        for remote in remotes:
             subprocess.run(["git", "push", remote, "refs/tags/" + tag], cwd=ROOT, check=True)
     else:
         subprocess.run(["git", "tag", "-a", tag, "-m", "K&K " + version], cwd=ROOT, check=True)
@@ -639,7 +641,8 @@ def main():
     local = actions.add_parser("install")
     local.add_argument("--prefix", type=Path, default=Path.home() / ".local")
     actions.add_parser("tag")
-    actions.add_parser("push-tag")
+    push_tag = actions.add_parser("push-tag")
+    push_tag.add_argument("--remotes", nargs="+", default=["github", "gitlab"])
     args = parser.parse_args()
     if args.action == "bundle":
         bundle(args.target, args.output)
@@ -654,7 +657,7 @@ def main():
             raise ValueError("Local binary differs from the selected package version")
         print(install_binary(binary, args.prefix, version))
     elif args.action in {"tag", "push-tag"}:
-        release_tag(push=args.action == "push-tag")
+        release_tag(push=args.action == "push-tag", remotes=getattr(args, "remotes", ("github", "gitlab")))
     else:
         notices, _ = licenses()
         text = json.dumps(notices, indent=2) + "\n"

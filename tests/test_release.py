@@ -165,6 +165,27 @@ class OverrideProvenanceTests(unittest.TestCase):
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_release_tag_pushes_only_selected_authorized_ssh_remotes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Cargo.toml").write_text('[package]\nversion="1.2.3"\n')
+            answers = {
+                ("git", "status", "--porcelain"): "",
+                ("git", "rev-list", "-n", "1", "v1.2.3"): "commit",
+                ("git", "rev-parse", "HEAD"): "commit",
+                ("git", "remote", "get-url", "github"): "git@github.com:kpihx-labs/kk.git",
+            }
+            with mock.patch.object(release, "ROOT", root), mock.patch.object(
+                release, "command", side_effect=lambda *args: answers[args]
+            ), mock.patch.object(release.subprocess, "run") as run:
+                release.release_tag(push=True, remotes=["github"])
+            run.assert_called_once_with(
+                ["git", "push", "github", "refs/tags/v1.2.3"], cwd=root, check=True
+            )
+
+        with self.assertRaisesRegex(ValueError, "selected authorized remotes"):
+            release.release_tag(push=True, remotes=["origin"])
+
     def test_imported_primitive_changes_are_rejected_before_packaging(self):
         release.check_override_sources()
         with tempfile.TemporaryDirectory() as directory:
