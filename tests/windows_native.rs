@@ -50,7 +50,7 @@ fn stdio_child(mode: &str) -> ! {
             } else {
                 match tokio::time::timeout(
                     Duration::from_secs(5),
-                    kk::input::text(Some("-".into()), false),
+                    kk::input::text(Some("-"), false),
                 )
                 .await
                 {
