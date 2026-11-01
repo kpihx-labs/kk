@@ -1,6 +1,6 @@
 [package]
 name = "kk"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2024"
 description = "Local-first communication primitives between trusted devices"
 repository = "https://github.com/kpihx-labs/kk"

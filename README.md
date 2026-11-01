@@ -5,7 +5,7 @@ Send someone a document -> Open a room -> Exchange text + files -> Talk or show
                           your devices, no mandatory cloud account or host
 ```
 
-## Install 1.0.1
+## Install 1.0.2
 
 **Linux x86_64 / aarch64**: choose either fetcher; both select the latest stable release.
 

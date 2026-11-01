@@ -1,7 +1,7 @@
 # Portable Prebuilt Installer Boundary
 
 ## Status
-For an ordinary Linux install, start with the [README](../README.md#install-101).
+For an ordinary Linux install, start with the [README](../README.md#install-102).
 No version means the latest stable release, whether fetched by `curl` or `gh`:
 
 ```sh

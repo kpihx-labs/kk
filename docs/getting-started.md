@@ -1,6 +1,6 @@
 # From a first conversation to everyday use
 
-**Start here:** [install and open your first room](../README.md#install-101), then [exchange a message and a reply](../README.md#first-shared-success-a-message-and-a-reply). All choices below are optional continuations of that working exchange.
+**Start here:** [install and open your first room](../README.md#install-102), then [exchange a message and a reply](../README.md#first-shared-success-a-message-and-a-reply). All choices below are optional continuations of that working exchange.
 
 Choose one interface for the first success: follow the README's browser path, or
 use the [same room journey in the terminal](cli.md#rooms). Both use the same

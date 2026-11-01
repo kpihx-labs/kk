@@ -1,28 +1,27 @@
 # Delivery State
 
-K&K **1.0.1 is delivered**. The immutable 1.0.0 assets remain historical evidence;
-1.0.1 keeps product behavior unchanged and repairs the public entry point with
-latest-stable `curl` and `gh` paths plus an explicit redirect regression.
+K&K **1.0.2 is the active correction candidate**. The immutable 1.0.1 release remains
+the latest stable evidence until the exact 1.0.2 bytes pass local, hosted and public-install gates.
 
 ```text
-1.0.1 stable release
+1.0.2 correction candidate
     |
-    +-- user journey + compact archive + simple installer   DONE
+    +-- remove permanent read-only publication banner       DONE
     |
     +-- project + SDK + workflow gates                      DONE
-    +-- native hosted checks                                DONE
+    +-- native hosted checks                                PENDING
     |
-    +-- exact archive install / update / rollback            DONE
+    +-- exact archive install / update / rollback            PENDING
     |
-    `-- signed 1.0.1 GitHub release                         DONE
+    `-- signed 1.0.2 GitHub release                         PENDING
 ```
 
 ## Current Batch
 
 | Area | State | Exit condition |
 | --- | --- | --- |
-| Product behavior | Local project/SDK/workflow gates and hosted Linux/native matrices pass | Bound to commit `00abf2299e603f04cc97756f5802941b23670a61` |
-| Version | `1.0.1` in Cargo metadata, lockfile, license and immutable tag | Public stable release resolves to these exact bytes |
+| Product behavior | Local project/SDK/workflow gates pass; hosted matrices pending | Bind the correction to one immutable commit |
+| Version | `1.0.2` in Cargo metadata, lockfile and license | Public stable release must resolve to the same version |
 | First use | Progressive README and getting-started path complete | Six-file archive opens directly to the same journey |
 | Connected install | Public versionless `curl` and `gh` latest paths install 1.0.1 | Installed SHA-256 matches the attested helper |
 | Portable archive | Six standalone files; notices deduplicated by digest | TAR/ZIP checksums, manifests and Sigstore attestations pass |

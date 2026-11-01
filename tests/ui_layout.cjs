@@ -75,6 +75,7 @@ test("source defines viewport containment and preserves pending operation action
   assert.match(js, /terminalStates\.includes\(operation\.state\)/);
   assert.match(js, /event\.key === "Escape"/);
   assert.match(js, /sidebar_mode:mode/);
+  assert.doesNotMatch(js, /Publishing unavailable\. Local drafts are kept; no automatic retry or new upload admission\./);
 });
 
 test("collapsed panels conserve chat space and mobile keeps the profile name", () => {

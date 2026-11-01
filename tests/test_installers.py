@@ -505,7 +505,7 @@ class SimpleInstallerTests(unittest.TestCase):
             (self.tools / name).unlink()
         self.fixtures = self.directory / "fixtures"
         self.fixtures.mkdir()
-        self.stem = "kk-v1.0.1-linux-x86_64"
+        self.stem = "kk-v1.0.2-linux-x86_64"
         self.binary = self.fixtures / (self.stem + "-bootstrap.bin")
         self.binary.write_bytes(b"must never execute this fixture binary")
         self.notices = self.fixtures / (self.stem + "-bootstrap-notices.json")

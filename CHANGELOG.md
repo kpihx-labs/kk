@@ -1,14 +1,14 @@
 # Changelog
 This records changes, not live delivery status. See [TODO.md](TODO.md) for the current state and Git history for detailed implementation checkpoints.
+## 1.0.2 - 2026-11-01
+- Keep read-only and inactive room drafts editable without displaying a permanent publication-error banner; contextual refusals still appear when an action is attempted.
 ## 1.0.1 - 2026-11-01
 - Follow the GitHub release redirect in the simple one-line installer while restricting every redirect to HTTPS; guard the published command so an empty 302 response cannot be mistaken for an installation.
 ## 1.0.0 - 2026-11-01
-
 - Deliver the first community release: progressive first-use journeys, one-line Linux installation, standalone six-file archives with deduplicated notices, current reference guides and a clean rebuild from source. Historical prerelease assets remain immutable.
 - The tag and assets remain immutable; the documented one-line fetch omitted redirect following and is superseded by 1.0.1.
 
 ## 0.9.0-dev.2 - Unreleased Verification Checkpoint
-
 - Add bounded typed room replies and authored reaction add/remove under a distinct MLS context, exact-audience capability negotiation, transactional encrypted history relations and CLI/UI controls; preserve legacy text, sensitive exclusion and per-recipient outcome semantics. Keep buffered reaction counts distinct from durable history restoration.
 - Make live message scrolling immediate so newly appended reply/reaction controls do not depend on an animation completing before interaction; retain independent overflow scrolling and cold-restart browser evidence.
 - Derive advisory UI action availability and invitation-role choices from verified private membership, fail closed on missing/inactive capabilities, and fence stale moderation forms; distinguish committed moderation results from preparation, reject denied Send before recording outgoing events, and require explicit all-recipient acknowledgement for delivery labels. Actual HTTP vote retirement/removal checks preserve the device identity and received data; backend authorization remains unchanged.

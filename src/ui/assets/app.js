@@ -721,7 +721,7 @@ function render() {
   if (target) {
     const namesError = target.presentation_error || target.status?.profile_names_error;
     $("room-title").textContent = target.title || target.name; $("room-id").textContent = target.id || "Unavailable";
-    $("room-problem").textContent = [target.problem, namesError ? "Member names unavailable: " + namesError : "", !roomActionAllowed(target, "publish") ? "Publishing unavailable. Local drafts are kept; no automatic retry or new upload admission." : ""].filter(Boolean).join(" / "); $("room-problem").hidden = !$("room-problem").textContent;
+    $("room-problem").textContent = [target.problem, namesError ? "Member names unavailable: " + namesError : ""].filter(Boolean).join(" / "); $("room-problem").hidden = !$("room-problem").textContent;
     $("room-state").textContent = !localAvailable ? "LOCAL UNAVAILABLE / STATUS STALE" : target.status ? (target.status.active ? "FOREGROUND / ONLINE" : "ACCESS INACTIVE / CACHED STATE") : (current.phases[target.name]?.state || "OFFLINE").toUpperCase();
     $("start").hidden = Boolean(target.status); $("stop").hidden = !target.status; $("leave").hidden = !target.status?.active; $("room-history").disabled = !target.status; $("invite").disabled = !admissionRoles(target).length; $("controllers").disabled = !roomActionAllowed(target, "control"); $("find-copies").disabled = !target.status; $("share-media").disabled = !roomActionAllowed(target, "publish") || !mediaControl; $("receive-media").disabled = !target.status || !mediaControl;
     for (const id of ["start", "stop", "address", "theme", "profiles", "initialize"]) $(id).disabled = !localAvailable;

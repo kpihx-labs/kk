@@ -1,8 +1,8 @@
 # Verification Record
 
-The current tree is the delivered **1.0.1 stable release**. [TODO.md](../TODO.md)
-owns the closure evidence. Earlier records remain useful baseline evidence, but
-they do not automatically qualify later changed bytes.
+The current tree is the **1.0.2 correction candidate**. [TODO.md](../TODO.md) owns
+its live state. The delivered 1.0.1 record remains baseline evidence, but it does
+not automatically qualify these changed UI bytes.
 
 ```text
 source tests -> actual UI/native execution -> signed artifact -> install/rollback
