@@ -1,8 +1,8 @@
 # Verification Record
 
-The current tree is the **1.0.2 correction candidate**. [TODO.md](../TODO.md) owns
-its live state. The delivered 1.0.1 record remains baseline evidence, but it does
-not automatically qualify these changed UI bytes.
+The current tree is the delivered **1.0.2 stable release**. [TODO.md](../TODO.md)
+owns the closure evidence. Earlier records remain useful baseline evidence, but
+they do not automatically qualify later changed bytes.
 
 ```text
 source tests -> actual UI/native execution -> signed artifact -> install/rollback
@@ -14,10 +14,10 @@ source tests -> actual UI/native execution -> signed artifact -> install/rollbac
 
 | Need | Action | Accepted result |
 | --- | --- | --- |
-| Integrate the patch | Freeze source, run product/SDK/workflow gates | All three local gates pass on `00abf2299e603f04cc97756f5802941b23670a61` |
+| Integrate the patch | Freeze source, run product/SDK/workflow gates | All three local gates pass on `ff7b85284b52ce2a5dbf850c3796be3f610f9ef8` |
 | Bind native behavior | Run Linux, Windows and both macOS hosted jobs | Tagged Verify and Native workflows pass |
 | Deliver final bytes | Build/attest artifacts, replay install/update/rollback | Installed bytes match authenticated subjects |
-| Publish | Promote unchanged draft and test latest defaults | Public `curl` and `gh` paths install 1.0.1 |
+| Publish | Promote unchanged draft and test latest defaults | Public `curl` and `gh` paths install 1.0.2 |
 
 No new product/platform/artifact gate is claimed by this documentation cleanup.
 
