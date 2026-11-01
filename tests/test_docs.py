@@ -87,6 +87,19 @@ class DocumentationTests(unittest.TestCase):
                     self.assertNotRegex(block, r"\bkk\s+file\s+(?:send|receive)\b")
                     self.assertNotIn("--message", block)
 
+    def test_public_installer_commands_follow_https_redirects(self):
+        owners = (ROOT / "README.md", ROOT / "scripts/install.sh", ROOT / "scripts/release.py")
+        for path in owners:
+            text = path.read_text()
+            commands = [line for line in text.splitlines() if "releases/latest/download/install.sh" in line and "| sh" in line]
+            with self.subTest(owner=path.relative_to(ROOT)):
+                self.assertTrue(commands)
+                for command in commands:
+                    self.assertIn("--proto-redir", command)
+                    self.assertRegex(command, r"(?:\s-L\s|-[A-Za-z]*L[A-Za-z]*\s|--location\s)")
+                self.assertIn("gh release download --repo kpihx-labs/kk", text)
+                self.assertIn("--output install.sh", text)
+
 
 if __name__ == "__main__":
     unittest.main()

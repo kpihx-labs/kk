@@ -5,16 +5,17 @@ Send someone a document -> Open a room -> Exchange text + files -> Talk or show
                           your devices, no mandatory cloud account or host
 ```
 
-## Install 1.0.0
+## Install 1.0.1
 
-**Linux x86_64 / aarch64**, with `curl` and `sha256sum` available:
+**Linux x86_64 / aarch64**: choose either fetcher; both select the latest stable release.
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsS https://github.com/kpihx-labs/kk/releases/download/v1.0.0/install.sh | sh
+curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL https://github.com/kpihx-labs/kk/releases/latest/download/install.sh | sh
+# or: gh release download --repo kpihx-labs/kk --pattern install.sh --output install.sh && sh install.sh
 "$HOME/.local/bin/kk" ui
 ```
 
-Installs for your user without sudo, services or PATH changes; refuses to replace an existing `kk`. This simple path checks HTTPS release checksums, not Sigstore provenance; explicit version/commit verification is a separate [advanced installation path](https://github.com/kpihx-labs/kk/blob/main/docs/installers.md).
+Installs for your user without sudo, services or PATH changes; refuses to replace an existing `kk`. Add a tag to the `gh` command or download a tagged script when you need a fixed version. This simple path checks HTTPS release checksums, not Sigstore provenance; explicit version/commit verification is a separate [advanced installation path](https://github.com/kpihx-labs/kk/blob/main/docs/installers.md).
 
 **Already have the binary archive?** Open a terminal in its extracted directory:
 

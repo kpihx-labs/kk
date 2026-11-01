@@ -5,8 +5,9 @@ set -eu
 fail() { printf '%s\n' "kk installer: $*" >&2; exit 1; }
 usage() {
     printf '%s\n' \
-        'Simple Linux: curl --proto "=https" --tlsv1.2 -fsS https://github.com/kpihx-labs/kk/releases/download/v1.0.0/install.sh | sh' \
-        'No arguments installs stable 1.0.0; --version VERSION and --prefix PATH are optional.' \
+        'Simple Linux: curl --proto "=https" --proto-redir "=https" --tlsv1.2 -fsSL https://github.com/kpihx-labs/kk/releases/latest/download/install.sh | sh' \
+        'Or: gh release download --repo kpihx-labs/kk --pattern install.sh --output install.sh && sh install.sh' \
+        'No arguments installs stable 1.0.1; --version VERSION and --prefix PATH are optional.' \
         'Simple mode needs curl and sha256sum, not gh/jq; it verifies HTTPS release checksums,' \
         'not Sigstore provenance. No sudo, services, profile changes or downloaded-code execution.' \
         'Supplying --commit selects advanced verification (no automatic fallback):' \
@@ -24,7 +25,7 @@ usage() {
         'Local archives must pass the same provenance/content gates. Profiles are untouched.'
 }
 
-version='1.0.0' commit='' archive='' bundle='' trusted_root='' helper='' bootstrap_dir='' rollback='' verify_only='' prefix=${HOME:?HOME must be set}/.local
+version='1.0.1' commit='' archive='' bundle='' trusted_root='' helper='' bootstrap_dir='' rollback='' verify_only='' prefix=${HOME:?HOME must be set}/.local
 seen=' '
 while [ "$#" -gt 0 ]; do
     key=$1

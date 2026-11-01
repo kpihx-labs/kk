@@ -1,10 +1,11 @@
 # Changelog
-
 This records changes, not live delivery status. See [TODO.md](TODO.md) for the current state and Git history for detailed implementation checkpoints.
-
-## 1.0.0 - Unreleased
+## 1.0.1 - Unreleased
+- Follow the GitHub release redirect in the simple one-line installer while restricting every redirect to HTTPS; guard the published command so an empty 302 response cannot be mistaken for an installation.
+## 1.0.0 - 2026-11-01
 
 - Deliver the first community release: progressive first-use journeys, one-line Linux installation, standalone six-file archives with deduplicated notices, current reference guides and a clean rebuild from source. Historical prerelease assets remain immutable.
+- The tag and assets remain immutable; the documented one-line fetch omitted redirect following and is superseded by 1.0.1.
 
 ## 0.9.0-dev.2 - Unreleased Verification Checkpoint
 

@@ -1,8 +1,8 @@
 # Verification Record
 
-The current tree is the **1.0.0 candidate**. [TODO.md](../TODO.md) owns its final
-qualification and delivery sequence. The prerelease records below remain useful
-baseline evidence, but they do not automatically qualify changed 1.0.0 bytes.
+The current tree is the **1.0.1 corrective candidate**. [TODO.md](../TODO.md) owns
+its final qualification and delivery sequence. Earlier records remain useful
+baseline evidence, but they do not automatically qualify changed 1.0.1 bytes.
 
 ```text
 source tests -> actual UI/native execution -> signed artifact -> install/rollback
@@ -14,7 +14,7 @@ source tests -> actual UI/native execution -> signed artifact -> install/rollbac
 
 | Need | Action | Accepted result |
 | --- | --- | --- |
-| Integrate the refactor | Freeze source, run product/SDK/workflow gates | Current 1.0.0 tree passes all three local gates |
+| Integrate the patch | Freeze source, run product/SDK/workflow gates | Current 1.0.1 tree passes all three local gates |
 | Bind native behavior | Run Linux, Windows and both macOS hosted jobs | Exact source commit and actual job outcomes |
 | Deliver final bytes | Build/attest artifacts, replay install/update/rollback | Installed bytes match authenticated subjects |
 | Publish | Complete the final version/rebuild sequence in TODO | Public assets and installer verified after publication |

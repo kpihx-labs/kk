@@ -546,7 +546,8 @@ Need terminal help?
 ## Optional Linux install
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsS https://github.com/kpihx-labs/kk/releases/download/v{version}/install.sh | sh
+curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL https://github.com/kpihx-labs/kk/releases/latest/download/install.sh | sh
+# or: gh release download --repo kpihx-labs/kk --pattern install.sh --output install.sh && sh install.sh
 ```
 
 ```text

@@ -1,21 +1,19 @@
 # Portable Prebuilt Installer Boundary
 
 ## Status
-For an ordinary Linux install, start with the one-line path in the
-[README](../README.md#install-100). It uses HTTPS release checksums and deliberately
-does not claim independent provenance. This page begins where that convenience
-path ends: provide an explicit full commit when you need Sigstore-bound origin.
-The same-package native helper lives in `src/install.rs` and submodules with CLI wiring.
-`scripts/install.sh` bootstraps Linux/macOS with authenticated raw helper and notices
-assets in the advanced path; `--helper` instead accepts an explicitly already-trusted native `kk`.
-PowerShell on Linux supports only explicit `-Helper`; without it it exits 3.
-Help exits 0; input/tool failures exit nonzero. No profile/PATH/service/identity changes occur.
-This is not release or native-platform qualification.
-The format/platform authority remains [release.py](../scripts/release.py), not a second registry.
-Host OS/CPU selects a candidate; its authenticated manifest must match.
-Linux/macOS transaction paths exist; Windows is refused (ZIP is not Windows support).
-Provision capable `gh`, plus bootstrap curl/jq, timeout or gtimeout, sha256sum or shasum.
-Native ABI tools: Linux ldconfig; macOS codesign/sw_vers. No end-user compiler is needed.
+For an ordinary Linux install, start with the [README](../README.md#install-101).
+No version means the latest stable release, whether fetched by `curl` or `gh`:
+
+```sh
+gh release download --repo kpihx-labs/kk --pattern install.sh --output install.sh
+sh install.sh
+```
+
+Add `vVERSION` after `download` to pin `gh`; pass `--version VERSION` to the script.
+The convenience path uses HTTPS release checksums, not independent provenance.
+This page continues with the explicit commit/Sigstore path. It makes no profile,
+PATH, service or identity change. Linux/macOS transactions exist; Windows is refused.
+The format authority remains [release.py](../scripts/release.py).
 ## Inspect Before Running
 For the advanced path, retrieve its entrypoint with separately trusted tooling,
 authenticate and inspect it, then invoke it. Do not use the one-line convenience
