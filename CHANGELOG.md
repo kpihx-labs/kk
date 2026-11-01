@@ -1,6 +1,6 @@
 # Changelog
 This records changes, not live delivery status. See [TODO.md](TODO.md) for the current state and Git history for detailed implementation checkpoints.
-## 1.0.1 - Unreleased
+## 1.0.1 - 2026-11-01
 - Follow the GitHub release redirect in the simple one-line installer while restricting every redirect to HTTPS; guard the published command so an empty 302 response cannot be mistaken for an installation.
 ## 1.0.0 - 2026-11-01
 
